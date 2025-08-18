@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.cache/
+.coverage
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+
+# Archivos/DB locales
+*.sqlite3
+*.db
+
+# Logs / builds
+*.log
+dist/
+build/
+
+# SO / editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Variables de entorno (¡secreto!)
+.env
+*.env.local
+.env.*
+
