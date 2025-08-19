@@ -109,11 +109,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.options("/{rest_of_path:path}")
-async def options_catch_all(rest_of_path: str):
-    # Preflight genérico
-    return JSONResponse({"ok": True})
-
 # ── Sesiones en memoria ──────────────────────────────────────────────────────
 SESSIONS: dict[str, dict] = {}
 MESSAGES: dict[str, list[dict]] = {}
