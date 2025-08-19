@@ -8,6 +8,8 @@ from starlette.responses import StreamingResponse, JSONResponse
 import json
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from sqlalchemy import text
+from starlette.responses import RedirectResponse, Response
+
 
 
 load_dotenv()
@@ -190,6 +192,64 @@ async def usage_session(sid: str):
         "total_tokens": prompt_sum + completion_sum,
         "estimated_cost_usd": round(cost_usd, 6),
     }
+
+@app.get("/v1/usage")
+async def list_usage(limit: int = 50, offset: int = 0):
+    if db_engine:
+        async with db_engine.connect() as conn:
+            res = await conn.execute(
+                text("""
+                    SELECT
+                        session_id,
+                        MAX(model)                          AS model,
+                        COALESCE(SUM(prompt_tokens), 0)     AS pt,
+                        COALESCE(SUM(completion_tokens), 0) AS ct,
+                        MIN(ts)                             AS first_ts,
+                        MAX(ts)                             AS last_ts
+                    FROM usage_events
+                    GROUP BY session_id
+                    ORDER BY last_ts DESC
+                    LIMIT :limit OFFSET :offset
+                """),
+                {"limit": limit, "offset": offset},
+            )
+            rows = res.fetchall()
+
+        items = []
+        for r in rows:
+            pt = int(r.pt or 0); ct = int(r.ct or 0)
+            cost = (pt/1000)*PRICE_IN_PER_1K + (ct/1000)*PRICE_OUT_PER_1K
+            items.append({
+                "sessionId": r.session_id,
+                "model": r.model,
+                "prompt_tokens": pt,
+                "completion_tokens": ct,
+                "total_tokens": pt + ct,
+                "estimated_cost_usd": round(cost, 6),
+                "first_ts": int(r.first_ts or 0),
+                "last_ts": int(r.last_ts or 0),
+            })
+        return {"items": items, "limit": limit, "offset": offset}
+
+    # Fallback en memoria (local/dev)
+    items = []
+    for sid, u in USAGE.items():
+        pt = int(u.get("prompt_tokens", 0)); ct = int(u.get("completion_tokens", 0))
+        cost = (pt/1000)*PRICE_IN_PER_1K + (ct/1000)*PRICE_OUT_PER_1K
+        first_ts = SESSIONS.get(sid, {}).get("startedAt")
+        last_ts = max((m["ts"] for m in MESSAGES.get(sid, [])), default=first_ts)
+        items.append({
+            "sessionId": sid,
+            "model": u.get("model"),
+            "prompt_tokens": pt,
+            "completion_tokens": ct,
+            "total_tokens": pt + ct,
+            "estimated_cost_usd": round(cost, 6),
+            "first_ts": first_ts,
+            "last_ts": last_ts,
+        })
+    items.sort(key=lambda x: x["last_ts"] or 0, reverse=True)
+    return {"items": items, "limit": limit, "offset": offset}
 
 
 # ── Modelos IO ────────────────────────────────────────────────────────────────
