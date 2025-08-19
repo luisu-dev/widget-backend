@@ -1,4 +1,7 @@
 fastapi
 uvicorn[standard]
 python-dotenv
-openai
+openai>=1.0.0
+starlette
+SQLAlchemy[asyncio]
+asyncpg

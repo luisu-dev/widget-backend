@@ -1,35 +1,47 @@
-# Python
+# ── Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
 .pytest_cache/
 .mypy_cache/
-.cache/
-.coverage
-
-# Entornos virtuales
 .venv/
 venv/
 env/
+*.egg-info/
+pip-wheel-metadata/
 
-# Archivos/DB locales
+# ── Bases locales
 *.sqlite3
 *.db
+usage.db
 
-# Logs / builds
+# ── Logs / builds
 *.log
 dist/
 build/
 
-# SO / editores
+# ── Cobertura / tests
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.hypothesis/
+
+# ── SO / editores
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+.python-version
 
-# Variables de entorno (¡secreto!)
+# ── Variables de entorno (secreto)
 .env
-*.env.local
-.env.*
+.env.local
+.env.development
+.env.production
+!.env.example   # <- sí versionamos el template
 
+# ── Node/Vite (si tienes front en el mismo repo)
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*

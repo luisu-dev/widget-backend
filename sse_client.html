@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>SSE Chat Stream – MVP</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body{font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 720px; margin: 32px auto; padding: 0 16px;}
+    .row{display:flex; gap:12px; margin-bottom:12px;}
+    input, button{font-size:16px; padding:10px; border-radius:10px; border:1px solid #ccc;}
+    #send{cursor:pointer}
+    #out{white-space:pre-wrap; border:1px solid #ddd; border-radius:12px; padding:12px; min-height:120px;}
+    .meta{color:#666; font-size:12px}
+  </style>
+</head>
+<body>
+  <h1>SSE Chat Stream</h1>
+
+  <div class="row">
+    <input id="msg" placeholder="Escribe tu mensaje..." style="flex:1" />
+    <button id="send">Enviar</button>
+  </div>
+
+  <div class="row">
+    <input id="sid" placeholder="sessionId (opcional)" style="flex:1" />
+    <button id="new">Nuevo sessionId</button>
+    <button id="stop">Detener</button>
+
+  </div>
+
+  <p class="meta">Endpoint: <code>POST http://127.0.0.1:8000/v1/chat/stream</code></p>
+  <div id="out"></div>
+
+<script>
+  // Requiere <button id="stop">Detener</button> en el HTML
+  const API = "http://localhost:8000/v1/chat/stream";
+
+  const out = document.getElementById("out");
+  const msg = document.getElementById("msg");
+  const sid = document.getElementById("sid");
+  const sendBtn = document.getElementById("send");
+  const newBtn = document.getElementById("new");
+  const stopBtn = document.getElementById("stop");
+
+  newBtn.onclick = () => {
+    sid.value = "sess_" + Math.random().toString(16).slice(2);
+  };
+
+  let currentController = null;
+
+  sendBtn.onclick = async () => {
+    if (currentController) currentController.abort();
+
+    out.textContent = "";
+    const body = {
+      message: msg.value || "(vacío)",
+      sessionId: sid.value || null,
+    };
+
+    currentController = new AbortController();
+    if (stopBtn) stopBtn.onclick = () => currentController?.abort();
+
+    console.log("[fetch] POST", API, body); // DEBUG #1
+
+    let res;
+    try {
+      res = await fetch(API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: currentController.signal,
+      });
+    } catch (err) {
+      if (err.name === "AbortError") {
+        out.textContent += "\n\n[cancelado por usuario]";
+      } else {
+        console.error("Fetch failed:", err);
+        out.textContent = "[error] No se pudo conectar con el backend";
+      }
+      currentController = null;
+      return;
+    }
+
+    if (!res.ok) {
+      const retry = res.headers.get("Retry-After");
+      const text = await res.text().catch(() => "");
+      out.textContent =
+        `Error ${res.status} ${res.statusText}` +
+        (retry ? ` — Retry-After: ${retry}s` : "") +
+        (text ? `\n${text}` : "");
+      currentController = null;
+      return;
+    }
+
+    console.log("[fetch] OK, empezando a leer SSE…"); // DEBUG #2
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let lastSeq = 0;
+
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value) buffer += decoder.decode(value, { stream: true });
+
+        buffer = buffer.replace(/\r\n/g, "\n");
+
+        let idx;
+        while ((idx = buffer.indexOf("\n\n")) !== -1) {
+          const rawEvent = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+
+          let evType = "message";
+          let data = "";
+
+          for (const line of rawEvent.split("\n")) {
+            if (!line) continue;
+            if (line.startsWith(":")) continue;
+            if (line.startsWith("event:")) {
+              evType = line.slice(6).trim();
+              continue;
+            }
+            if (line.startsWith("data:")) {
+              let chunk = line.slice(5);
+              if (chunk.startsWith(" ")) chunk = chunk.slice(1);
+              data += (data ? "\n" : "") + chunk;
+            }
+          }
+
+          // DEBUG #3
+          // console.log("[SSE]", evType, data.length > 120 ? data.slice(0,120)+"…" : data);
+
+          if (evType === "delta") {
+            let text = data;
+            try {
+              const obj = JSON.parse(data);
+              if (obj && typeof obj.content === "string") {
+                if (typeof obj.i === "number") {
+                  if (obj.i <= lastSeq) continue;
+                  lastSeq = obj.i;
+                }
+                text = obj.content;
+              }
+            } catch {}
+            out.textContent += text;
+
+          } else if (evType === "done") {
+            try {
+              const info = JSON.parse(data);
+              out.textContent += `\n\n[done: ${info.sessionId ?? "ok"}]`;
+            } catch {
+              out.textContent += `\n\n[done]`;
+            }
+
+          } else if (evType === "error") {
+            out.textContent += `\n\n[error] ${data}`;
+            console.error("SSE error event:", data);
+
+          } else {
+            out.textContent += `\n\n[${evType}] ${data}`;
+          }
+        }
+      }
+    } catch (err) {
+      if (err.name === "AbortError") {
+        out.textContent += "\n\n[cancelado por usuario]";
+      } else {
+        console.error("Stream read failed:", err);
+        out.textContent += `\n\n[stream-error] ${String(err)}`;
+      }
+    } finally {
+      currentController = null;
+    }
+  };
+</script>
+
+
+
+
+
+</body>
+</html>
