@@ -47,59 +47,6 @@
     </thead>
     <tbody></tbody>
   </table>
-
-  <script>
-    const api = document.getElementById("api");
-    const key = document.getElementById("key");
-    const loadBtn = document.getElementById("load");
-    const limitSel = document.getElementById("limit");
-    const statusEl = document.getElementById("status");
-    const tbody = document.querySelector("#tbl tbody");
-
-    async function fetchUsage(offset=0){
-      const base = api.value.replace(/\/+$/,"");
-      const url = `${base}/v1/usage?limit=${encodeURIComponent(limitSel.value)}&offset=${offset}`;
-      statusEl.textContent = "Cargando…";
-      tbody.innerHTML = "";
-      try {
-        const res = await fetch(url, {
-          headers: { "x-api-key": key.value || "" }
-        });
-        if (!res.ok) {
-          const text = await res.text().catch(()=> "");
-          throw new Error(`HTTP ${res.status} ${res.statusText} — ${text}`);
-        }
-        const data = await res.json();
-        renderRows(data.items || []);
-        statusEl.textContent = `Items: ${(data.items||[]).length}`;
-      } catch (e) {
-        statusEl.textContent = "Error: " + e.message;
-      }
-    }
-
-    function ts2str(ts){
-      if (!ts) return "-";
-      const d = new Date(ts*1000); // si guardaste seconds; si guardaste ms, cambia a ts
-      return d.toLocaleString();
-    }
-
-    function renderRows(items){
-      for (const it of items) {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td><code>${it.sessionId}</code></td>
-          <td><span class="badge">${it.model ?? "-"}</span></td>
-          <td class="right">${it.prompt_tokens.toLocaleString()}</td>
-          <td class="right">${it.completion_tokens.toLocaleString()}</td>
-          <td class="right"><b>${it.total_tokens.toLocaleString()}</b></td>
-          <td class="right">$${Number(it.estimated_cost_usd).toFixed(6)}</td>
-          <td>${ts2str(it.last_ts)}</td>
-        `;
-        tbody.appendChild(tr);
-      }
-    }
-
-    loadBtn.onclick = () => fetchUsage(0);
-  </script>
-</body>
+<script type="module" src="app.js"></script>
+ </body>
 </html>
