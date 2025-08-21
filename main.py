@@ -11,56 +11,6 @@ from sqlalchemy import text
 from starlette.responses import RedirectResponse, Response
 from fastapi import Header, Depends
 
-@app.on_event("startup")
-async def on_startup():
-    global db_engine
-    if not ASYNC_DB_URL:
-        print("[USAGE] DATABASE_URL no seteado: corriendo sin persistencia")
-        return
-    db_engine = create_async_engine(ASYNC_DB_URL, echo=False, pool_pre_ping=True)
-    async with db_engine.begin() as conn:
-        await conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS usage_events (
-                id SERIAL PRIMARY KEY,
-                ts BIGINT NOT NULL,
-                session_id TEXT NOT NULL,
-                model TEXT NOT NULL,
-                prompt_tokens INTEGER NOT NULL,
-                completion_tokens INTEGER NOT NULL
-            );
-        """))
-        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_usage_session ON usage_events(session_id)"))
-        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_events(ts)"))
-        # Tablas “CRM” básicas
-        await conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS customers (
-                id SERIAL PRIMARY KEY,
-                name  TEXT,
-                email TEXT UNIQUE,
-                phone TEXT UNIQUE,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-    );
-"""))
-
-        await conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS sessions_metadata (
-                session_id TEXT PRIMARY KEY,
-                customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
-                channel TEXT,              -- web, whatsapp, ig, etc.
-                JSONB DEFAULT '[]'::jsonb,
-                created_at TIMESTAMPTZ DEFAULT NOW(),
-                updated_at TIMESTAMPTZ DEFAULT NOW()
-    );
-"""))
-
-# Índices útiles
-        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email)"))
-        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone)"))
-        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_sessions_customer ON sessions_metadata(customer_id)"))
-
-
-    print("[USAGE] Postgres listo ✅")
-
 
 load_dotenv()
 
@@ -121,6 +71,57 @@ def is_rate_limited(key: str, limit: int = RATE_LIMIT, window: int = RATE_WINDOW
     bucket.append(now)
     RATELIMIT[key] = bucket
     return False
+
+@app.on_event("startup")
+async def on_startup():
+    global db_engine
+    if not ASYNC_DB_URL:
+        print("[USAGE] DATABASE_URL no seteado: corriendo sin persistencia")
+        return
+    db_engine = create_async_engine(ASYNC_DB_URL, echo=False, pool_pre_ping=True)
+    async with db_engine.begin() as conn:
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS usage_events (
+                id SERIAL PRIMARY KEY,
+                ts BIGINT NOT NULL,
+                session_id TEXT NOT NULL,
+                model TEXT NOT NULL,
+                prompt_tokens INTEGER NOT NULL,
+                completion_tokens INTEGER NOT NULL
+            );
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_usage_session ON usage_events(session_id)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_events(ts)"))
+        # Tablas “CRM” básicas
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS customers (
+                id SERIAL PRIMARY KEY,
+                name  TEXT,
+                email TEXT UNIQUE,
+                phone TEXT UNIQUE,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+"""))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS sessions_metadata (
+                session_id TEXT PRIMARY KEY,
+                customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+                channel TEXT,              -- web, whatsapp, ig, etc.
+                JSONB DEFAULT '[]'::jsonb,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+"""))
+
+# Índices útiles
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_sessions_customer ON sessions_metadata(customer_id)"))
+
+
+    print("[USAGE] Postgres listo ✅")
+
 
 # Medidor simple en memoria
 USAGE: dict[str, dict] = {}
