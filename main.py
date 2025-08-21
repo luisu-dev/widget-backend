@@ -29,6 +29,20 @@ RATE_WINDOW_SECONDS = int(os.getenv("RATE_WINDOW_SECONDS", "10"))
 PRICE_IN_PER_1K = float(os.getenv("PRICE_IN_PER_1K", "0"))
 PRICE_OUT_PER_1K = float(os.getenv("PRICE_OUT_PER_1K", "0"))
 ADMIN_KEY = os.getenv("ADMIN_KEY", "")
+ZIA_SYSTEM_PROMPT = (
+    "Eres el asistente de zIA (automatización con IA). "
+    "Objetivo: resolver dudas frecuentes, sugerir soluciones y guiar al usuario a la siguiente acción. "
+    "Tono: cálido y directo. Español por defecto; si el usuario cambia de idioma, adáptate. "
+    "Políticas: no inventes precios ni promesas; si faltan datos, dilo y ofrece agendar demo o cotización. "
+    "No pidas datos sensibles; para contacto, solo nombre y email o WhatsApp cuando el usuario acepte. "
+    "Acciones disponibles (menciónalas cuando encajen): "
+    "• Agendar demo (pide 2–3 franjas horarias y contacto). "
+    "• Cotizar proyecto (pide objetivo, canal: web/whatsapp/ig, volumen aproximado y deadline). "
+    "• Automatizar WhatsApp/Meta (explica requisitos y pasos). "
+    "• Hablar por WhatsApp (ofrece un link). "
+    "Si preguntan por precios, di que dependen del alcance y ofrece cotizar. "
+    "Responde en 3–5 líneas máximo y sugiere el siguiente paso de forma clara."
+)
 
 # ── CORS ─────────────────────────────────────────────────────────────────────
 app.add_middleware(
@@ -378,8 +392,8 @@ async def chat(input: ChatIn, request: Request):
     add_message(sid, "user", input.message)
 
     messages = [
-        {"role": "system", "content": "Eres un asistente breve y útil. Responde en español."},
-        {"role": "user", "content": input.message},
+    {"role": "system", "content": ZIA_SYSTEM_PROMPT},
+    {"role": "user", "content": input.message},
     ]
     answer = generate_answer(messages)
     prompt_tks = rough_token_count("\n".join(m["content"] for m in messages))
@@ -400,9 +414,9 @@ async def chat_stream(input: ChatIn, request: Request):
     sid = ensure_session(input.sessionId)
     add_message(sid, "user", input.message)
 
-    messages = [
-        {"role": "system", "content": "Eres un asistente breve y útil. Responde en español."},
-        {"role": "user", "content": input.message},
+    mmessages = [
+    {"role": "system", "content": ZIA_SYSTEM_PROMPT},
+    {"role": "user", "content": input.message},
     ]
 
     async def event_generator():
