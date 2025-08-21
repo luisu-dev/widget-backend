@@ -7,7 +7,7 @@ from starlette.responses import StreamingResponse, JSONResponse
 from typing import Optional, Dict, Any
 
 from dotenv import load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from openai import OpenAI
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
@@ -35,6 +35,7 @@ ZIA_SYSTEM_PROMPT = (
     "Tono: cálido y directo. Español por defecto; si el usuario cambia de idioma, adáptate. "
     "Políticas: no inventes precios ni promesas; si faltan datos, dilo y ofrece agendar demo o cotización. "
     "No pidas datos sensibles; para contacto, solo nombre y email o WhatsApp cuando el usuario acepte. "
+    "interpreta con base en los últimos 5 pasos de la conversación."
     "Acciones disponibles (menciónalas cuando encajen): "
     "• Agendar demo (pide 2–3 franjas horarias y contacto). "
     "• Cotizar proyecto (pide objetivo, canal: web/whatsapp/ig, volumen aproximado y deadline). "
@@ -57,6 +58,13 @@ app.add_middleware(
 async def require_admin(x_api_key: str = Header(default="")):
     if not ADMIN_KEY or x_api_key != ADMIN_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
+    
+def build_messages_with_history(sid: str, system_prompt: str, max_pairs: int = 8) -> list[dict]:
+    convo = MESSAGES.get(sid, [])
+    recent = convo[-2*max_pairs:]  # últimos turnos (user/assistant)
+    history = [{"role": m["role"], "content": m["content"]} for m in recent]
+    return [{"role": "system", "content": system_prompt}] + history
+
 
 def sse_event(data: str, event: str | None = None) -> str:
     if event:
@@ -89,10 +97,11 @@ db_engine: AsyncEngine | None = None
 
 # ── Startup: crea tablas/índices ─────────────────────────────────────────────
 class TenantIn(BaseModel):
+    class TenantIn(BaseModel):
     slug: str
     name: str
     whatsapp: Optional[str] = None
-    settings: Dict[str, Any] = {}
+    settings: Dict[str, Any] = Field(default_factory=dict)
 
 @app.on_event("startup")
 async def on_startup():
@@ -387,22 +396,24 @@ def generate_answer(messages: list[dict]) -> str:
 async def chat(input: ChatIn, request: Request):
     key = input.sessionId or request.client.host
     if is_rate_limited(key):
-        raise HTTPException(status_code=429, detail="Too many requests", headers={"Retry-After": str(RATE_WINDOW_SECONDS)})
+        raise HTTPException(status_code=429, detail="Too many requests",
+                            headers={"Retry-After": str(RATE_WINDOW_SECONDS)})
+
     sid = ensure_session(input.sessionId)
     add_message(sid, "user", input.message)
 
-    messages = [
-    {"role": "system", "content": ZIA_SYSTEM_PROMPT},
-    {"role": "user", "content": input.message},
-    ]
+    messages = build_messages_with_history(sid, ZIA_SYSTEM_PROMPT)
     answer = generate_answer(messages)
-    prompt_tks = rough_token_count("\n".join(m["content"] for m in messages))
+
+    prompt_text = "\n".join(m["content"] for m in messages)
+    prompt_tks = rough_token_count(prompt_text)
     completion_tks = rough_token_count(answer)
     update_usage(sid, OPENAI_MODEL, prompt_tks, completion_tks)
     await persist_usage_async(sid, OPENAI_MODEL, prompt_tks, completion_tks)
 
     add_message(sid, "assistant", answer)
     return ChatOut(sessionId=sid, answer=answer)
+
 
 # ── Streaming SSE ─────────────────────────────────────────────────────────────
 @app.post("/v1/chat/stream")
@@ -414,10 +425,8 @@ async def chat_stream(input: ChatIn, request: Request):
     sid = ensure_session(input.sessionId)
     add_message(sid, "user", input.message)
 
-    messages = [
-    {"role": "system", "content": ZIA_SYSTEM_PROMPT},
-    {"role": "user", "content": input.message},
-    ]
+    messages = build_messages_with_history(sid, ZIA_SYSTEM_PROMPT)
+
 
     async def event_generator():
         try:
