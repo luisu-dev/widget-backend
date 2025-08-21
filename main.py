@@ -97,7 +97,6 @@ db_engine: AsyncEngine | None = None
 
 # ── Startup: crea tablas/índices ─────────────────────────────────────────────
 class TenantIn(BaseModel):
-    class TenantIn(BaseModel):
     slug: str
     name: str
     whatsapp: Optional[str] = None
