@@ -9,7 +9,57 @@ import json
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from sqlalchemy import text
 from starlette.responses import RedirectResponse, Response
+from fastapi import Header, Depends
 
+@app.on_event("startup")
+async def on_startup():
+    global db_engine
+    if not ASYNC_DB_URL:
+        print("[USAGE] DATABASE_URL no seteado: corriendo sin persistencia")
+        return
+    db_engine = create_async_engine(ASYNC_DB_URL, echo=False, pool_pre_ping=True)
+    async with db_engine.begin() as conn:
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS usage_events (
+                id SERIAL PRIMARY KEY,
+                ts BIGINT NOT NULL,
+                session_id TEXT NOT NULL,
+                model TEXT NOT NULL,
+                prompt_tokens INTEGER NOT NULL,
+                completion_tokens INTEGER NOT NULL
+            );
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_usage_session ON usage_events(session_id)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_events(ts)"))
+        # Tablas “CRM” básicas
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS customers (
+                id SERIAL PRIMARY KEY,
+                name  TEXT,
+                email TEXT UNIQUE,
+                phone TEXT UNIQUE,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+"""))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS sessions_metadata (
+                session_id TEXT PRIMARY KEY,
+                customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+                channel TEXT,              -- web, whatsapp, ig, etc.
+                JSONB DEFAULT '[]'::jsonb,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+"""))
+
+# Índices útiles
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_sessions_customer ON sessions_metadata(customer_id)"))
+
+
+    print("[USAGE] Postgres listo ✅")
 
 
 load_dotenv()
@@ -25,12 +75,17 @@ RATE_LIMIT = int(os.getenv("RATE_LIMIT", "5"))
 RATE_WINDOW_SECONDS = int(os.getenv("RATE_WINDOW_SECONDS", "10"))
 PRICE_IN_PER_1K = float(os.getenv("PRICE_IN_PER_1K", "0"))
 PRICE_OUT_PER_1K = float(os.getenv("PRICE_OUT_PER_1K", "0"))
+ADMIN_KEY = os.getenv("ADMIN_KEY", "")
 
 
 client = OpenAI()  # usa OPENAI_API_KEY del entorno
 app = FastAPI()
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
+async def require_admin(x_api_key: str = Header(default="")):
+    if not ADMIN_KEY or x_api_key != ADMIN_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
 def sse_event(data: str, event: str | None = None) -> str:
     """
     Formatea un mensaje SSE:
@@ -152,6 +207,36 @@ async def on_startup():
                 completion_tokens INTEGER NOT NULL
             );
         """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_usage_session ON usage_events(session_id)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_events(ts)"))
+        # Tablas “CRM” básicas
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS customers (
+                id SERIAL PRIMARY KEY,
+                name  TEXT,
+                email TEXT UNIQUE,
+                phone TEXT UNIQUE,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+"""))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS sessions_metadata (
+                session_id TEXT PRIMARY KEY,
+                customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+                channel TEXT,              -- web, whatsapp, ig, etc.
+                tags JSONB DEFAULT '[]',
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+"""))
+
+# Índices útiles
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_sessions_customer ON sessions_metadata(customer_id)"))
+
+
     print("[USAGE] Postgres listo ✅")
 
 
@@ -161,7 +246,7 @@ async def get_messages(sid: str):
         raise HTTPException(status_code=404, detail="session not found")
     return {"sessionId": sid, "messages": MESSAGES.get(sid, [])}
 
-@app.get("/v1/usage/{sid}")
+@app.get("/v1/usage/{sid}", dependencies=[Depends(require_admin)])
 async def usage_session(sid: str):
     if db_engine:
         async with db_engine.connect() as conn:
@@ -193,7 +278,7 @@ async def usage_session(sid: str):
         "estimated_cost_usd": round(cost_usd, 6),
     }
 
-@app.get("/v1/usage")
+@app.get("/v1/usage", dependencies=[Depends(require_admin)])
 async def list_usage(limit: int = 50, offset: int = 0):
     if db_engine:
         async with db_engine.connect() as conn:

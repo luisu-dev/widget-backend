@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Usage Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body{font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 960px; margin: 32px auto; padding: 0 16px;}
+    .row{display:flex; gap:12px; flex-wrap:wrap; margin-bottom:12px;}
+    input, button, select{padding:10px; border-radius:10px; border:1px solid #ccc; font-size:14px;}
+    table{width:100%; border-collapse:collapse; margin-top:12px;}
+    th, td{padding:8px 10px; border-bottom:1px solid #eee; text-align:left; font-size:14px;}
+    th{background:#fafafa;}
+    .meta{color:#666; font-size:12px}
+    .badge{background:#f3f4f6; padding:2px 6px; border-radius:6px; font-size:12px;}
+    .right{float:right}
+  </style>
+</head>
+<body>
+  <h1>Sessions Usage</h1>
+
+  <div class="row">
+    <input id="api" style="flex:1" value="https://widget-backend-zia.onrender.com" />
+    <input id="key" style="flex:1" placeholder="x-api-key (ADMIN_KEY)" />
+    <select id="limit">
+      <option>20</option><option>50</option><option selected>100</option>
+    </select>
+    <button id="load">Cargar</button>
+  </div>
+
+  <div class="row">
+    <span class="meta" id="status">Listo.</span>
+    <span class="meta right">Tip: agrega este origen a ALLOWED_ORIGINS (p.ej. http://localhost:5173)</span>
+  </div>
+
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th>Session</th>
+        <th>Model</th>
+        <th class="right">Prompt</th>
+        <th class="right">Completion</th>
+        <th class="right">Total</th>
+        <th class="right">Costo (USD)</th>
+        <th>Last</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <script>
+    const api = document.getElementById("api");
+    const key = document.getElementById("key");
+    const loadBtn = document.getElementById("load");
+    const limitSel = document.getElementById("limit");
+    const statusEl = document.getElementById("status");
+    const tbody = document.querySelector("#tbl tbody");
+
+    async function fetchUsage(offset=0){
+      const base = api.value.replace(/\/+$/,"");
+      const url = `${base}/v1/usage?limit=${encodeURIComponent(limitSel.value)}&offset=${offset}`;
+      statusEl.textContent = "Cargando…";
+      tbody.innerHTML = "";
+      try {
+        const res = await fetch(url, {
+          headers: { "x-api-key": key.value || "" }
+        });
+        if (!res.ok) {
+          const text = await res.text().catch(()=> "");
+          throw new Error(`HTTP ${res.status} ${res.statusText} — ${text}`);
+        }
+        const data = await res.json();
+        renderRows(data.items || []);
+        statusEl.textContent = `Items: ${(data.items||[]).length}`;
+      } catch (e) {
+        statusEl.textContent = "Error: " + e.message;
+      }
+    }
+
+    function ts2str(ts){
+      if (!ts) return "-";
+      const d = new Date(ts*1000); // si guardaste seconds; si guardaste ms, cambia a ts
+      return d.toLocaleString();
+    }
+
+    function renderRows(items){
+      for (const it of items) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td><code>${it.sessionId}</code></td>
+          <td><span class="badge">${it.model ?? "-"}</span></td>
+          <td class="right">${it.prompt_tokens.toLocaleString()}</td>
+          <td class="right">${it.completion_tokens.toLocaleString()}</td>
+          <td class="right"><b>${it.total_tokens.toLocaleString()}</b></td>
+          <td class="right">$${Number(it.estimated_cost_usd).toFixed(6)}</td>
+          <td>${ts2str(it.last_ts)}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+    }
+
+    loadBtn.onclick = () => fetchUsage(0);
+  </script>
+</body>
+</html>
