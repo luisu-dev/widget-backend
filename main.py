@@ -4,6 +4,7 @@ from typing import Optional, List
 from fastapi import FastAPI, HTTPException, Request, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import StreamingResponse, JSONResponse
+from typing import Optional, Dict, Any
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -118,6 +119,19 @@ async def on_startup():
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             );
         """))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS tenants (
+                id SERIAL PRIMARY KEY,
+                slug TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                whatsapp TEXT,                       -- número tipo +52...
+                settings JSONB DEFAULT '{}'::jsonb,  -- tono, políticas, etc.
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """))
+        await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS idx_tenants_slug ON tenants(slug)"))
+
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_sessions_customer ON sessions_metadata(customer_id)"))
@@ -269,6 +283,67 @@ async def list_usage(limit: int = 50, offset: int = 0):
     items.sort(key=lambda x: x["last_ts"] or 0, reverse=True)
     return {"items": items, "limit": limit, "offset": offset}
 
+@app.post("/v1/tenants", dependencies=[Depends(require_admin)])
+async def upsert_tenant(body: TenantIn):
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+    async with db_engine.begin() as conn:
+        row = (await conn.execute(
+            text("""
+                INSERT INTO tenants (slug, name, whatsapp, settings)
+                VALUES (:slug, :name, :whatsapp, CAST(:settings AS JSONB))
+                ON CONFLICT (slug) DO UPDATE
+                  SET name = EXCLUDED.name,
+                      whatsapp = EXCLUDED.whatsapp,
+                      settings = EXCLUDED.settings,
+                      updated_at = NOW()
+                RETURNING id, slug, name, whatsapp, settings
+            """),
+            {
+                "slug": body.slug,
+                "name": body.name,
+                "whatsapp": body.whatsapp,
+                "settings": json.dumps(body.settings),
+            }
+        )).first()
+    return dict(row._mapping)
+
+@app.get("/v1/widget/bootstrap")
+async def widget_bootstrap(tenant: str):
+    """
+    Devuelve config mínima para el front:
+    - nombre, whatsapp del negocio
+    - sugerencias iniciales (chips)
+    """
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    async with db_engine.connect() as conn:
+        t = (await conn.execute(
+            text("SELECT id, slug, name, whatsapp, settings FROM tenants WHERE slug=:slug"),
+            {"slug": tenant}
+        )).first()
+
+    if not t:
+        raise HTTPException(404, f"Tenant '{tenant}' no encontrado")
+
+    # Sugerencias estáticas por ahora (luego las haremos dinámicas)
+    suggestions = ["Hacer reserva", "Ver tarifas", "Contactar por WhatsApp"]
+
+    return {
+        "tenant": {
+            "id": t.id,
+            "slug": t.slug,
+            "name": t.name,
+            "whatsapp": t.whatsapp,
+            "settings": t.settings,
+        },
+        "ui": {
+            "suggestions": suggestions
+        }
+    }
+
+
 # ── Modelos IO ────────────────────────────────────────────────────────────────
 class ChatIn(BaseModel):
     message: str
@@ -277,6 +352,12 @@ class ChatIn(BaseModel):
 class ChatOut(BaseModel):
     sessionId: str
     answer: str
+
+class TenantIn(BaseModel):
+    slug: str
+    name: str
+    whatsapp: Optional[str] = None
+    settings: Dict[str, Any] = {}
 
 # ── Lógica no streaming ──────────────────────────────────────────────────────
 def generate_answer(messages: list[dict]) -> str:
