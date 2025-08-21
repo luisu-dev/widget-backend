@@ -74,6 +74,12 @@ ASYNC_DB_URL = to_asyncpg(DATABASE_URL)
 db_engine: AsyncEngine | None = None
 
 # ── Startup: crea tablas/índices ─────────────────────────────────────────────
+class TenantIn(BaseModel):
+    slug: str
+    name: str
+    whatsapp: Optional[str] = None
+    settings: Dict[str, Any] = {}
+
 @app.on_event("startup")
 async def on_startup():
     global db_engine
@@ -353,11 +359,7 @@ class ChatOut(BaseModel):
     sessionId: str
     answer: str
 
-class TenantIn(BaseModel):
-    slug: str
-    name: str
-    whatsapp: Optional[str] = None
-    settings: Dict[str, Any] = {}
+
 
 # ── Lógica no streaming ──────────────────────────────────────────────────────
 def generate_answer(messages: list[dict]) -> str:
