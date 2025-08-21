@@ -414,7 +414,7 @@ async def chat_stream(input: ChatIn, request: Request):
     sid = ensure_session(input.sessionId)
     add_message(sid, "user", input.message)
 
-    mmessages = [
+    messages = [
     {"role": "system", "content": ZIA_SYSTEM_PROMPT},
     {"role": "user", "content": input.message},
     ]
