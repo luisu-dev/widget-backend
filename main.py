@@ -1,23 +1,25 @@
-from fastapi import FastAPI, HTTPException, Request
-from dotenv import load_dotenv
-from pydantic import BaseModel
-import os, uuid, time, asyncio
-from openai import OpenAI
+import os, uuid, time, asyncio, json
+from typing import Optional, List
+
+from fastapi import FastAPI, HTTPException, Request, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import StreamingResponse, JSONResponse
-import json
+
+from dotenv import load_dotenv
+from pydantic import BaseModel
+from openai import OpenAI
+
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from sqlalchemy import text
-from starlette.responses import RedirectResponse, Response
-from fastapi import Header, Depends
-
 
 load_dotenv()
 
+# ── App & Clients ────────────────────────────────────────────────────────────
+app = FastAPI()
+client = OpenAI()  # usa OPENAI_API_KEY del entorno
+
 # ── Config ───────────────────────────────────────────────────────────────────
-ALLOWED_ORIGINS = os.getenv(
-    "ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000"
-).split(",")
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 USE_MOCK = os.getenv("USE_MOCK", "true").lower() == "true"
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
@@ -27,9 +29,14 @@ PRICE_IN_PER_1K = float(os.getenv("PRICE_IN_PER_1K", "0"))
 PRICE_OUT_PER_1K = float(os.getenv("PRICE_OUT_PER_1K", "0"))
 ADMIN_KEY = os.getenv("ADMIN_KEY", "")
 
-
-client = OpenAI()  # usa OPENAI_API_KEY del entorno
-app = FastAPI()
+# ── CORS ─────────────────────────────────────────────────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 async def require_admin(x_api_key: str = Header(default="")):
@@ -37,30 +44,11 @@ async def require_admin(x_api_key: str = Header(default="")):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 def sse_event(data: str, event: str | None = None) -> str:
-    """
-    Formatea un mensaje SSE:
-      - data-only:    "data: {...}\n\n"
-      - con evento:   "event: delta\ndata: {...}\n\n"
-    """
     if event:
         return f"event: {event}\ndata: {data}\n\n"
     return f"data: {data}\n\n"
 
 RATELIMIT: dict[str, list[float]] = {}
-def to_asyncpg(url: str) -> str:
-    if not url:
-        return ""
-    # Render puede darte postgres:// o postgresql://
-    if url.startswith("postgres://"):
-        return url.replace("postgres://", "postgresql+asyncpg://", 1)
-    if url.startswith("postgresql://") and "+asyncpg" not in url:
-        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    return url  # ya está con +asyncpg
-
-ASYNC_DB_URL = to_asyncpg(DATABASE_URL)
-db_engine: AsyncEngine | None = None
-
-
 def is_rate_limited(key: str, limit: int = RATE_LIMIT, window: int = RATE_WINDOW_SECONDS) -> bool:
     now = time.time()
     bucket = RATELIMIT.get(key, [])
@@ -72,18 +60,35 @@ def is_rate_limited(key: str, limit: int = RATE_LIMIT, window: int = RATE_WINDOW
     RATELIMIT[key] = bucket
     return False
 
+def to_asyncpg(url: str) -> str:
+    if not url:
+        return ""
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgresql://") and "+asyncpg" not in url:
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    return url
+
+ASYNC_DB_URL = to_asyncpg(DATABASE_URL)
+db_engine: AsyncEngine | None = None
+
+# ── Startup: crea tablas/índices ─────────────────────────────────────────────
 @app.on_event("startup")
 async def on_startup():
     global db_engine
     if not ASYNC_DB_URL:
         print("[USAGE] DATABASE_URL no seteado: corriendo sin persistencia")
         return
+
     db_engine = create_async_engine(ASYNC_DB_URL, echo=False, pool_pre_ping=True)
     async with db_engine.begin() as conn:
+        await conn.execute(text("SELECT 1"))
+
+        # Eventos de uso (tokens por “vueltas”/respuestas)
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS usage_events (
                 id SERIAL PRIMARY KEY,
-                ts BIGINT NOT NULL,
+                ts BIGINT NOT NULL,              -- epoch seconds
                 session_id TEXT NOT NULL,
                 model TEXT NOT NULL,
                 prompt_tokens INTEGER NOT NULL,
@@ -92,7 +97,8 @@ async def on_startup():
         """))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_usage_session ON usage_events(session_id)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_events(ts)"))
-        # Tablas “CRM” básicas
+
+        # CRM básico: customers y metadatos de sesión
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS customers (
                 id SERIAL PRIMARY KEY,
@@ -100,37 +106,31 @@ async def on_startup():
                 email TEXT UNIQUE,
                 phone TEXT UNIQUE,
                 created_at TIMESTAMPTZ DEFAULT NOW()
-    );
-"""))
-
+            );
+        """))
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS sessions_metadata (
                 session_id TEXT PRIMARY KEY,
                 customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
-                channel TEXT,              -- web, whatsapp, ig, etc.
-                JSONB DEFAULT '[]'::jsonb,
+                channel TEXT,                          -- web, whatsapp, ig, etc.
+                tags JSONB DEFAULT '[]'::jsonb,        -- ← AQUÍ estaba el bug: faltaba el nombre de columna
                 created_at TIMESTAMPTZ DEFAULT NOW(),
                 updated_at TIMESTAMPTZ DEFAULT NOW()
-    );
-"""))
-
-# Índices útiles
+            );
+        """))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_sessions_customer ON sessions_metadata(customer_id)"))
 
-
     print("[USAGE] Postgres listo ✅")
 
-
-# Medidor simple en memoria
+# ── Medidor simple en memoria + persistencia ─────────────────────────────────
 USAGE: dict[str, dict] = {}
 
 def rough_token_count(text: str) -> int:
-    # Aproximación rápida (~4 chars ≈ 1 token)
     if not text:
         return 0
-    return max(1, len(text) // 4)
+    return max(1, len(text) // 4)  # aprox
 
 def update_usage(session_id: str, model: str, prompt_tks: int, completion_tks: int):
     u = USAGE.get(session_id) or {"model": model, "prompt_tokens": 0, "completion_tokens": 0}
@@ -147,25 +147,8 @@ async def persist_usage_async(session_id: str, model: str, prompt_tks: int, comp
             text("""INSERT INTO usage_events
                     (ts, session_id, model, prompt_tokens, completion_tokens)
                     VALUES (:ts, :sid, :model, :pt, :ct)"""),
-            {
-                "ts": int(time.time()),
-                "sid": session_id,
-                "model": model,
-                "pt": int(prompt_tks),
-                "ct": int(completion_tks),
-            }
+            {"ts": int(time.time()), "sid": session_id, "model": model, "pt": int(prompt_tks), "ct": int(completion_tks)}
         )
-
-
-
-# ── CORS ─────────────────────────────────────────────────────────────────────
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # ── Sesiones en memoria ──────────────────────────────────────────────────────
 SESSIONS: dict[str, dict] = {}
@@ -189,57 +172,6 @@ def add_message(sid: str, role: str, content: str):
 @app.get("/health")
 async def health():
     return {"ok": True, "mode": "mock" if USE_MOCK else "real"}
-
-@app.on_event("startup")
-async def on_startup():
-    global db_engine
-    if not ASYNC_DB_URL:
-        print("[USAGE] DATABASE_URL no seteado: corriendo sin persistencia")
-        return
-    db_engine = create_async_engine(ASYNC_DB_URL, echo=False, pool_pre_ping=True)
-    async with db_engine.begin() as conn:
-        await conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS usage_events (
-                id SERIAL PRIMARY KEY,
-                ts BIGINT NOT NULL,
-                session_id TEXT NOT NULL,
-                model TEXT NOT NULL,
-                prompt_tokens INTEGER NOT NULL,
-                completion_tokens INTEGER NOT NULL
-            );
-        """))
-        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_usage_session ON usage_events(session_id)"))
-        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_events(ts)"))
-        # Tablas “CRM” básicas
-        await conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS customers (
-                id SERIAL PRIMARY KEY,
-                name  TEXT,
-                email TEXT UNIQUE,
-                phone TEXT UNIQUE,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-    );
-"""))
-
-        await conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS sessions_metadata (
-                session_id TEXT PRIMARY KEY,
-                customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
-                channel TEXT,              -- web, whatsapp, ig, etc.
-                tags JSONB DEFAULT '[]',
-                created_at TIMESTAMPTZ DEFAULT NOW(),
-                updated_at TIMESTAMPTZ DEFAULT NOW()
-    );
-"""))
-
-# Índices útiles
-        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email)"))
-        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone)"))
-        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_sessions_customer ON sessions_metadata(customer_id)"))
-
-
-    print("[USAGE] Postgres listo ✅")
-
 
 @app.get("/v1/sessions/{sid}/messages")
 async def get_messages(sid: str):
@@ -317,7 +249,7 @@ async def list_usage(limit: int = 50, offset: int = 0):
             })
         return {"items": items, "limit": limit, "offset": offset}
 
-    # Fallback en memoria (local/dev)
+    # Fallback en memoria (dev)
     items = []
     for sid, u in USAGE.items():
         pt = int(u.get("prompt_tokens", 0)); ct = int(u.get("completion_tokens", 0))
@@ -337,7 +269,6 @@ async def list_usage(limit: int = 50, offset: int = 0):
     items.sort(key=lambda x: x["last_ts"] or 0, reverse=True)
     return {"items": items, "limit": limit, "offset": offset}
 
-
 # ── Modelos IO ────────────────────────────────────────────────────────────────
 class ChatIn(BaseModel):
     message: str
@@ -347,30 +278,19 @@ class ChatOut(BaseModel):
     sessionId: str
     answer: str
 
-
-
-# ── Lógica de respuesta simple (no streaming) ────────────────────────────────
+# ── Lógica no streaming ──────────────────────────────────────────────────────
 def generate_answer(messages: list[dict]) -> str:
     if USE_MOCK:
         last = next((m for m in reversed(messages) if m["role"] == "user"), {"content": ""})
         return f"(mock) Recibí: {last['content']}"
-    # modo real
-    resp = client.chat.completions.create(
-        model=OPENAI_MODEL,
-        messages=messages,
-    )
+    resp = client.chat.completions.create(model=OPENAI_MODEL, messages=messages)
     return resp.choices[0].message.content
 
 @app.post("/v1/chat", response_model=ChatOut)
 async def chat(input: ChatIn, request: Request):
     key = input.sessionId or request.client.host
     if is_rate_limited(key):
-        raise HTTPException(
-            status_code=429,
-            detail="Too many requests",
-            headers={"Retry-After": str(RATE_WINDOW_SECONDS)},
-        )
-
+        raise HTTPException(status_code=429, detail="Too many requests", headers={"Retry-After": str(RATE_WINDOW_SECONDS)})
     sid = ensure_session(input.sessionId)
     add_message(sid, "user", input.message)
 
@@ -379,12 +299,10 @@ async def chat(input: ChatIn, request: Request):
         {"role": "user", "content": input.message},
     ]
     answer = generate_answer(messages)
-    prompt_text = "\n".join(m["content"] for m in messages)
-    prompt_tks = rough_token_count(prompt_text)
+    prompt_tks = rough_token_count("\n".join(m["content"] for m in messages))
     completion_tks = rough_token_count(answer)
     update_usage(sid, OPENAI_MODEL, prompt_tks, completion_tks)
     await persist_usage_async(sid, OPENAI_MODEL, prompt_tks, completion_tks)
-
 
     add_message(sid, "assistant", answer)
     return ChatOut(sessionId=sid, answer=answer)
@@ -394,11 +312,7 @@ async def chat(input: ChatIn, request: Request):
 async def chat_stream(input: ChatIn, request: Request):
     key = input.sessionId or request.client.host
     if is_rate_limited(key):
-        raise HTTPException(
-            status_code=429,
-            detail="Too many requests",
-            headers={"Retry-After": str(RATE_WINDOW_SECONDS)},
-        )
+        raise HTTPException(status_code=429, detail="Too many requests", headers={"Retry-After": str(RATE_WINDOW_SECONDS)})
 
     sid = ensure_session(input.sessionId)
     add_message(sid, "user", input.message)
@@ -410,55 +324,35 @@ async def chat_stream(input: ChatIn, request: Request):
 
     async def event_generator():
         try:
-            # --- MOCK ---
             if USE_MOCK:
                 full = f"(mock) Recibí: {input.message}"
                 partial = ""
-
-                # tokens (prompt una vez; completion acumulado)
-                prompt_text = "\n".join(m["content"] for m in messages)
-                prompt_tks = rough_token_count(prompt_text)
+                prompt_tks = rough_token_count("\n".join(m["content"] for m in messages))
                 completion_tks = 0
-
                 for ch in full:
                     partial += ch
                     completion_tks += rough_token_count(ch)
                     yield sse_event(ch, event="delta")
                     await asyncio.sleep(0.02)
-
                 add_message(sid, "assistant", partial)
                 update_usage(sid, OPENAI_MODEL, prompt_tks, completion_tks)
+                await persist_usage_async(sid, OPENAI_MODEL, prompt_tks, completion_tks)
                 yield sse_event(f'{{"done": true, "sessionId": "{sid}"}}', event="done")
                 return
 
-            # --- REAL STREAM ---
-            # tokens (prompt una vez; completion acumulado)
-            # --- REAL STREAM ---
-            # tokens (prompt una vez; completion acumulado)
-            prompt_text = "\n".join(m["content"] for m in messages)
-            prompt_tks = rough_token_count(prompt_text)
+            prompt_tks = rough_token_count("\n".join(m["content"] for m in messages))
             completion_tks = 0
-
-            stream = client.chat.completions.create(
-                model=OPENAI_MODEL,
-                messages=messages,
-                stream=True,
-            )
-
+            stream = client.chat.completions.create(model=OPENAI_MODEL, messages=messages, stream=True)
             final_text = ""
-            i = 0  # <- secuencia para deduplicar en el front
-
+            i = 0
             for chunk in stream:
                 piece = getattr(chunk.choices[0].delta, "content", None)
                 if piece:
                     final_text += piece
                     completion_tks += rough_token_count(piece)
                     i += 1
-                    # ENVÍA JSON con número de secuencia
                     yield sse_event(json.dumps({"i": i, "content": piece}), event="delta")
-                    await asyncio.sleep(0)  # flush
-
-                # Si el cliente cerró, corta y guarda lo acumulado
+                    await asyncio.sleep(0)
                 if await request.is_disconnected():
                     add_message(sid, "assistant", final_text)
                     update_usage(sid, OPENAI_MODEL, prompt_tks, completion_tks)
@@ -471,7 +365,6 @@ async def chat_stream(input: ChatIn, request: Request):
             await persist_usage_async(sid, OPENAI_MODEL, prompt_tks, completion_tks)
             yield sse_event(f'{{"done": true, "sessionId": "{sid}"}}', event="done")
 
-
         except Exception as e:
             print("SSE ERROR:", repr(e))
             err = str(e).replace("\n", " ")
@@ -480,9 +373,5 @@ async def chat_stream(input: ChatIn, request: Request):
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
