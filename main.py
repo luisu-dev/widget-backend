@@ -12,6 +12,7 @@ from openai import OpenAI
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from sqlalchemy import text
+from fastapi import Query
 
 load_dotenv()
 
@@ -58,6 +59,32 @@ app.add_middleware(
 async def require_admin(x_api_key: str = Header(default="")):
     if not ADMIN_KEY or x_api_key != ADMIN_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
+    
+async def fetch_tenant(slug: str) -> dict | None:
+    """Lee un tenant por slug desde la DB (o None si no existe)."""
+    if not db_engine or not slug:
+        return None
+    async with db_engine.connect() as conn:
+        row = (await conn.execute(
+            text("SELECT slug, name, whatsapp, settings FROM tenants WHERE slug=:slug"),
+            {"slug": slug}
+        )).first()
+    return dict(row._mapping) if row else None
+
+def build_system_for_tenant(tenant: dict | None) -> str:
+    """Parte de tu ZIA_SYSTEM_PROMPT y le añade tono/políticas/horarios del tenant."""
+    tone = (tenant or {}).get("settings", {}).get("tone", "cálido y directo")
+    policies = (tenant or {}).get("settings", {}).get("policies", "")
+    hours = (tenant or {}).get("settings", {}).get("opening_hours", "")
+    brand = (tenant or {}).get("name", "esta marca")
+
+    base = ZIA_SYSTEM_PROMPT
+    extras = f"\nContexto de negocio: {brand}. Tono: {tone}."
+    if policies:
+        extras += f" Políticas: {policies}."
+    if hours:
+        extras += f" Horarios: {hours}."
+    return (base + extras).strip()
     
 def build_messages_with_history(sid: str, system_prompt: str, max_pairs: int = 8) -> list[dict]:
     convo = MESSAGES.get(sid, [])
@@ -392,7 +419,7 @@ def generate_answer(messages: list[dict]) -> str:
     return resp.choices[0].message.content
 
 @app.post("/v1/chat", response_model=ChatOut)
-async def chat(input: ChatIn, request: Request):
+async def chat(input: ChatIn, request: Request, tenant: str = Query(default="")):
     key = input.sessionId or request.client.host
     if is_rate_limited(key):
         raise HTTPException(status_code=429, detail="Too many requests",
@@ -401,7 +428,9 @@ async def chat(input: ChatIn, request: Request):
     sid = ensure_session(input.sessionId)
     add_message(sid, "user", input.message)
 
-    messages = build_messages_with_history(sid, ZIA_SYSTEM_PROMPT)
+    t = await fetch_tenant(tenant)                 # ← lee tenant
+    system_prompt = build_system_for_tenant(t)     # ← arma prompt con settings
+    messages = build_messages_with_history(sid, system_prompt)
     answer = generate_answer(messages)
 
     prompt_text = "\n".join(m["content"] for m in messages)
@@ -416,7 +445,7 @@ async def chat(input: ChatIn, request: Request):
 
 # ── Streaming SSE ─────────────────────────────────────────────────────────────
 @app.post("/v1/chat/stream")
-async def chat_stream(input: ChatIn, request: Request):
+async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(default="")):
     key = input.sessionId or request.client.host
     if is_rate_limited(key):
         raise HTTPException(status_code=429, detail="Too many requests", headers={"Retry-After": str(RATE_WINDOW_SECONDS)})
@@ -424,7 +453,9 @@ async def chat_stream(input: ChatIn, request: Request):
     sid = ensure_session(input.sessionId)
     add_message(sid, "user", input.message)
 
-    messages = build_messages_with_history(sid, ZIA_SYSTEM_PROMPT)
+    t = await fetch_tenant(tenant)                 # ← lee tenant
+    system_prompt = build_system_for_tenant(t)     # ← arma prompt con settings
+    messages = build_messages_with_history(sid, system_prompt)
 
 
     async def event_generator():
