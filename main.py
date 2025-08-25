@@ -112,29 +112,42 @@ def is_rate_limited(key: str, limit: int = RATE_LIMIT, window: int = RATE_WINDOW
     RATELIMIT[key] = bucket
     return False
 
+from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+
 def to_asyncpg(url: str) -> str:
+    """
+    Acepta cualquier URL tipo Render (postgres://... o postgresql://..., con o sin sslmode),
+    y devuelve una URL válida para SQLAlchemy async con asyncpg:
+      postgresql+asyncpg://USER:PASS@HOST:PORT/DB?ssl=true
+    - Elimina sslmode si viene y lo sustituye por ssl=true.
+    - Fuerza el dialecto +asyncpg.
+    """
     if not url:
         return ""
-    # Normaliza esquema base
+
+    # Normaliza base a postgresql:// (sin +asyncpg) para procesar query
     if url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql://", 1)
+        url = "postgresql://" + url[len("postgres://"):]
+    url = url.replace("postgresql+asyncpg://", "postgresql://", 1)
 
     p = urlparse(url)
     q = dict(parse_qsl(p.query, keep_blank_values=True))
 
-    # Mapear sslmode=require -> ssl=true para asyncpg
+    # Si viene sslmode (require/verify-*), lo quitamos y usamos ssl=true para asyncpg
     if "sslmode" in q:
-        if q["sslmode"] == "require":
+        val = (q.get("sslmode") or "").strip().lower()
+        if val in ("require", "verify-ca", "verify-full"):
             q["ssl"] = "true"
         q.pop("sslmode", None)
 
-    new_query = urlencode(q)
-    # Cambiar a dialecto asyncpg
-    scheme = "postgresql+asyncpg"
+    # Si no hay ssl, para Render conviene forzarlo
+    if "ssl" not in q:
+        q["ssl"] = "true"
 
-    return urlunparse((
-        scheme, p.netloc, p.path, p.params, new_query, p.fragment
-    ))
+    new_query = urlencode(q)
+    scheme = "postgresql+asyncpg"
+    return urlunparse((scheme, p.netloc, p.path, p.params, new_query, p.fragment))
+
 
 ASYNC_DB_URL = to_asyncpg(DATABASE_URL)
 db_engine: AsyncEngine | None = None
