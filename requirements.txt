@@ -1,7 +1,15 @@
-fastapi
-uvicorn[standard]
-python-dotenv
-openai>=1.0.0
-starlette
-SQLAlchemy[asyncio]
-asyncpg
+# ── Web Framework ──────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.30.0
+starlette==0.37.2
+
+# ── OpenAI SDK ─────────────────────────────────
+openai==1.35.10
+
+# ── DB ─────────────────────────────────────────
+sqlalchemy==2.0.31
+asyncpg==0.29.0
+
+# ── Utils ──────────────────────────────────────
+python-dotenv==1.0.1
+pydantic==2.7.3
