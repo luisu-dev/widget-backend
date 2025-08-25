@@ -5,6 +5,8 @@ from fastapi import FastAPI, HTTPException, Request, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import StreamingResponse, JSONResponse
 from typing import Optional, Dict, Any
+from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -113,11 +115,26 @@ def is_rate_limited(key: str, limit: int = RATE_LIMIT, window: int = RATE_WINDOW
 def to_asyncpg(url: str) -> str:
     if not url:
         return ""
+    # Normaliza esquema base
     if url.startswith("postgres://"):
-        return url.replace("postgres://", "postgresql+asyncpg://", 1)
-    if url.startswith("postgresql://") and "+asyncpg" not in url:
-        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    return url
+        url = url.replace("postgres://", "postgresql://", 1)
+
+    p = urlparse(url)
+    q = dict(parse_qsl(p.query, keep_blank_values=True))
+
+    # Mapear sslmode=require -> ssl=true para asyncpg
+    if "sslmode" in q:
+        if q["sslmode"] == "require":
+            q["ssl"] = "true"
+        q.pop("sslmode", None)
+
+    new_query = urlencode(q)
+    # Cambiar a dialecto asyncpg
+    scheme = "postgresql+asyncpg"
+
+    return urlunparse((
+        scheme, p.netloc, p.path, p.params, new_query, p.fragment
+    ))
 
 ASYNC_DB_URL = to_asyncpg(DATABASE_URL)
 db_engine: AsyncEngine | None = None
