@@ -122,6 +122,34 @@ def to_asyncpg(url: str) -> str:
 ASYNC_DB_URL = to_asyncpg(DATABASE_URL)
 db_engine: AsyncEngine | None = None
 
+def clean_phone_for_wa(phone: str | None) -> str | None:
+    if not phone: return None
+    # deja solo dígitos y +
+    d = "".join(ch for ch in phone if ch.isdigit() or ch == "+")
+    return d if d else None
+
+def suggest_ui_for_text(user_text: str, tenant: dict | None) -> dict:
+    """
+    Regresa un payload simple con chips y, si aplica, un link de WhatsApp.
+    Heurística mínima: si el user menciona whatsapp/contacto/reservar/tarifa.
+    """
+    text = (user_text or "").lower()
+    chips = []
+    if any(w in text for w in ["reserva", "reservar", "booking"]):
+        chips += ["Hacer reserva"]
+    if any(w in text for w in ["precio", "tarifa", "cotiza", "costo"]):
+        chips += ["Ver tarifas", "Solicitar cotización"]
+    if any(w in text for w in ["whatsapp", "wasap", "contact", "contacto"]):
+        chips += ["Hablar por WhatsApp"]
+    # fallback si nada matchea
+    if not chips:
+        chips = ["Hacer reserva", "Ver tarifas", "Contactar por WhatsApp"]
+
+    wa = clean_phone_for_wa((tenant or {}).get("whatsapp"))
+    wa_link = f"https://wa.me/{wa}" if wa else None
+    return {"chips": chips, "whatsapp": wa_link}
+
+
 # ── Startup: crea tablas/índices ─────────────────────────────────────────────
 class TenantIn(BaseModel):
     slug: str
@@ -499,6 +527,8 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
             add_message(sid, "assistant", final_text or "")
             update_usage(sid, OPENAI_MODEL, prompt_tks, completion_tks)
             await persist_usage_async(sid, OPENAI_MODEL, prompt_tks, completion_tks)
+            ui = suggest_ui_for_text(input.message, t)
+            yield sse_event(json.dumps(ui), event="ui")
             yield sse_event(f'{{"done": true, "sessionId": "{sid}"}}', event="done")
 
         except Exception as e:
