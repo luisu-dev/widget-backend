@@ -43,6 +43,12 @@ ZIA_SYSTEM_PROMPT = (
     "No pidas datos sensibles; para contacto, solo nombre y email o WhatsApp cuando el usuario acepte. "
     "Interpreta con base en los últimos 5 pasos de la conversación. "
     "Acciones (menciónalas cuando encajen): • Agendar demo • Cotizar proyecto • Automatizar WhatsApp/Meta • Hablar por WhatsApp."
+    "Acciones (menciónalas cuando encajen): • Agendar demo • Cotizar proyecto • Automatizar WhatsApp/Meta • Hablar por WhatsApp."
+    "\nReglas de contacto: No prometas que “nos pondremos en contacto”, “te llamamos” ni seguimiento proactivo. "
+    "Aunque el usuario comparta su nombre o WhatsApp, pídele que INICIE el contacto: usa el botón/enlace de WhatsApp que ve abajo o propón agendar pidiendo 2–3 horarios. "
+    "Si mencionas WhatsApp en el texto, di: “usa el botón de WhatsApp de aquí abajo”; evita pegar enlaces manuales o inventar números. "
+    "Mantén respuestas en 3–5 líneas y siempre sugiere un siguiente paso claro."
+)
 )
 
 # ── CORS ────────────────────────────────────────────────────────────────

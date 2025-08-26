@@ -8,18 +8,18 @@ document.addEventListener("DOMContentLoaded", () => {
   const API     = `${RAW_API}?tenant=${encodeURIComponent(TENANT)}`;
   const BOOTSTRAP = (RAW_API || "").replace(/\/v1\/chat\/stream$/, "") + `/v1/widget/bootstrap?tenant=${encodeURIComponent(TENANT)}`;
 
-  // DOM
-  const thread = document.getElementById("msgs");
+  // ------- DOM -------
+  const thread   = document.getElementById("msgs");
   const chipsBox = document.getElementById("chips");
-  const msg  = document.getElementById("msg");
-  const sid  = document.getElementById("sid");
-  const sendBtn = document.getElementById("send");
-  const newBtn  = document.getElementById("new");
-  const stopBtn = document.getElementById("stop");
-  const panel   = document.getElementById("cw-panel");
-  const launcher= document.getElementById("cw-launcher");
-  const closeBtn= document.getElementById("cw-close");
-  const minBtn  = document.getElementById("cw-min");
+  const msg      = document.getElementById("msg");
+  const sid      = document.getElementById("sid");
+  const sendBtn  = document.getElementById("send");
+  const newBtn   = document.getElementById("new");
+  const stopBtn  = document.getElementById("stop");
+  const panel    = document.getElementById("cw-panel");
+  const launcher = document.getElementById("cw-launcher");
+  const closeBtn = document.getElementById("cw-close");
+  const minBtn   = document.getElementById("cw-min");
 
   // ------- sesión persistente -------
   (function persistSessionId() {
@@ -39,7 +39,6 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // ------- helpers UI -------
-
   const autoscroll = () => {
     const scroller = thread?.parentElement || thread;
     if (scroller) scroller.scrollTop = scroller.scrollHeight;
@@ -47,20 +46,30 @@ document.addEventListener("DOMContentLoaded", () => {
   const makeBubble = (role, html = "") => {
     const el = document.createElement("div");
     el.className = `msg ${role}`;
-    el.innerHTML = html;       // usamos innerHTML para que se vean <a> linkify
+    el.innerHTML = html;
     thread?.appendChild(el);
     autoscroll();
     return el;
   };
-  const openPanel = () => {
-  panel?.classList.add("open");
-  // saludar si el thread está vacío
-  if (thread && thread.childElementCount === 0) {
-    greetOnce();
-  }
-};
-
   const closePanelFn = () => panel?.classList.remove("open");
+
+  // saludo: usa nombre real del tenant si está disponible
+  let BRAND_NAME = window.TENANT_NAME || null;
+  function greetOnce() {
+    const session = sid?.value || "anon";
+    const flagKey = `welcomed:${TENANT}:${session}`;
+    if (localStorage.getItem(flagKey)) return;
+    const brand = BRAND_NAME || window.TENANT_NAME || "zIA";
+    const text  = `Hola — soy ${brand}, tu asistente con IA. Puedo resolver dudas, cotizar y coordinar por WhatsApp. ¿Qué necesitas hoy?`;
+    makeBubble("bot", text);
+    localStorage.setItem(flagKey, "1");
+  }
+
+  const openPanel = () => {
+    panel?.classList.add("open");
+    if (thread && thread.childElementCount === 0) greetOnce();
+  };
+
   launcher?.addEventListener("click", openPanel);
   closeBtn?.addEventListener("click", closePanelFn);
   minBtn?.addEventListener("click", () => panel?.classList.toggle("open"));
@@ -74,7 +83,6 @@ document.addEventListener("DOMContentLoaded", () => {
   // --- typing indicator ---
   let typingEl = null;
   let typingTimer = null;
-
   function showTyping() {
     if (typingEl) return;
     typingEl = makeBubble("bot", "...");
@@ -86,13 +94,11 @@ document.addEventListener("DOMContentLoaded", () => {
       if (typingEl) typingEl.textContent = ".".repeat(dots);
     }, 350);
   }
-
   function hideTyping() {
     if (typingTimer) { clearInterval(typingTimer); typingTimer = null; }
     if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
     typingEl = null;
   }
-
 
   // Convierte URLs en <a href="...">
   const linkify = (text) => {
@@ -121,12 +127,13 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Bootstrap inicial (sugerencias)
+  // ------- Bootstrap inicial (nombre del tenant + sugerencias) -------
   (async function initBootstrap(){
     try {
       const res = await fetch(BOOTSTRAP);
       if (!res.ok) return;
       const data = await res.json();
+      BRAND_NAME = data?.tenant?.name || BRAND_NAME;
       const suggestions = data?.ui?.suggestions || [];
       renderChips(suggestions);
     } catch {}
@@ -135,21 +142,17 @@ document.addEventListener("DOMContentLoaded", () => {
   // ------- Streaming SSE -------
   let currentController = null;
   let currentBotBubble = null;
-  let lastShownWhatsApp = ""; 
+  let lastShownWhatsApp = "";
 
   async function startStream() {
     if (!msg) return;
     if (currentController) currentController.abort();
 
-    // burbuja usuario
     const userText = msg.value || "(vacío)";
     makeBubble("user", linkify(userText));
     msg.value = "";
 
-    const body = {
-      message: userText,
-      sessionId: sid?.value || null,
-    };
+    const body = { message: userText, sessionId: sid?.value || null };
 
     currentController = new AbortController();
     stopBtn && (stopBtn.onclick = () => currentController?.abort());
@@ -220,8 +223,7 @@ document.addEventListener("DOMContentLoaded", () => {
             if (!currentBotBubble) {
               hideTyping();
               currentBotBubble = makeBubble("bot", "");
-            } 
-
+            }
             let text = data;
             try {
               const obj = JSON.parse(data);
@@ -233,15 +235,14 @@ document.addEventListener("DOMContentLoaded", () => {
                 text = obj.content;
               }
             } catch {}
-            if (currentBotBubble) {
-              currentBotBubble.innerHTML += linkify(text);
-              autoscroll();
-            }
+            currentBotBubble.innerHTML += linkify(text);
+            autoscroll();
+
           } else if (evType === "ui") {
             try {
               const ui = JSON.parse(data);
 
-    // A) Mostrar burbuja si backend lo pide o, si no manda flag, cuando exista link
+              // A) Burbuja de WhatsApp si corresponde (y solo una vez por valor)
               const shouldBubble = (ui?.showWhatsAppBubble ?? !!ui?.whatsapp);
               if (shouldBubble && ui?.whatsapp && ui.whatsapp !== lastShownWhatsApp) {
                 makeBubble(
@@ -251,15 +252,14 @@ document.addEventListener("DOMContentLoaded", () => {
                 lastShownWhatsApp = ui.whatsapp;
               }
 
-    // B) Render de chips, filtrando cualquier opción de WhatsApp si ya hay link
+              // B) Chips; si ya mostramos WhatsApp como burbuja, filtramos cualquier chip similar
               const chips = (ui?.chips || []).filter(c =>
                 !(shouldBubble && /whats\s*app|whatsapp|wasap/i.test(c))
               );
               renderChips(chips);
             } catch {}
           } else if (evType === "done") {
-            hideTyping();    
-            currentBotBubble = null; // no mostramos [done]
+            currentBotBubble = null;
           } else if (evType === "error") {
             makeBubble("bot", `[error] ${data}`);
             console.error("SSE error event:", data);
@@ -276,22 +276,16 @@ document.addEventListener("DOMContentLoaded", () => {
         console.error("Stream read failed:", err);
       }
     } finally {
-      hideTyping();    
       currentController = null;
       currentBotBubble = null;
     }
   }
-  function greetOnce() {
-  const session = sid?.value || "anon";
-  const flagKey = `welcomed:${session}`;
-  if (localStorage.getItem(flagKey)) return;   // ya saludamos
 
-  const brand = (window.TENANT_NAME || "zIA");
-  const text  = `Hola — soy ${brand}, tu asistente con IA. Puedo resolver dudas, cotizar y coordinar por WhatsApp. ¿Qué necesitas hoy?`;
-  makeBubble("bot", text);
+  // Saludo si el panel ya venía abierto (p.ej. por CSS)
+  if (panel?.classList.contains("open") && thread?.childElementCount === 0) {
+    greetOnce();
+  }
 
-  localStorage.setItem(flagKey, "1");
-}
-
+  // Enviar
   document.getElementById("send")?.addEventListener("click", startStream);
 });
