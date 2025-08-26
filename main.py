@@ -204,16 +204,34 @@ async def fetch_tenant(slug: str) -> dict | None:
     return dict(row._mapping) if row else None
 
 def build_system_for_tenant(tenant: dict | None) -> str:
-    tone = (tenant or {}).get("settings", {}).get("tone", "cálido y directo")
-    policies = (tenant or {}).get("settings", {}).get("policies", "")
-    hours = (tenant or {}).get("settings", {}).get("opening_hours", "")
-    brand = (tenant or {}).get("name", "esta marca")
-    extras = f"\nContexto de negocio: {brand}. Tono: {tone}."
-    if policies:
-        extras += f" Políticas: {policies}."
-    if hours:
-        extras += f" Horarios: {hours}."
-    return (ZIA_SYSTEM_PROMPT + extras).strip()
+    s = (tenant or {}).get("settings", {}) or {}
+    tone     = s.get("tone", "cálido y directo")
+    policies = s.get("policies", "")
+    hours    = s.get("opening_hours", "")
+    products = s.get("products", "")
+    prices   = s.get("prices", {})       # dict opcional {"Paquete 1":"150 USD", ...}
+    faq      = s.get("faq", [])          # puede ser lista de strings o de dicts {"q","a"}
+    brand    = (tenant or {}).get("name", "esta marca")
+
+    extras = [f"Contexto de negocio: {brand}. Tono: {tone}."]
+    if policies: extras.append(f"Políticas: {policies}.")
+    if hours:    extras.append(f"Horarios: {hours}.")
+    if products: extras.append(f"Oferta/servicios: {products}.")
+    if prices and isinstance(prices, dict):
+        price_txt = "; ".join(f"{k}: {v}" for k, v in prices.items())
+        extras.append(f"Precios conocidos (orientativos): {price_txt}.")
+    if faq:
+        def fmt(item):
+            if isinstance(item, dict):
+                q = item.get("q", "")
+                a = item.get("a", "")
+                return f"Q: {q} | A: {a}"
+            return str(item)
+        faq_txt = " | ".join(fmt(x) for x in faq[:8])
+        extras.append(f"FAQ internas (usa si aplica, concisas): {faq_txt}.")
+
+    return (ZIA_SYSTEM_PROMPT + "\n" + " ".join(extras)).strip()
+
 
 def build_messages_with_history(sid: str, system_prompt: str, max_pairs: int = 8) -> list[dict]:
     convo = MESSAGES.get(sid, [])
@@ -222,20 +240,43 @@ def build_messages_with_history(sid: str, system_prompt: str, max_pairs: int = 8
     return [{"role": "system", "content": system_prompt}] + history
 
 def suggest_ui_for_text(user_text: str, tenant: dict | None) -> dict:
+    """
+    Devuelve chips y, si aplica, un link de WhatsApp.
+    Regla: si el user menciona 'whatsapp' o 'contacto', mostramos burbuja
+    y quitamos el chip duplicado.
+    """
     text_ = (user_text or "").lower()
+
+    # chips base por intención
     chips = []
     if any(w in text_ for w in ["reserva", "reservar", "booking"]):
         chips += ["Hacer reserva"]
     if any(w in text_ for w in ["precio", "tarifa", "cotiza", "costo"]):
         chips += ["Ver tarifas", "Solicitar cotización"]
-    if any(w in text_ for w in ["whatsapp", "contacto", "wasap"]):
-        chips += ["Hablar por WhatsApp"]
     if not chips:
         chips = ["Hacer reserva", "Ver tarifas", "Contactar por WhatsApp"]
 
+    # teléfono → wa.me
+    def clean_phone_for_wa(phone: str | None) -> str | None:
+        if not phone: return None
+        d = "".join(ch for ch in phone if ch.isdigit())
+        return d or None
+
     wa_num = clean_phone_for_wa((tenant or {}).get("whatsapp"))
     wa_link = f"https://wa.me/{wa_num}" if wa_num else None
-    return {"chips": chips, "whatsapp": wa_link}
+
+    # ¿mostrar burbuja?
+    show_bubble = any(w in text_ for w in ["whatsapp", "wasap", "contacto", "contact"])
+    if show_bubble:
+        # quita el chip duplicado
+        chips = [c for c in chips if "whats" not in c.lower()]
+
+    return {
+        "chips": chips,
+        "whatsapp": wa_link if show_bubble and wa_link else None,
+        "showWhatsAppBubble": bool(show_bubble and wa_link),
+    }
+
 
 # ── Endpoints utilitarios ──────────────────────────────────────────────
 @app.get("/health")

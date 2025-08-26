@@ -39,6 +39,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // ------- helpers UI -------
+
   const autoscroll = () => {
     const scroller = thread?.parentElement || thread;
     if (scroller) scroller.scrollTop = scroller.scrollHeight;
@@ -69,6 +70,29 @@ document.addEventListener("DOMContentLoaded", () => {
       sendBtn?.click();
     }
   });
+
+  // --- typing indicator ---
+  let typingEl = null;
+  let typingTimer = null;
+
+  function showTyping() {
+    if (typingEl) return;
+    typingEl = makeBubble("bot", "...");
+    typingEl.style.opacity = "0.6";
+    typingEl.classList.add("typing");
+    let dots = 1;
+    typingTimer = setInterval(() => {
+      dots = (dots % 3) + 1;
+      if (typingEl) typingEl.textContent = ".".repeat(dots);
+    }, 350);
+  }
+
+  function hideTyping() {
+    if (typingTimer) { clearInterval(typingTimer); typingTimer = null; }
+    if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
+    typingEl = null;
+  }
+
 
   // Convierte URLs en <a href="...">
   const linkify = (text) => {
@@ -132,6 +156,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     let res;
     try {
+      showTyping();
       res = await fetch(API, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -139,6 +164,7 @@ document.addEventListener("DOMContentLoaded", () => {
         signal: currentController.signal,
       });
     } catch (err) {
+      hideTyping();
       makeBubble("bot", "[error] No se pudo conectar con el backend");
       console.error("Fetch failed:", err);
       currentController = null;
@@ -146,6 +172,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if (!res.ok) {
+      hideTyping();
       const retry = res.headers.get("Retry-After");
       const text = await res.text().catch(() => "");
       const msgErr =
@@ -161,7 +188,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const decoder = new TextDecoder();
     let buffer = "";
     let lastSeq = 0;
-    currentBotBubble = makeBubble("bot", "");
+    currentBotBubble = null;
 
     try {
       while (true) {
@@ -190,6 +217,11 @@ document.addEventListener("DOMContentLoaded", () => {
           }
 
           if (evType === "delta") {
+            if (!currentBotBubble) {
+              hideTyping();
+              currentBotBubble = makeBubble("bot", "");
+            } 
+
             let text = data;
             try {
               const obj = JSON.parse(data);
@@ -209,8 +241,9 @@ document.addEventListener("DOMContentLoaded", () => {
             try {
               const ui = JSON.parse(data);
 
-    // 1) Si viene link de WhatsApp, muestralo como burbuja (una sola vez por valor)
-              if (ui.whatsapp && ui.whatsapp !== lastShownWhatsApp) {
+    // A) Mostrar burbuja si backend lo pide o, si no manda flag, cuando exista link
+              const shouldBubble = (ui?.showWhatsAppBubble ?? !!ui?.whatsapp);
+              if (shouldBubble && ui?.whatsapp && ui.whatsapp !== lastShownWhatsApp) {
                 makeBubble(
                   "bot",
                   `Puedes escribirnos por WhatsApp aquí: <a href="${ui.whatsapp}" target="_blank" rel="noopener">Abrir WhatsApp</a>`
@@ -218,15 +251,14 @@ document.addEventListener("DOMContentLoaded", () => {
                 lastShownWhatsApp = ui.whatsapp;
               }
 
-    // 2) Chips: si ya hay link de WA, quitamos chips que mencionen WhatsApp
-              let chips = Array.isArray(ui.chips) ? ui.chips : [];
-              if (ui.whatsapp) {
-                const isWA = (s) => String(s).toLowerCase().includes("whatsapp");
-                chips = chips.filter((c) => !isWA(c));
-              }
+    // B) Render de chips, filtrando cualquier opción de WhatsApp si ya hay link
+              const chips = (ui?.chips || []).filter(c =>
+                !(shouldBubble && /whats\s*app|whatsapp|wasap/i.test(c))
+              );
               renderChips(chips);
             } catch {}
           } else if (evType === "done") {
+            hideTyping();    
             currentBotBubble = null; // no mostramos [done]
           } else if (evType === "error") {
             makeBubble("bot", `[error] ${data}`);
@@ -235,6 +267,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
     } catch (err) {
+      hideTyping();
       if (String(err?.name) === "AbortError") {
         const el = makeBubble("bot", "[cancelado]");
         el.style.opacity = ".85";
@@ -243,6 +276,7 @@ document.addEventListener("DOMContentLoaded", () => {
         console.error("Stream read failed:", err);
       }
     } finally {
+      hideTyping();    
       currentController = null;
       currentBotBubble = null;
     }

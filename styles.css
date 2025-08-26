@@ -247,3 +247,4 @@ html, body {
 
 /* Oculta el bloque de debug para usuarios */
 .cw-advanced { display: none; }
+.msg.bot.typing { opacity:.6; font-style:italic; }
