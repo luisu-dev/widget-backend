@@ -85,6 +85,15 @@ def rough_token_count(text: str) -> int:
         return 0
     return max(1, len(text) // 4)  # cálculo aproximado
 
+# --- mete esto junto a tus helpers ---
+def clean_phone_for_wa(phone: str | None) -> str | None:
+    if not phone:
+        return None
+    # wa.me exige E.164 sin '+', solo dígitos.
+    digits = "".join(ch for ch in phone if ch.isdigit())
+    return digits or None
+
+
 # ── DB ──────────────────────────────────────────────────────────────────
 def to_asyncpg(url: str) -> str:
     if not url:
@@ -201,12 +210,13 @@ def suggest_ui_for_text(user_text: str, tenant: dict | None) -> dict:
         chips += ["Hacer reserva"]
     if any(w in text_ for w in ["precio", "tarifa", "cotiza", "costo"]):
         chips += ["Ver tarifas", "Solicitar cotización"]
-    if any(w in text_ for w in ["whatsapp", "contacto"]):
+    if any(w in text_ for w in ["whatsapp", "contacto", "wasap"]):
         chips += ["Hablar por WhatsApp"]
     if not chips:
         chips = ["Hacer reserva", "Ver tarifas", "Contactar por WhatsApp"]
-    wa = (tenant or {}).get("whatsapp")
-    wa_link = f"https://wa.me/{wa}" if wa else None
+
+    wa_num = clean_phone_for_wa((tenant or {}).get("whatsapp"))
+    wa_link = f"https://wa.me/{wa_num}" if wa_num else None
     return {"chips": chips, "whatsapp": wa_link}
 
 # ── Endpoints utilitarios ──────────────────────────────────────────────

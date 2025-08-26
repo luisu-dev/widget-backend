@@ -111,6 +111,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // ------- Streaming SSE -------
   let currentController = null;
   let currentBotBubble = null;
+  let lastShownWhatsApp = ""; 
 
   async function startStream() {
     if (!msg) return;
@@ -207,9 +208,21 @@ document.addEventListener("DOMContentLoaded", () => {
           } else if (evType === "ui") {
             try {
               const ui = JSON.parse(data);
-              const chips = ui?.chips || [];
-              renderChips(chips);
-            } catch {}
+
+    // chips dinámicos
+              renderChips(ui?.chips || []);
+
+    // si viene link de WhatsApp, muéstralo como burbuja clicable (una sola vez por valor)
+              if (ui?.whatsapp && ui.whatsapp !== lastShownWhatsApp) {
+              makeBubble(
+              "bot",
+              `Puedes escribirnos por WhatsApp aquí: <a href="${ui.whatsapp}" target="_blank" rel="noopener">Abrir WhatsApp</a>`
+                );
+                lastShownWhatsApp = ui.whatsapp;
+              }
+            } catch (e) {
+              console.error("UI payload inválido:", e, data);
+            }
           } else if (evType === "done") {
             currentBotBubble = null; // no mostramos [done]
           } else if (evType === "error") {
