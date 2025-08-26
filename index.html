@@ -55,13 +55,16 @@
       </details>
     </div>
   </section>
-
-  <!-- Config rápida: cambia a local si quieres -->
   <script>
-  window.CHAT_API = "https://widget-backend-zia.onrender.com/v1/chat/stream";
-  window.TENANT = "hotel-kante"; /* placeholder para pruebas */
+    window.CHAT_API = "http://127.0.0.1:8000/v1/chat/stream";
+    window.TENANT = "zia";
+    window.TENANT_NAME = "zIA";
+    window.DEBUG_WIDGET = /[?&]debug=1/.test(location.search) ||
+                        ["localhost","127.0.0.1"].includes(location.hostname);
+
   </script>
-  <!-- Lógica del widget -->
+  <!-- Lógica del widget (NECESARIO) -->
   <script type="module" src="app.js"></script>
+
 </body>
 </html>

@@ -243,3 +243,7 @@ html, body {
   cursor: pointer;
 }
 .chip:hover { border-color: var(--cw-primary); }
+
+
+/* Oculta el bloque de debug para usuarios */
+.cw-advanced { display: none; }

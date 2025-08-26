@@ -209,20 +209,23 @@ document.addEventListener("DOMContentLoaded", () => {
             try {
               const ui = JSON.parse(data);
 
-    // chips dinámicos
-              renderChips(ui?.chips || []);
-
-    // si viene link de WhatsApp, muéstralo como burbuja clicable (una sola vez por valor)
-              if (ui?.whatsapp && ui.whatsapp !== lastShownWhatsApp) {
-              makeBubble(
-              "bot",
-              `Puedes escribirnos por WhatsApp aquí: <a href="${ui.whatsapp}" target="_blank" rel="noopener">Abrir WhatsApp</a>`
+    // 1) Si viene link de WhatsApp, muestralo como burbuja (una sola vez por valor)
+              if (ui.whatsapp && ui.whatsapp !== lastShownWhatsApp) {
+                makeBubble(
+                  "bot",
+                  `Puedes escribirnos por WhatsApp aquí: <a href="${ui.whatsapp}" target="_blank" rel="noopener">Abrir WhatsApp</a>`
                 );
                 lastShownWhatsApp = ui.whatsapp;
               }
-            } catch (e) {
-              console.error("UI payload inválido:", e, data);
-            }
+
+    // 2) Chips: si ya hay link de WA, quitamos chips que mencionen WhatsApp
+              let chips = Array.isArray(ui.chips) ? ui.chips : [];
+              if (ui.whatsapp) {
+                const isWA = (s) => String(s).toLowerCase().includes("whatsapp");
+                chips = chips.filter((c) => !isWA(c));
+              }
+              renderChips(chips);
+            } catch {}
           } else if (evType === "done") {
             currentBotBubble = null; // no mostramos [done]
           } else if (evType === "error") {
