@@ -98,20 +98,38 @@ def clean_phone_for_wa(phone: str | None) -> str | None:
 def to_asyncpg(url: str) -> str:
     if not url:
         return ""
+    # normaliza esquema base
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
+    # por si acaso alguien puso ya +asyncpg
     url = url.replace("postgresql+asyncpg://", "postgresql://", 1)
+
+    from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
     p = urlparse(url)
     q = dict(parse_qsl(p.query, keep_blank_values=True))
+
+    # 1) si viene sslmode=..., pásalo a ssl=<valor válido para asyncpg>
     if "sslmode" in q:
-        if q["sslmode"].lower() in ("require", "verify-ca", "verify-full"):
-            q["ssl"] = "true"
-        q.pop("sslmode", None)
+        val = (q.pop("sslmode") or "").lower()
+        if val in ("disable", "allow", "prefer", "require", "verify-ca", "verify-full"):
+            q["ssl"] = val  # asyncpg acepta estos valores en 'ssl' (como string)
+    # 2) si ya viene ssl, corrige valores booleanos a modos válidos
+    if "ssl" in q:
+        v = (q["ssl"] or "").lower()
+        if v in ("true", "1", "yes"):
+            q["ssl"] = "require"
+        elif v in ("false", "0", "no"):
+            q["ssl"] = "disable"
+        # si ya es uno de los modos válidos, lo dejamos igual
+
+    # 3) si no vino nada, default seguro en Render:
     if "ssl" not in q:
-        q["ssl"] = "true"
+        q["ssl"] = "require"
+
     new_query = urlencode(q)
     scheme = "postgresql+asyncpg"
     return urlunparse((scheme, p.netloc, p.path, p.params, new_query, p.fragment))
+
 
 ASYNC_DB_URL = to_asyncpg(DATABASE_URL)
 db_engine: AsyncEngine | None = None
