@@ -1,7 +1,8 @@
+httpx==0.27.2          # ← importante
+openai==1.35.10
 fastapi==0.111.0
 uvicorn[standard]==0.30.0
 starlette==0.37.2
-openai==1.35.10
 sqlalchemy==2.0.31
 asyncpg==0.29.0
 python-dotenv==1.0.1
