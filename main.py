@@ -9,6 +9,7 @@ from openai import OpenAI
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from sqlalchemy import text
 from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+import csv, io
 
 # ── Setup ──────────────────────────────────────────────────────────────
 load_dotenv()
@@ -47,6 +48,7 @@ ZIA_SYSTEM_PROMPT = (
     "Reglas de contacto: No prometas que “nos pondremos en contacto”, “te llamamos” ni seguimiento proactivo. "
     "Aunque el usuario comparta su nombre o WhatsApp, pide que INICIE el contacto: usa el botón/enlace de WhatsApp de abajo "
     "o propón agendar pidiendo 2–3 horarios."
+    "solo ofrece check list si el cliente lo menciona explicitamente"
 )
 
 # ── CORS ───────────────────────────────────────────────────────────────
@@ -114,6 +116,10 @@ def wants_quote(text: str) -> bool:
     t = (text or "").lower()
     keys = ["cotiza", "cotización", "cotizar", "presupuesto", "precio", "quote"]
     return any(k in t for k in keys)
+
+def valid_slug(slug: str) -> bool:
+    return bool(re.fullmatch(r"[a-z0-9\-]{1,40}", (slug or "")))
+
 
 # ── DB helpers ─────────────────────────────────────────────────────────
 def to_asyncpg(url: str) -> str:
@@ -192,6 +198,17 @@ async def on_startup():
         """))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_events_tenant ON events(tenant_slug, type, created_at DESC)"))
     log.info("Postgres listo ✅")
+    
+async def store_event(tenant_slug: str, sid: str, etype: str, payload: dict | None = None):
+    if not db_engine:
+        return
+    async with db_engine.begin() as conn:
+        await conn.execute(
+            text("""INSERT INTO events (tenant_slug, session_id, type, payload)
+                    VALUES (:tenant, :sid, :type, CAST(:payload AS JSONB))"""),
+            {"tenant": tenant_slug or "public", "sid": sid, "type": etype, "payload": json.dumps(payload or {})}
+        )
+
 
 # ── Modelos ────────────────────────────────────────────────────────────
 class TenantIn(BaseModel):
@@ -348,6 +365,9 @@ async def upsert_tenant(body: TenantIn):
 
 @app.get("/v1/widget/bootstrap")
 async def widget_bootstrap(tenant: str):
+    if tenant and not valid_slug(tenant):
+        raise HTTPException(400, "Invalid tenant")
+
     if not db_engine:
         return {
             "tenant": {"slug": tenant, "name": tenant or "zIA", "whatsapp": None, "settings": {}},
@@ -399,6 +419,8 @@ async def chat(input: ChatIn, request: Request, tenant: str = Query(default=""))
 # ── Eventos (analytics) ────────────────────────────────────────────────
 @app.post("/v1/events")
 async def track_event(body: EventIn, request: Request, tenant: str = Query(default="")):
+    if tenant and not valid_slug(tenant):
+        raise HTTPException(400, "Invalid tenant")
     etype = (body.type or "").strip().lower()
     if not etype:
         raise HTTPException(400, "Missing event type")
@@ -417,12 +439,16 @@ async def track_event(body: EventIn, request: Request, tenant: str = Query(defau
 # ── Streaming SSE con flujo de contacto ────────────────────────────────
 @app.post("/v1/chat/stream")
 async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(default="")):
+    if tenant and not valid_slug(tenant):
+        raise HTTPException(400, "Invalid tenant")
     key = input.sessionId or get_client_ip(request)
     if is_rate_limited(key):
         raise HTTPException(status_code=429, detail="Too many requests")
 
     sid = ensure_session(input.sessionId)
     add_message(sid, "user", input.message)
+    asyncio.create_task(store_event(tenant or "public", sid, "msg_in", {"text": (input.message or "")[:2000]}))
+
 
     t = await fetch_tenant(tenant)
     system_prompt = build_system_for_tenant(t)
@@ -591,8 +617,24 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
                 return
 
-            stream = client.chat.completions.create(model=OPENAI_MODEL, messages=messages, stream=True)
-            final_text = ""
+            client_rt = client.with_options(timeout=60.0)  # corta cuelgues largos
+            stream = None
+            for attempt in range(2):  # 1 intento + 1 reintento
+                try:
+                    stream = client_rt.chat.completions.create(
+                    model=OPENAI_MODEL,
+                    messages=messages,
+                    stream=True
+                    )
+                    break
+                except Exception as e:
+                    if attempt == 1:
+                        raise
+                    await asyncio.sleep(0.7)  # respiro corto antes del retry
+
+            if stream is None:
+                raise RuntimeError("No se pudo iniciar stream")
+
             for chunk in stream:
                 piece = getattr(chunk.choices[0].delta, "content", None)
                 if piece:
@@ -603,6 +645,7 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                     add_message(sid, "assistant", final_text)
                     return
             add_message(sid, "assistant", final_text)
+            asyncio.create_task(store_event(tenant or "public", sid, "msg_out", {"text": final_text[:2000]}))
             ui = suggest_ui_for_text(input.message, t)
             yield sse_event(json.dumps(ui), event="ui")
             yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
@@ -620,6 +663,8 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
 # ── Admin endpoints ────────────────────────────────────────────────────
 @app.get("/v1/admin/leads", dependencies=[Depends(require_admin)])
 async def admin_list_leads(limit: int = 50, offset: int = 0, tenant: str = Query(default="")):
+    if tenant and not valid_slug(tenant):
+        raise HTTPException(400, "Invalid tenant")
     if not db_engine:
         raise HTTPException(503, "Database not configured")
     q = """
@@ -635,6 +680,8 @@ async def admin_list_leads(limit: int = 50, offset: int = 0, tenant: str = Query
 
 @app.get("/v1/admin/metrics/daily", dependencies=[Depends(require_admin)])
 async def admin_metrics_daily(tenant: str = Query(default="")):
+    if tenant and not valid_slug(tenant):
+        raise HTTPException(400, "Invalid tenant")
     if not db_engine:
         raise HTTPException(503, "Database not configured")
     q1 = """
@@ -657,3 +704,61 @@ async def admin_metrics_daily(tenant: str = Query(default="")):
         leads = (await conn.execute(text(q1), {"tenant": tenant})).mappings().all()
         evs   = (await conn.execute(text(q2), {"tenant": tenant})).mappings().all()
     return {"leads": list(leads), "events": list(evs)}
+
+@app.get("/v1/admin/export/leads.csv", dependencies=[Depends(require_admin)])
+async def export_leads_csv(tenant: str = Query(default="")):
+    if tenant and not valid_slug(tenant):
+        raise HTTPException(400, "Invalid tenant")
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+    q = """
+      SELECT id, tenant_slug, session_id, name, method, contact,
+             COALESCE(meta->>'preferred_slot','') AS preferred_slot,
+             created_at
+      FROM leads
+      WHERE (:tenant = '' OR tenant_slug = :tenant)
+      ORDER BY created_at DESC
+    """
+    async with db_engine.connect() as conn:
+        rows = (await conn.execute(text(q), {"tenant": tenant})).mappings().all()
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=["id","tenant_slug","session_id","name","method","contact","preferred_slot","created_at"])
+    writer.writeheader()
+    for r in rows:
+        writer.writerow(dict(r))
+    return Response(buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=leads.csv"})
+
+@app.get("/v1/admin/export/events.csv", dependencies=[Depends(require_admin)])
+async def export_events_csv(tenant: str = Query(default=""), days: int = 30):
+    if tenant and not valid_slug(tenant):
+        raise HTTPException(400, "Invalid tenant")
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+    q = """
+      SELECT id, tenant_slug, session_id, type, payload, created_at
+      FROM events
+      WHERE (:tenant = '' OR tenant_slug = :tenant)
+        AND created_at >= now() - (:days || ' days')::interval
+      ORDER BY created_at DESC
+    """
+    async with db_engine.connect() as conn:
+        rows = (await conn.execute(text(q), {"tenant": tenant, "days": days})).mappings().all()
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=["id","tenant_slug","session_id","type","payload","created_at"])
+    writer.writeheader()
+    for r in rows:
+        # payload a string para CSV
+        row = dict(r)
+        row["payload"] = json.dumps(row.get("payload") or {})
+        writer.writerow(row)
+    return Response(buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=events.csv"})
+
+
+@app.options("/v1/admin/export/leads.csv")
+async def options_export_leads(): return Response(status_code=204)
+
+@app.options("/v1/admin/export/events.csv")
+async def options_export_events(): return Response(status_code=204)
+
