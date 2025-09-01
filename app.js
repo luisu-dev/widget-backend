@@ -137,6 +137,9 @@ document.addEventListener("DOMContentLoaded", () => {
       const suggestions = data?.ui?.suggestions || [];
       renderChips(suggestions);
     } catch {}
+    const suggestions = data?.ui?.suggestions || [];
+    renderChips(suggestions);
+
   })();
 
   // ------- Streaming SSE -------
@@ -240,24 +243,24 @@ document.addEventListener("DOMContentLoaded", () => {
 
           } else if (evType === "ui") {
             try {
-              const ui = JSON.parse(data);
+            const ui = JSON.parse(data);
 
-              // A) Burbuja de WhatsApp si corresponde (y solo una vez por valor)
-              const shouldBubble = (ui?.showWhatsAppBubble ?? !!ui?.whatsapp);
-              if (shouldBubble && ui?.whatsapp && ui.whatsapp !== lastShownWhatsApp) {
-                makeBubble(
-                  "bot",
-                  `Puedes escribirnos por WhatsApp aquí: <a href="${ui.whatsapp}" target="_blank" rel="noopener">Abrir WhatsApp</a>`
-                );
-                lastShownWhatsApp = ui.whatsapp;
-              }
-
-              // B) Chips; si ya mostramos WhatsApp como burbuja, filtramos cualquier chip similar
-              const chips = (ui?.chips || []).filter(c =>
-                !(shouldBubble && /whats\s*app|whatsapp|wasap/i.test(c))
+    // A) Burbuja de WhatsApp (una sola vez por valor)
+            const shouldBubble = (ui?.showWhatsAppBubble ?? !!ui?.whatsapp);
+            if (shouldBubble && ui?.whatsapp && ui.whatsapp !== lastShownWhatsApp) {
+              makeBubble(
+                "bot",
+                `Puedes escribirnos por WhatsApp aquí: <a href="${ui.whatsapp}" target="_blank" rel="noopener">Abrir WhatsApp</a>`
               );
-              renderChips(chips);
-            } catch {}
+              lastShownWhatsApp = ui.whatsapp;
+            }
+
+    // B) Chips (incluye “WhatsApp / Email / Llamada” cuando el backend los mande)
+            const chips = (ui?.chips || []).filter(c =>
+              !(shouldBubble && /whats\s*app|whatsapp|wasap/i.test(c))
+            );
+            renderChips(chips);
+          } catch {}
           } else if (evType === "done") {
             currentBotBubble = null;
           } else if (evType === "error") {

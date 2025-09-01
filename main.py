@@ -9,6 +9,9 @@ from openai import OpenAI
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from sqlalchemy import text
 from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+from starlette.responses import StreamingResponse, Response
+import re
+
 
 # ── Setup ──────────────────────────────────────────────────────────────
 load_dotenv()
@@ -91,14 +94,12 @@ def rough_token_count(text: str) -> int:
         return 0
     return max(1, len(text) // 4)  # cálculo aproximado
 
-# --- mete esto junto a tus helpers ---
 def clean_phone_for_wa(phone: str | None) -> str | None:
     if not phone:
         return None
     # wa.me exige E.164 sin '+', solo dígitos.
     digits = "".join(ch for ch in phone if ch.isdigit())
     return digits or None
-
 
 # ── DB ──────────────────────────────────────────────────────────────────
 def to_asyncpg(url: str) -> str:
@@ -161,6 +162,19 @@ async def on_startup():
             );
         """))
         await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS idx_tenants_slug ON tenants(slug)"))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS leads (
+            id SERIAL PRIMARY KEY,
+            tenant_slug TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            name TEXT,
+            method TEXT CHECK (method IN ('whatsapp','email','llamada')),
+            contact TEXT,
+            meta JSONB DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_leads_tenant ON leads(tenant_slug)"))
     log.info("Postgres listo ✅")
 
 # ── Modelos ─────────────────────────────────────────────────────────────
@@ -197,6 +211,46 @@ def ensure_session(session_id: str | None) -> str:
 
 def add_message(sid: str, role: str, content: str):
     MESSAGES[sid].append({"role": role, "content": content, "ts": now_ms()})
+
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+def is_email(s: str) -> bool:
+    return bool(EMAIL_RE.match((s or "").strip().lower()))
+
+def is_phone(s: str) -> bool:
+    digits = "".join(ch for ch in (s or "") if ch.isdigit())
+    return 8 <= len(digits) <= 15
+
+def norm_phone(s: str) -> str:
+    return "".join(ch for ch in (s or "") if ch.isdigit())
+
+def wants_quote(text: str) -> bool:
+    t = (text or "").lower()
+    keys = ["cotiza", "cotización", "cotizar", "presupuesto", "precio", "quote"]
+    return any(k in t for k in keys)
+
+def says_yes(text: str) -> bool:
+    t = (text or "").strip().lower()
+    return t in {"si","sí","claro","va","dale","ok","okay","de acuerdo","quiero","quiero una cotización","sí quiero"} or t.startswith("si ")
+
+def get_flow(sid: str) -> dict:
+    return SESSIONS.setdefault(sid, {}).setdefault(
+        "contact_flow",
+        {"stage": None, "name": None, "method": None, "contact": None}
+    )
+
+async def save_lead(tenant_slug: str, sid: str, name: str, method: str, contact: str, meta: dict | None = None) -> dict:
+    if not db_engine:
+        log.warning("DB no configurada: lead no persistido")
+        return {"id": None, "tenant_slug": tenant_slug, "session_id": sid, "name": name, "method": method, "contact": contact}
+    async with db_engine.begin() as conn:
+        row = (await conn.execute(
+            text("""INSERT INTO leads (tenant_slug, session_id, name, method, contact, meta)
+                    VALUES (:tenant_slug, :sid, :name, :method, :contact, CAST(:meta AS JSONB))
+                    RETURNING id, tenant_slug, session_id, name, method, contact, meta, created_at"""),
+            {"tenant_slug": tenant_slug, "sid": sid, "name": name, "method": method, "contact": contact, "meta": json.dumps(meta or {})}
+        )).first()
+    return dict(row._mapping)
+
 
 # ── Prompt helpers ─────────────────────────────────────────────────────
 async def fetch_tenant(slug: str) -> dict | None:
@@ -320,7 +374,11 @@ async def widget_bootstrap(tenant: str):
         )).first()
     if not t:
         raise HTTPException(404, f"Tenant '{tenant}' no encontrado")
-    return {"tenant": dict(t._mapping), "ui": {"suggestions": ["Hacer reserva","Ver tarifas","Contactar por WhatsApp"]}}
+    return {
+        "tenant": dict(t._mapping),
+        "ui": {"suggestions": ["Solicitar cotización","Ver tarifas","Contactar por WhatsApp"]}
+    }
+
 
 # ── Chat no streaming ──────────────────────────────────────────────────
 def generate_answer(messages: list[dict]) -> str:
@@ -350,25 +408,96 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
     key = input.sessionId or get_client_ip(request)
     if is_rate_limited(key):
         raise HTTPException(status_code=429, detail="Too many requests")
+
     sid = ensure_session(input.sessionId)
     add_message(sid, "user", input.message)
+
     t = await fetch_tenant(tenant)
     system_prompt = build_system_for_tenant(t)
     messages = build_messages_with_history(sid, system_prompt)
 
     async def event_generator():
         try:
-            if USE_MOCK:
-                full = f"(mock) Recibí: {input.message}"
-                partial = ""
-                for ch in full:
-                    partial += ch
-                    yield sse_event(json.dumps({"content": ch}), event="delta")
-                    await asyncio.sleep(0.02)
-                add_message(sid, "assistant", partial)
-                yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
+            yield sse_event("ok", event="ping")
+
+            flow = get_flow(sid)
+
+            # Disparar flujo: si pide cotización o responde afirmativo
+            if flow["stage"] is None and (wants_quote(input.message) or says_yes(input.message)):
+                flow.update({"stage": "ask_name"})
+                yield sse_event(json.dumps({"content": "Genial, te ayudo con la cotización. ¿Cuál es tu nombre completo?"}), event="delta")
+                yield sse_event(json.dumps({}), event="done")
                 return
 
+            # Paso: pedir nombre
+            if flow["stage"] == "ask_name":
+                name = (input.message or "").strip()
+                if not name:
+                    yield sse_event(json.dumps({"content": "¿Me compartes tu nombre, por favor?"}), event="delta")
+                    yield sse_event(json.dumps({}), event="done")
+                    return
+                flow["name"] = name.title()
+                flow["stage"] = "ask_method"
+                yield sse_event(json.dumps({"content": f"Gracias, {flow['name']}. ¿Cómo prefieres que te contactemos?"}), event="delta")
+                yield sse_event(json.dumps({"chips": ["WhatsApp","Email","Llamada"]}), event="ui")
+                yield sse_event(json.dumps({}), event="done")
+
+                return
+
+            # Paso: elegir método
+            if flow["stage"] == "ask_method":
+                m = (input.message or "").strip().lower()
+                if "whats" in m:
+                    m = "whatsapp"
+                if m not in {"whatsapp","email","llamada"}:
+                    yield sse_event(json.dumps({"content":"Elige una opción: WhatsApp, Email o Llamada."}), event="delta")
+                    yield sse_event(json.dumps({"chips": ["WhatsApp","Email","Llamada"]}), event="ui")
+                    yield sse_event(json.dumps({}), event="done")
+
+                    return
+                flow["method"] = m
+                flow["stage"] = "ask_value"
+                q = "Perfecto. ¿Cuál es tu número con lada?" if m=="llamada" else \
+                    "Perfecto. ¿Cuál es tu WhatsApp (con lada)?" if m=="whatsapp" else \
+                    "Perfecto. ¿Cuál es tu correo electrónico?"
+                yield sse_event(json.dumps({"content": q}), event="delta")
+                yield sse_event(json.dumps({}), event="done")
+                return
+
+            # Paso: capturar dato del contacto y guardar
+            if flow["stage"] == "ask_value":
+                value = (input.message or "").strip()
+                ok = (is_phone(value) if flow["method"] in {"whatsapp","llamada"} else is_email(value))
+                if not ok:
+                    msg_bad = "Parece que no es un teléfono válido. Intenta con lada." if flow["method"] in {"whatsapp","llamada"} \
+                              else "Mmh, ese correo no se ve válido. ¿Lo revisas?"
+                    yield sse_event(json.dumps({"content": msg_bad}), event="delta")
+                    yield sse_event(json.dumps({}), event="done")
+                    return
+
+                contact = norm_phone(value) if flow["method"] in {"whatsapp","llamada"} else value.strip().lower()
+                lead = await save_lead(tenant or "public", sid, flow["name"], flow["method"], contact, meta={"source":"widget"})
+
+                base = f"Listo, registré tus datos: {flow['name']} · {flow['method']}."
+                if flow["method"] == "whatsapp":
+                    wa_num = clean_phone_for_wa((t or {}).get("whatsapp"))
+                    yield sse_event(json.dumps({"content": base + " Para continuar, usa el botón de WhatsApp de aquí abajo para iniciar el chat."}), event="delta")
+                    if wa_num:
+                        wa_url = f"https://wa.me/{wa_num}?text=Hola%20soy%20{flow['name']}"
+                        yield sse_event(json.dumps({"whatsapp": wa_url}), event="ui")
+                elif flow["method"] == "email":
+                    yield sse_event(json.dumps({"content": base + " También podemos seguir por aquí y te mando un checklist si quieres."}), event="delta")
+                else:
+                    yield sse_event(json.dumps({"content": base + " ¿Te gustaría proponer fecha y hora para agendar la llamada?"}), event="delta")
+
+                yield sse_event(json.dumps({"lead":{"id": lead.get("id"), "status":"saved"}}), event="ui")
+                yield sse_event(json.dumps({}), event="done")
+
+                # Reset del flujo tras guardar
+                SESSIONS[sid]["contact_flow"] = {"stage": None, "name": None, "method": None, "contact": None}
+                return
+
+            # Sin flujo: streaming normal (real mode)
             stream = client.chat.completions.create(model=OPENAI_MODEL, messages=messages, stream=True)
             final_text = ""
             for chunk in stream:
@@ -384,9 +513,13 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
             ui = suggest_ui_for_text(input.message, t)
             yield sse_event(json.dumps(ui), event="ui")
             yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
+
         except Exception as e:
             log.error(f"SSE ERROR: {e}")
             yield sse_event(json.dumps({"error": str(e)}), event="error")
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream",
-                             headers={"Cache-Control":"no-cache","Connection":"keep-alive","X-Accel-Buffering":"no"})
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control":"no-cache","Connection":"keep-alive","X-Accel-Buffering":"no"}
+    )
