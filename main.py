@@ -1,40 +1,38 @@
-import os, uuid, time, asyncio, json, logging
+import os, uuid, time, asyncio, json, logging, re
 from typing import Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, Request, Header, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import StreamingResponse
+from starlette.responses import StreamingResponse, Response
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from openai import OpenAI
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from sqlalchemy import text
 from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
-from starlette.responses import StreamingResponse, Response
-import re
-
 
 # ── Setup ──────────────────────────────────────────────────────────────
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("zia")
 
-app = FastAPI(title="ZIA Backend", version="1.0")
+app = FastAPI(title="ZIA Backend", version="1.1")
 client = OpenAI()  # usa OPENAI_API_KEY del entorno
 
-# ── Config ──────────────────────────────────────────────────────────────
-def as_bool(val: str | None, default: bool = False) -> bool:
+# ── Config ─────────────────────────────────────────────────────────────
+def as_bool(val: Optional[str], default: bool = False) -> bool:
     if val is None:
         return default
     return str(val).strip().lower() in ("1", "true", "yes", "y", "on")
 
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "").split(",") if os.getenv("ALLOWED_ORIGINS") else []
+ALLOWED_ORIGINS = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173"
+).split(",")
 DATABASE_URL   = os.getenv("DATABASE_URL", "")
-USE_MOCK       = as_bool(os.getenv("USE_MOCK"), True)
+USE_MOCK       = as_bool(os.getenv("USE_MOCK"), False)  # default: real mode
 OPENAI_MODEL   = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-RATE_LIMIT     = int(os.getenv("RATE_LIMIT", "5"))
+RATE_LIMIT     = int(os.getenv("RATE_LIMIT", "20"))
 RATE_WINDOW_SECONDS = int(os.getenv("RATE_WINDOW_SECONDS", "10"))
-PRICE_IN_PER_1K  = float(os.getenv("PRICE_IN_PER_1K", "0"))
-PRICE_OUT_PER_1K = float(os.getenv("PRICE_OUT_PER_1K", "0"))
 ADMIN_KEY      = os.getenv("ADMIN_KEY", "")
 PROXY_IP_HEADER = os.getenv("PROXY_IP_HEADER", "").lower()
 
@@ -45,40 +43,39 @@ ZIA_SYSTEM_PROMPT = (
     "Políticas: no inventes precios ni promesas; si faltan datos, dilo y ofrece agendar demo o cotización. "
     "No pidas datos sensibles; para contacto, solo nombre y email o WhatsApp cuando el usuario acepte. "
     "Interpreta con base en los últimos 5 pasos de la conversación. "
-    "Acciones (menciónalas cuando encajen): • Agendar demo • Cotizar proyecto • Automatizar WhatsApp/Meta • Hablar por WhatsApp."
-    "Acciones (menciónalas cuando encajen): • Agendar demo • Cotizar proyecto • Automatizar WhatsApp/Meta • Hablar por WhatsApp."
-    "\nReglas de contacto: No prometas que “nos pondremos en contacto”, “te llamamos” ni seguimiento proactivo. "
-    "Aunque el usuario comparta su nombre o WhatsApp, pídele que INICIE el contacto: usa el botón/enlace de WhatsApp que ve abajo o propón agendar pidiendo 2–3 horarios. "
-    "Si mencionas WhatsApp en el texto, di: “usa el botón de WhatsApp de aquí abajo”; evita pegar enlaces manuales o inventar números. "
-    "Mantén respuestas en 3–5 líneas y siempre sugiere un siguiente paso claro."
+    "Acciones (menciónalas cuando encajen): • Agendar demo • Cotizar proyecto • Automatizar WhatsApp/Meta • Hablar por WhatsApp. "
+    "Reglas de contacto: No prometas que “nos pondremos en contacto”, “te llamamos” ni seguimiento proactivo. "
+    "Aunque el usuario comparta su nombre o WhatsApp, pide que INICIE el contacto: usa el botón/enlace de WhatsApp de abajo "
+    "o propón agendar pidiendo 2–3 horarios."
 )
 
-
-# ── CORS ────────────────────────────────────────────────────────────────
+# ── CORS ───────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS or ["*"],  # en prod cierra esta lista
+    allow_origins=[o.strip() for o in ALLOWED_ORIGINS if o.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ── Helpers generales ──────────────────────────────────────────────────
+# ── Auth util ──────────────────────────────────────────────────────────
 async def require_admin(x_api_key: str = Header(default="")):
     if not ADMIN_KEY or x_api_key != ADMIN_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
+# ── Network helpers ────────────────────────────────────────────────────
 def get_client_ip(request: Request) -> str:
     if PROXY_IP_HEADER and PROXY_IP_HEADER in request.headers:
         return request.headers[PROXY_IP_HEADER].split(",")[0].strip()
     return request.client.host
 
-def sse_event(data: str, event: str | None = None) -> str:
+def sse_event(data: str, event: Optional[str] = None) -> str:
     if event:
         return f"event: {event}\ndata: {data}\n\n"
     return f"data: {data}\n\n"
 
-RATELIMIT: dict[str, list[float]] = {}
+# ── Rate limit (en memoria) ────────────────────────────────────────────
+RATELIMIT: Dict[str, list[float]] = {}
 def is_rate_limited(key: str, limit: int = RATE_LIMIT, window: int = RATE_WINDOW_SECONDS) -> bool:
     now = time.time()
     bucket = [ts for ts in RATELIMIT.get(key, []) if ts > now - window]
@@ -89,47 +86,56 @@ def is_rate_limited(key: str, limit: int = RATE_LIMIT, window: int = RATE_WINDOW
     RATELIMIT[key] = bucket
     return False
 
+# ── Token rough count (opcional) ───────────────────────────────────────
 def rough_token_count(text: str) -> int:
     if not text:
         return 0
-    return max(1, len(text) // 4)  # cálculo aproximado
+    return max(1, len(text) // 4)
 
-def clean_phone_for_wa(phone: str | None) -> str | None:
+# ── Utils de contacto ──────────────────────────────────────────────────
+def clean_phone_for_wa(phone: Optional[str]) -> Optional[str]:
     if not phone:
         return None
-    # wa.me exige E.164 sin '+', solo dígitos.
     digits = "".join(ch for ch in phone if ch.isdigit())
     return digits or None
 
-# ── DB ──────────────────────────────────────────────────────────────────
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+def is_email(s: str) -> bool:
+    return bool(EMAIL_RE.match((s or "").strip().lower()))
+
+def is_phone(s: str) -> bool:
+    digits = "".join(ch for ch in (s or "") if ch.isdigit())
+    return 8 <= len(digits) <= 15
+
+def norm_phone(s: str) -> str:
+    return "".join(ch for ch in (s or "") if ch.isdigit())
+
+def wants_quote(text: str) -> bool:
+    t = (text or "").lower()
+    keys = ["cotiza", "cotización", "cotizar", "presupuesto", "precio", "quote"]
+    return any(k in t for k in keys)
+
+# ── DB helpers ─────────────────────────────────────────────────────────
 def to_asyncpg(url: str) -> str:
     if not url:
         return ""
-    # normaliza esquema base
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
-    # por si acaso alguien puso ya +asyncpg
     url = url.replace("postgresql+asyncpg://", "postgresql://", 1)
 
-    from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
     p = urlparse(url)
     q = dict(parse_qsl(p.query, keep_blank_values=True))
 
-    # 1) si viene sslmode=..., pásalo a ssl=<valor válido para asyncpg>
     if "sslmode" in q:
         val = (q.pop("sslmode") or "").lower()
         if val in ("disable", "allow", "prefer", "require", "verify-ca", "verify-full"):
-            q["ssl"] = val  # asyncpg acepta estos valores en 'ssl' (como string)
-    # 2) si ya viene ssl, corrige valores booleanos a modos válidos
+            q["ssl"] = val
     if "ssl" in q:
         v = (q["ssl"] or "").lower()
         if v in ("true", "1", "yes"):
             q["ssl"] = "require"
         elif v in ("false", "0", "no"):
             q["ssl"] = "disable"
-        # si ya es uno de los modos válidos, lo dejamos igual
-
-    # 3) si no vino nada, default seguro en Render:
     if "ssl" not in q:
         q["ssl"] = "require"
 
@@ -137,9 +143,8 @@ def to_asyncpg(url: str) -> str:
     scheme = "postgresql+asyncpg"
     return urlunparse((scheme, p.netloc, p.path, p.params, new_query, p.fragment))
 
-
 ASYNC_DB_URL = to_asyncpg(DATABASE_URL)
-db_engine: AsyncEngine | None = None
+db_engine: Optional[AsyncEngine] = None
 
 @app.on_event("startup")
 async def on_startup():
@@ -164,20 +169,31 @@ async def on_startup():
         await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS idx_tenants_slug ON tenants(slug)"))
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS leads (
-            id SERIAL PRIMARY KEY,
-            tenant_slug TEXT NOT NULL,
-            session_id TEXT NOT NULL,
-            name TEXT,
-            method TEXT CHECK (method IN ('whatsapp','email','llamada')),
-            contact TEXT,
-            meta JSONB DEFAULT '{}'::jsonb,
-            created_at TIMESTAMPTZ DEFAULT NOW()
+                id SERIAL PRIMARY KEY,
+                tenant_slug TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                name TEXT,
+                method TEXT CHECK (method IN ('whatsapp','email','llamada')),
+                contact TEXT,
+                meta JSONB DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ DEFAULT NOW()
             );
         """))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_leads_tenant ON leads(tenant_slug)"))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS events (
+                id SERIAL PRIMARY KEY,
+                tenant_slug TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                payload JSONB DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_events_tenant ON events(tenant_slug, type, created_at DESC)"))
     log.info("Postgres listo ✅")
 
-# ── Modelos ─────────────────────────────────────────────────────────────
+# ── Modelos ────────────────────────────────────────────────────────────
 class TenantIn(BaseModel):
     slug: str
     name: str
@@ -192,17 +208,21 @@ class ChatOut(BaseModel):
     sessionId: str
     answer: str
 
-# ── Sesiones ────────────────────────────────────────────────────────────
-SESSIONS: dict[str, dict] = {}
-MESSAGES: dict[str, list[dict]] = {}
-USAGE: dict[str, dict] = {}
+class EventIn(BaseModel):
+    type: str
+    sessionId: Optional[str] = None
+    payload: Dict[str, Any] = Field(default_factory=dict)
+
+# ── Sesiones en memoria ────────────────────────────────────────────────
+SESSIONS: Dict[str, dict] = {}
+MESSAGES: Dict[str, list[dict]] = {}
 
 now_ms = lambda: int(time.time() * 1000)
 
 def new_session_id() -> str:
     return f"sess_{uuid.uuid4().hex}"
 
-def ensure_session(session_id: str | None) -> str:
+def ensure_session(session_id: Optional[str]) -> str:
     sid = session_id or new_session_id()
     if sid not in SESSIONS:
         SESSIONS[sid] = {"startedAt": now_ms(), "status": "active"}
@@ -211,26 +231,6 @@ def ensure_session(session_id: str | None) -> str:
 
 def add_message(sid: str, role: str, content: str):
     MESSAGES[sid].append({"role": role, "content": content, "ts": now_ms()})
-
-EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-def is_email(s: str) -> bool:
-    return bool(EMAIL_RE.match((s or "").strip().lower()))
-
-def is_phone(s: str) -> bool:
-    digits = "".join(ch for ch in (s or "") if ch.isdigit())
-    return 8 <= len(digits) <= 15
-
-def norm_phone(s: str) -> str:
-    return "".join(ch for ch in (s or "") if ch.isdigit())
-
-def wants_quote(text: str) -> bool:
-    t = (text or "").lower()
-    keys = ["cotiza", "cotización", "cotizar", "presupuesto", "precio", "quote"]
-    return any(k in t for k in keys)
-
-def says_yes(text: str) -> bool:
-    t = (text or "").strip().lower()
-    return t in {"si","sí","claro","va","dale","ok","okay","de acuerdo","quiero","quiero una cotización","sí quiero"} or t.startswith("si ")
 
 def get_flow(sid: str) -> dict:
     return SESSIONS.setdefault(sid, {}).setdefault(
@@ -251,9 +251,8 @@ async def save_lead(tenant_slug: str, sid: str, name: str, method: str, contact:
         )).first()
     return dict(row._mapping)
 
-
-# ── Prompt helpers ─────────────────────────────────────────────────────
-async def fetch_tenant(slug: str) -> dict | None:
+# ── Tenant + prompts ───────────────────────────────────────────────────
+async def fetch_tenant(slug: str) -> Optional[dict]:
     if not db_engine or not slug:
         return None
     async with db_engine.connect() as conn:
@@ -263,14 +262,14 @@ async def fetch_tenant(slug: str) -> dict | None:
         )).first()
     return dict(row._mapping) if row else None
 
-def build_system_for_tenant(tenant: dict | None) -> str:
+def build_system_for_tenant(tenant: Optional[dict]) -> str:
     s = (tenant or {}).get("settings", {}) or {}
     tone     = s.get("tone", "cálido y directo")
     policies = s.get("policies", "")
     hours    = s.get("opening_hours", "")
     products = s.get("products", "")
-    prices   = s.get("prices", {})       # dict opcional {"Paquete 1":"150 USD", ...}
-    faq      = s.get("faq", [])          # puede ser lista de strings o de dicts {"q","a"}
+    prices   = s.get("prices", {})
+    faq      = s.get("faq", [])
     brand    = (tenant or {}).get("name", "esta marca")
 
     extras = [f"Contexto de negocio: {brand}. Tono: {tone}."]
@@ -292,43 +291,28 @@ def build_system_for_tenant(tenant: dict | None) -> str:
 
     return (ZIA_SYSTEM_PROMPT + "\n" + " ".join(extras)).strip()
 
-
 def build_messages_with_history(sid: str, system_prompt: str, max_pairs: int = 8) -> list[dict]:
     convo = MESSAGES.get(sid, [])
     recent = convo[-2*max_pairs:]
     history = [{"role": m["role"], "content": m["content"]} for m in recent]
     return [{"role": "system", "content": system_prompt}] + history
 
-def suggest_ui_for_text(user_text: str, tenant: dict | None) -> dict:
-    """
-    Devuelve chips y, si aplica, un link de WhatsApp.
-    Regla: si el user menciona 'whatsapp' o 'contacto', mostramos burbuja
-    y quitamos el chip duplicado.
-    """
+def suggest_ui_for_text(user_text: str, tenant: Optional[dict]) -> dict:
     text_ = (user_text or "").lower()
 
-    # chips base por intención
     chips = []
     if any(w in text_ for w in ["reserva", "reservar", "booking"]):
         chips += ["Hacer reserva"]
     if any(w in text_ for w in ["precio", "tarifa", "cotiza", "costo"]):
         chips += ["Ver tarifas", "Solicitar cotización"]
     if not chips:
-        chips = ["Hacer reserva", "Ver tarifas", "Contactar por WhatsApp"]
-
-    # teléfono → wa.me
-    def clean_phone_for_wa(phone: str | None) -> str | None:
-        if not phone: return None
-        d = "".join(ch for ch in phone if ch.isdigit())
-        return d or None
+        chips = ["Solicitar cotización", "Ver tarifas", "Contactar por WhatsApp"]
 
     wa_num = clean_phone_for_wa((tenant or {}).get("whatsapp"))
     wa_link = f"https://wa.me/{wa_num}" if wa_num else None
 
-    # ¿mostrar burbuja?
     show_bubble = any(w in text_ for w in ["whatsapp", "wasap", "contacto", "contact"])
     if show_bubble:
-        # quita el chip duplicado
         chips = [c for c in chips if "whats" not in c.lower()]
 
     return {
@@ -336,7 +320,6 @@ def suggest_ui_for_text(user_text: str, tenant: dict | None) -> dict:
         "whatsapp": wa_link if show_bubble and wa_link else None,
         "showWhatsAppBubble": bool(show_bubble and wa_link),
     }
-
 
 # ── Endpoints utilitarios ──────────────────────────────────────────────
 @app.get("/health")
@@ -366,7 +349,10 @@ async def upsert_tenant(body: TenantIn):
 @app.get("/v1/widget/bootstrap")
 async def widget_bootstrap(tenant: str):
     if not db_engine:
-        raise HTTPException(503, "Database not configured")
+        return {
+            "tenant": {"slug": tenant, "name": tenant or "zIA", "whatsapp": None, "settings": {}},
+            "ui": {"suggestions": ["Solicitar cotización","Ver tarifas","Contactar por WhatsApp"]}
+        }
     async with db_engine.connect() as conn:
         t = (await conn.execute(
             text("SELECT id, slug, name, whatsapp, settings FROM tenants WHERE slug=:slug"),
@@ -374,13 +360,21 @@ async def widget_bootstrap(tenant: str):
         )).first()
     if not t:
         raise HTTPException(404, f"Tenant '{tenant}' no encontrado")
-    return {
-        "tenant": dict(t._mapping),
-        "ui": {"suggestions": ["Solicitar cotización","Ver tarifas","Contactar por WhatsApp"]}
-    }
+    return {"tenant": dict(t._mapping), "ui": {"suggestions": ["Solicitar cotización","Ver tarifas","Contactar por WhatsApp"]}}
 
+@app.options("/v1/chat/stream")
+async def options_stream():
+    return Response(status_code=204)
 
-# ── Chat no streaming ──────────────────────────────────────────────────
+@app.options("/v1/widget/bootstrap")
+async def options_bootstrap():
+    return Response(status_code=204)
+
+@app.options("/v1/events")
+async def options_events():
+    return Response(status_code=204)
+
+# ── Chat sin streaming (por si lo necesitas) ───────────────────────────
 def generate_answer(messages: list[dict]) -> str:
     if USE_MOCK:
         last = next((m for m in reversed(messages) if m["role"] == "user"), {"content": ""})
@@ -402,7 +396,25 @@ async def chat(input: ChatIn, request: Request, tenant: str = Query(default=""))
     add_message(sid, "assistant", answer)
     return ChatOut(sessionId=sid, answer=answer)
 
-# ── Streaming SSE ──────────────────────────────────────────────────────
+# ── Eventos (analytics) ────────────────────────────────────────────────
+@app.post("/v1/events")
+async def track_event(body: EventIn, request: Request, tenant: str = Query(default="")):
+    etype = (body.type or "").strip().lower()
+    if not etype:
+        raise HTTPException(400, "Missing event type")
+    sid = ensure_session(body.sessionId)
+    if not db_engine:
+        log.info(f"[event][no-db] tenant={tenant} sid={sid} type={etype} payload={body.payload}")
+        return {"ok": True, "stored": False}
+    async with db_engine.begin() as conn:
+        await conn.execute(
+            text("""INSERT INTO events (tenant_slug, session_id, type, payload)
+                    VALUES (:tenant, :sid, :type, CAST(:payload AS JSONB))"""),
+            {"tenant": tenant or "public", "sid": sid, "type": etype, "payload": json.dumps(body.payload or {})}
+        )
+    return {"ok": True, "stored": True}
+
+# ── Streaming SSE con flujo de contacto ────────────────────────────────
 @app.post("/v1/chat/stream")
 async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(default="")):
     key = input.sessionId or get_client_ip(request)
@@ -420,10 +432,27 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
         try:
             yield sse_event("ok", event="ping")
 
+            # Atajo: checklist en cualquier momento
+            text_lc = (input.message or "").lower()
+            if "checklist" in text_lc or text_lc.strip() in {"ver checklist"}:
+                checklist = (
+                    "Checklist para cotización:\n"
+                    "• Objetivo del proyecto (qué problema resolvemos)\n"
+                    "• Alcance (módulos/funciones, canales: web/WhatsApp/IG)\n"
+                    "• Integraciones (Meta/WhatsApp Business, pasarelas, CRM)\n"
+                    "• Volumen estimado (mensajes/mes, usuarios, cargas)\n"
+                    "• Datos necesarios (catálogos, FAQs, políticas)\n"
+                    "• Tiempos deseados (MVP, go-live)\n"
+                    "• Presupuesto/techo y prioridad de features"
+                )
+                yield sse_event(json.dumps({"content": checklist}), event="delta")
+                yield sse_event(json.dumps({}), event="done")
+                return
+
             flow = get_flow(sid)
 
-            # Disparar flujo: si pide cotización o responde afirmativo
-            if flow["stage"] is None and (wants_quote(input.message) or says_yes(input.message)):
+            # Disparar flujo SOLO si pide cotización explícita
+            if flow["stage"] is None and wants_quote(input.message):
                 flow.update({"stage": "ask_name"})
                 yield sse_event(json.dumps({"content": "Genial, te ayudo con la cotización. ¿Cuál es tu nombre completo?"}), event="delta")
                 yield sse_event(json.dumps({}), event="done")
@@ -441,7 +470,6 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 yield sse_event(json.dumps({"content": f"Gracias, {flow['name']}. ¿Cómo prefieres que te contactemos?"}), event="delta")
                 yield sse_event(json.dumps({"chips": ["WhatsApp","Email","Llamada"]}), event="ui")
                 yield sse_event(json.dumps({}), event="done")
-
                 return
 
             # Paso: elegir método
@@ -453,7 +481,6 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                     yield sse_event(json.dumps({"content":"Elige una opción: WhatsApp, Email o Llamada."}), event="delta")
                     yield sse_event(json.dumps({"chips": ["WhatsApp","Email","Llamada"]}), event="ui")
                     yield sse_event(json.dumps({}), event="done")
-
                     return
                 flow["method"] = m
                 flow["stage"] = "ask_value"
@@ -478,6 +505,18 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 contact = norm_phone(value) if flow["method"] in {"whatsapp","llamada"} else value.strip().lower()
                 lead = await save_lead(tenant or "public", sid, flow["name"], flow["method"], contact, meta={"source":"widget"})
 
+                # registra evento de servidor
+                try:
+                    if db_engine:
+                        async with db_engine.begin() as conn:
+                            await conn.execute(
+                                text("""INSERT INTO events (tenant_slug, session_id, type, payload)
+                                        VALUES (:tenant, :sid, 'lead_saved', CAST(:payload AS JSONB))"""),
+                                {"tenant": tenant or "public", "sid": sid, "payload": json.dumps({"lead_id": lead.get("id")})}
+                            )
+                except Exception as e:
+                    log.warning(f"event lead_saved not stored: {e}")
+
                 base = f"Listo, registré tus datos: {flow['name']} · {flow['method']}."
                 if flow["method"] == "whatsapp":
                     wa_num = clean_phone_for_wa((t or {}).get("whatsapp"))
@@ -485,19 +524,73 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                     if wa_num:
                         wa_url = f"https://wa.me/{wa_num}?text=Hola%20soy%20{flow['name']}"
                         yield sse_event(json.dumps({"whatsapp": wa_url}), event="ui")
+                    yield sse_event(json.dumps({"lead":{"id": lead.get("id"), "status":"saved"}}), event="ui")
+                    yield sse_event(json.dumps({}), event="done")
+                    SESSIONS[sid]["contact_flow"] = {"stage": None, "name": None, "method": None, "contact": None}
+                    return
+
                 elif flow["method"] == "email":
-                    yield sse_event(json.dumps({"content": base + " También podemos seguir por aquí y te mando un checklist si quieres."}), event="delta")
-                else:
-                    yield sse_event(json.dumps({"content": base + " ¿Te gustaría proponer fecha y hora para agendar la llamada?"}), event="delta")
+                    yield sse_event(json.dumps({"content": base + " Puedo compartir aquí un checklist breve para definir el alcance. ¿Quieres verlo?"}), event="delta")
+                    yield sse_event(json.dumps({"chips": ["Ver checklist"]}), event="ui")
+                    yield sse_event(json.dumps({"lead":{"id": lead.get("id"), "status":"saved"}}), event="ui")
+                    yield sse_event(json.dumps({}), event="done")
+                    SESSIONS[sid]["contact_flow"] = {"stage": None, "name": None, "method": None, "contact": None}
+                    return
 
-                yield sse_event(json.dumps({"lead":{"id": lead.get("id"), "status":"saved"}}), event="ui")
+                else:  # llamada
+                    yield sse_event(json.dumps({"content": base + " Para agendar, comparte 2–3 opciones con día y hora (ej.: mié 10:00–10:30; jue 16:00–16:30)."}), event="delta")
+                    try:
+                        SESSIONS[sid]["last_lead_id"] = lead.get("id")
+                    except Exception:
+                        pass
+                    flow["stage"] = "ask_slot"
+                    yield sse_event(json.dumps({"lead":{"id": lead.get("id"), "status":"saved"}}), event="ui")
+                    yield sse_event(json.dumps({}), event="done")
+                    return
+
+            # Paso: capturar horario propuesto (llamada)
+            if flow["stage"] == "ask_slot":
+                slot_text = (input.message or "").strip()
+                if len(slot_text) < 5 or slot_text.lower() in {"cualquier hora","a cualquier hora","cuando sea","si","sí"}:
+                    yield sse_event(json.dumps({"content":"¿Puedes darme 2–3 opciones concretas con día y hora? (ej.: mié 10:00–10:30; jue 16:00–16:30)"}), event="delta")
+                    yield sse_event(json.dumps({}), event="done")
+                    return
+
+                try:
+                    lead_id = SESSIONS[sid].get("last_lead_id")
+                    if db_engine and lead_id:
+                        async with db_engine.begin() as conn:
+                            await conn.execute(
+                                text("UPDATE leads SET meta = COALESCE(meta,'{}'::jsonb) || CAST(:add AS JSONB) WHERE id = :id"),
+                                {"add": json.dumps({"preferred_slot": slot_text}), "id": lead_id}
+                            )
+                        async with db_engine.begin() as conn:
+                            await conn.execute(
+                                text("""INSERT INTO events (tenant_slug, session_id, type, payload)
+                                        VALUES (:tenant, :sid, 'lead_slot', CAST(:payload AS JSONB))"""),
+                                {"tenant": tenant or "public", "sid": sid, "payload": json.dumps({"lead_id": lead_id, "slot": slot_text})}
+                            )
+                except Exception as e:
+                    log.warning(f"no se pudo guardar preferred_slot: {e}")
+
+                yield sse_event(json.dumps({"content": f"Perfecto, anoté: {slot_text}. Cuando gustes podemos confirmar por aquí o por WhatsApp."}), event="delta")
                 yield sse_event(json.dumps({}), event="done")
-
-                # Reset del flujo tras guardar
                 SESSIONS[sid]["contact_flow"] = {"stage": None, "name": None, "method": None, "contact": None}
+                SESSIONS[sid].pop("last_lead_id", None)
                 return
 
-            # Sin flujo: streaming normal (real mode)
+            # Sin flujo: streaming normal (real o mock)
+            if USE_MOCK:
+                full = f"(mock) Recibí: {input.message}"
+                for ch in full:
+                    yield sse_event(json.dumps({"content": ch}), event="delta")
+                    await asyncio.sleep(0)
+                add_message(sid, "assistant", full)
+                ui = suggest_ui_for_text(input.message, t)
+                yield sse_event(json.dumps(ui), event="ui")
+                yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
+                return
+
             stream = client.chat.completions.create(model=OPENAI_MODEL, messages=messages, stream=True)
             final_text = ""
             for chunk in stream:
@@ -523,3 +616,44 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
         media_type="text/event-stream",
         headers={"Cache-Control":"no-cache","Connection":"keep-alive","X-Accel-Buffering":"no"}
     )
+
+# ── Admin endpoints ────────────────────────────────────────────────────
+@app.get("/v1/admin/leads", dependencies=[Depends(require_admin)])
+async def admin_list_leads(limit: int = 50, offset: int = 0, tenant: str = Query(default="")):
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+    q = """
+        SELECT id, tenant_slug, session_id, name, method, contact, meta, created_at
+        FROM leads
+        WHERE (:tenant = '' OR tenant_slug = :tenant)
+        ORDER BY created_at DESC
+        LIMIT :limit OFFSET :offset
+    """
+    async with db_engine.connect() as conn:
+        rows = (await conn.execute(text(q), {"tenant": tenant, "limit": limit, "offset": offset})).mappings().all()
+    return {"items": list(rows)}
+
+@app.get("/v1/admin/metrics/daily", dependencies=[Depends(require_admin)])
+async def admin_metrics_daily(tenant: str = Query(default="")):
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+    q1 = """
+        SELECT date_trunc('day', created_at) AS day, count(*)::int AS leads
+        FROM leads
+        WHERE (:tenant = '' OR tenant_slug = :tenant)
+        GROUP BY 1 ORDER BY 1 DESC LIMIT 30
+    """
+    q2 = """
+        SELECT date_trunc('day', created_at) AS day, 
+               sum(CASE WHEN type='opened' THEN 1 ELSE 0 END)::int AS opened,
+               sum(CASE WHEN type='first_interaction' THEN 1 ELSE 0 END)::int AS first_interaction,
+               sum(CASE WHEN type='message_sent' THEN 1 ELSE 0 END)::int AS message_sent,
+               sum(CASE WHEN type='wa_click' THEN 1 ELSE 0 END)::int AS wa_click
+        FROM events
+        WHERE (:tenant = '' OR tenant_slug = :tenant)
+        GROUP BY 1 ORDER BY 1 DESC LIMIT 30
+    """
+    async with db_engine.connect() as conn:
+        leads = (await conn.execute(text(q1), {"tenant": tenant})).mappings().all()
+        evs   = (await conn.execute(text(q2), {"tenant": tenant})).mappings().all()
+    return {"leads": list(leads), "events": list(evs)}
