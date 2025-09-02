@@ -10,6 +10,10 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from sqlalchemy import text
 from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 import csv, io
+from twilio.rest import Client as TwilioClient
+from twilio.twiml.messaging_response import MessagingResponse
+from twilio.request_validator import RequestValidator
+
 
 # ── Setup ──────────────────────────────────────────────────────────────
 load_dotenv()
@@ -36,6 +40,12 @@ RATE_LIMIT     = int(os.getenv("RATE_LIMIT", "20"))
 RATE_WINDOW_SECONDS = int(os.getenv("RATE_WINDOW_SECONDS", "10"))
 ADMIN_KEY      = os.getenv("ADMIN_KEY", "")
 PROXY_IP_HEADER = os.getenv("PROXY_IP_HEADER", "").lower()
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN  = os.getenv("TWILIO_AUTH_TOKEN", "")
+TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "")
+TWILIO_SMS_FROM       = os.getenv("TWILIO_SMS_FROM", "")
+TWILIO_VALIDATE_SIGNATURE = as_bool(os.getenv("TWILIO_VALIDATE_SIGNATURE"), False)
+
 
 ZIA_SYSTEM_PROMPT = (
     "Eres el asistente de zIA (automatización con IA). "
@@ -198,6 +208,14 @@ async def on_startup():
         """))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_events_tenant ON events(tenant_slug, type, created_at DESC)"))
     log.info("Postgres listo ✅")
+    app.state.twilio = None
+    if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
+        try:
+            app.state.twilio = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+            log.info("Twilio listo ✅")
+        except Exception as e:
+            log.warning(f"Twilio no inicializado: {e}")
+
     
 async def store_event(tenant_slug: str, sid: str, etype: str, payload: dict | None = None):
     if not db_engine:
@@ -208,6 +226,41 @@ async def store_event(tenant_slug: str, sid: str, etype: str, payload: dict | No
                     VALUES (:tenant, :sid, :type, CAST(:payload AS JSONB))"""),
             {"tenant": tenant_slug or "public", "sid": sid, "type": etype, "payload": json.dumps(payload or {})}
         )
+
+def _twilio_req_is_valid(request: Request, auth_token: str) -> bool:
+    if not TWILIO_VALIDATE_SIGNATURE:
+        return True
+    try:
+        sig = request.headers.get("X-Twilio-Signature", "")
+        url = str(request.url)  # debe ser la URL pública HTTPS configurada en Twilio
+        # Para validar firma de webhooks form-encoded usamos los pares clave/valor
+        # FastAPI: request.form() es async
+        # La validación se hace en el endpoint (ver abajo) con los datos ya parseados.
+        return bool(sig)  # validamos en el endpoint usando params concretos
+    except Exception:
+        return False
+
+async def twilio_send_whatsapp(to_e164: str, text: str) -> dict:
+    if not getattr(app.state, "twilio", None):
+        raise RuntimeError("Twilio no configurado")
+    msg = await asyncio.to_thread(
+        app.state.twilio.messages.create,
+        from_=TWILIO_WHATSAPP_FROM,
+        to=f"whatsapp:{to_e164}" if not to_e164.startswith("whatsapp:") else to_e164,
+        body=text
+    )
+    return {"sid": msg.sid}
+
+async def twilio_send_sms(to_e164: str, text: str) -> dict:
+    if not getattr(app.state, "twilio", None):
+        raise RuntimeError("Twilio no configurado")
+    msg = await asyncio.to_thread(
+        app.state.twilio.messages.create,
+        from_=TWILIO_SMS_FROM,
+        to=to_e164,
+        body=text
+    )
+    return {"sid": msg.sid}
 
 
 # ── Modelos ────────────────────────────────────────────────────────────
@@ -754,6 +807,48 @@ async def export_events_csv(tenant: str = Query(default=""), days: int = 30):
         writer.writerow(row)
     return Response(buf.getvalue(), media_type="text/csv",
                     headers={"Content-Disposition": "attachment; filename=events.csv"})
+
+@app.post("/v1/twilio/whatsapp/webhook")
+async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default="")):
+    if tenant and not valid_slug(tenant):
+        raise HTTPException(400, "Invalid tenant")
+    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN):
+        raise HTTPException(503, "Twilio no configurado")
+
+    form = await request.form()
+    # Validación de firma (opcional en local). Si activas, valida con params:
+    if TWILIO_VALIDATE_SIGNATURE:
+        validator = RequestValidator(TWILIO_AUTH_TOKEN)
+        sig = request.headers.get("X-Twilio-Signature", "")
+        # Params debe ser dict plano de form-encoded (str->str)
+        params = {k: str(v) for k, v in form.items()}
+        url = str(request.url)
+        if not validator.validate(url, params, sig):
+            raise HTTPException(403, "Invalid Twilio signature")
+
+    from_raw = str(form.get("From", ""))        # ej: 'whatsapp:+5215555555555'
+    body_txt = str(form.get("Body", "")).strip()
+
+    if not from_raw or not body_txt:
+        return Response("<Response></Response>", media_type="application/xml")
+
+    phone = norm_phone(from_raw)
+    sid_session = f"wa:{phone}"
+    sid = ensure_session(sid_session)
+    add_message(sid, "user", body_txt)
+    asyncio.create_task(store_event(tenant or "public", sid, "wa_in", {"from": from_raw, "text": body_txt}))
+
+    t = await fetch_tenant(tenant)
+    system_prompt = build_system_for_tenant(t)
+    messages = build_messages_with_history(sid, system_prompt)
+    answer = generate_answer(messages)
+    add_message(sid, "assistant", answer)
+    asyncio.create_task(store_event(tenant or "public", sid, "wa_out", {"to": from_raw, "text": answer[:2000]}))
+
+    twiml = MessagingResponse()
+    twiml.message(answer)
+    return Response(str(twiml), media_type="application/xml")
+
 
 
 @app.options("/v1/admin/export/leads.csv")

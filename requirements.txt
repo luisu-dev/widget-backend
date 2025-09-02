@@ -8,5 +8,4 @@ asyncpg==0.29.0
 python-dotenv==1.0.1
 python-dotenv
 SQLAlchemy>=2.0
-
-
+twilio
