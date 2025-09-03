@@ -578,6 +578,19 @@ async def track_event(body: EventIn, request: Request, tenant: str = Query(defau
     return {"ok": True, "stored": True}
 
 # ── Streaming SSE con flujo de contacto ────────────────────────────────
+@app.get("/v1/meta/webhook")
+async def meta_webhook_verify(
+    hub_mode: str = Query(alias="hub.mode", default=""),
+    hub_verify_token: str = Query(alias="hub.verify_token", default=""),
+    hub_challenge: str = Query(alias="hub.challenge", default="")
+):
+    token = os.getenv("META_VERIFY_TOKEN", "")
+    if hub_mode == "subscribe" and hub_verify_token == token:
+        # devolver el challenge en texto plano, EXACTO
+        return Response(hub_challenge, media_type="text/plain")
+    raise HTTPException(status_code=403, detail="Verification failed")
+
+
 @app.post("/v1/meta/webhook")
 async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
     try:
