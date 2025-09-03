@@ -13,6 +13,9 @@ import csv, io
 from twilio.rest import Client as TwilioClient
 from twilio.twiml.messaging_response import MessagingResponse
 from twilio.request_validator import RequestValidator
+from fastapi import Body
+import httpx
+
 
 
 # ── Setup ──────────────────────────────────────────────────────────────
@@ -240,27 +243,34 @@ def _twilio_req_is_valid(request: Request, auth_token: str) -> bool:
     except Exception:
         return False
 
-async def twilio_send_whatsapp(to_e164: str, text: str) -> dict:
-    if not getattr(app.state, "twilio", None):
-        raise RuntimeError("Twilio no configurado")
+async def twilio_send_whatsapp(tenant_slug: str, to_e164: str, text: str) -> dict:
+    t = await fetch_tenant(tenant_slug)
+    client_t = get_twilio_client_for_tenant(t) or getattr(app.state, "twilio", None)
+    if not client_t:
+        raise RuntimeError("Twilio no configurado para el tenant")
+    _, _, wa_from, _ = twilio_cfg_from_tenant(t)
     msg = await asyncio.to_thread(
-        app.state.twilio.messages.create,
-        from_=TWILIO_WHATSAPP_FROM,
+        client_t.messages.create,
+        from_=wa_from,
         to=f"whatsapp:{to_e164}" if not to_e164.startswith("whatsapp:") else to_e164,
         body=text
     )
     return {"sid": msg.sid}
 
-async def twilio_send_sms(to_e164: str, text: str) -> dict:
-    if not getattr(app.state, "twilio", None):
-        raise RuntimeError("Twilio no configurado")
+async def twilio_send_sms(tenant_slug: str, to_e164: str, text: str) -> dict:
+    t = await fetch_tenant(tenant_slug)
+    client_t = get_twilio_client_for_tenant(t) or getattr(app.state, "twilio", None)
+    if not client_t:
+        raise RuntimeError("Twilio no configurado para el tenant")
+    _, _, _, sms_from = twilio_cfg_from_tenant(t)
     msg = await asyncio.to_thread(
-        app.state.twilio.messages.create,
-        from_=TWILIO_SMS_FROM,
+        client_t.messages.create,
+        from_=sms_from,
         to=to_e164,
         body=text
     )
     return {"sid": msg.sid}
+
 
 
 # ── Modelos ────────────────────────────────────────────────────────────
@@ -331,6 +341,84 @@ async def fetch_tenant(slug: str) -> Optional[dict]:
             {"slug": slug}
         )).first()
     return dict(row._mapping) if row else None
+
+async def resolve_tenant_by_page_or_ig_id(page_or_ig_id: str) -> str:
+    if not db_engine or not page_or_ig_id:
+        return ""
+    async with db_engine.connect() as conn:
+        row = (await conn.execute(
+            text("""
+              SELECT slug
+              FROM tenants
+              WHERE settings->>'fb_page_id' = :x
+                 OR settings->>'ig_user_id' = :x
+              LIMIT 1
+            """),
+            {"x": str(page_or_ig_id)}
+        )).first()
+    return row[0] if row else ""
+
+def fb_tokens_from_tenant(t: dict | None) -> tuple[str, str, str]:
+    s = (t or {}).get("settings", {}) or {}
+    page_id = s.get("fb_page_id", "")
+    page_token = s.get("fb_page_token", "")
+    ig_user_id = s.get("ig_user_id", "")
+    return page_id, page_token, ig_user_id
+
+async def meta_send_text(page_token: str, recipient_id: str, text: str) -> dict:
+    if not page_token:
+        raise RuntimeError("Falta fb_page_token")
+    url = "https://graph.facebook.com/v20.0/me/messages"
+    payload = {"recipient": {"id": recipient_id}, "message": {"text": text}}
+    async with httpx.AsyncClient(timeout=10.0) as cx:
+        r = await cx.post(url, params={"access_token": page_token}, json=payload)
+        r.raise_for_status()
+        return r.json()
+
+async def fb_reply_comment(page_token: str, comment_id: str, message: str) -> dict:
+    if not (page_token and comment_id and message):
+        raise RuntimeError("Faltan datos para reply FB")
+    url = f"https://graph.facebook.com/v20.0/{comment_id}/replies"
+    async with httpx.AsyncClient(timeout=10.0) as cx:
+        r = await cx.post(url, params={"access_token": page_token}, data={"message": message})
+        r.raise_for_status()
+        return r.json()
+
+async def ig_reply_comment(page_token: str, ig_comment_id: str, message: str) -> dict:
+    if not (page_token and ig_comment_id and message):
+        raise RuntimeError("Faltan datos para reply IG")
+    url = f"https://graph.facebook.com/v20.0/{ig_comment_id}/replies"
+    async with httpx.AsyncClient(timeout=10.0) as cx:
+        r = await cx.post(url, params={"access_token": page_token}, data={"message": message})
+        r.raise_for_status()
+        return r.json()
+
+async def meta_private_reply_to_comment(page_id: str, page_token: str, comment_id: str, text: str) -> dict:
+    if not (page_id and page_token and comment_id and text):
+        raise RuntimeError("Faltan datos para private reply")
+    url = f"https://graph.facebook.com/v20.0/{page_id}/messages"
+    payload = {"recipient": {"comment_id": comment_id}, "message": {"text": text}}
+    async with httpx.AsyncClient(timeout=10.0) as cx:
+        r = await cx.post(url, params={"access_token": page_token}, json=payload)
+        r.raise_for_status()
+        return r.json()
+
+
+
+def twilio_cfg_from_tenant(t: dict | None):
+    s = (t or {}).get("settings", {}) or {}
+    sid = s.get("twilio_account_sid") or TWILIO_ACCOUNT_SID
+    tok = s.get("twilio_auth_token") or TWILIO_AUTH_TOKEN
+    wa_from = s.get("twilio_whatsapp_from") or TWILIO_WHATSAPP_FROM
+    sms_from = s.get("twilio_sms_from") or TWILIO_SMS_FROM
+    return sid, tok, wa_from, sms_from
+
+def get_twilio_client_for_tenant(t: dict | None):
+    sid, tok, _, _ = twilio_cfg_from_tenant(t)
+    if not sid or not tok:
+        return None
+    return TwilioClient(sid, tok)
+
 
 def build_system_for_tenant(tenant: Optional[dict]) -> str:
     s = (tenant or {}).get("settings", {}) or {}
@@ -490,6 +578,112 @@ async def track_event(body: EventIn, request: Request, tenant: str = Query(defau
     return {"ok": True, "stored": True}
 
 # ── Streaming SSE con flujo de contacto ────────────────────────────────
+@app.post("/v1/meta/webhook")
+async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
+    try:
+        obj = payload.get("object")
+        if obj not in {"page", "instagram"}:
+            return {"ok": True}
+
+        for entry in payload.get("entry", []):
+            owner_id = str(entry.get("id", ""))  # page_id o ig_user_id
+            tenant_slug = await resolve_tenant_by_page_or_ig_id(owner_id)
+            tenant_slug = tenant_slug or "public"
+            t = await fetch_tenant(tenant_slug)
+            page_id, page_token, ig_user_id = fb_tokens_from_tenant(t)
+
+            # DMs (Messenger / IG Messaging)
+            for m in entry.get("messaging", []):
+                sender_id = str(m.get("sender", {}).get("id", ""))
+                msg = m.get("message", {})
+                text_in = (msg.get("text") or "").strip()
+                if not (sender_id and text_in):
+                    continue
+
+                sid = ensure_session(f"fb:{tenant_slug}:{sender_id}")
+                add_message(sid, "user", text_in)
+                asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_in", {"from": sender_id, "text": text_in}))
+
+                system_prompt = build_system_for_tenant(t)
+                messages = build_messages_with_history(sid, system_prompt)
+
+                answer = "Gracias por escribir. Te atiendo enseguida."
+                try:
+                    client_rt = client.with_options(timeout=12.0)
+                    resp = client_rt.chat.completions.create(model=OPENAI_MODEL, messages=messages)
+                    answer = resp.choices[0].message.content or answer
+                except Exception as e:
+                    log.warning(f"meta fallback: {e}")
+
+                add_message(sid, "assistant", answer)
+                asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_out", {"to": sender_id, "text": answer[:2000]}))
+                try:
+                    await meta_send_text(page_token, sender_id, answer)
+                except Exception as e:
+                    log.error(f"meta send error: {e}")
+
+            # Comments (Page feed / IG comments)
+            for ch in entry.get("changes", []):
+                field = ch.get("field")
+                value = ch.get("value", {}) or {}
+
+                if obj == "page" and field == "feed" and value.get("item") == "comment" and value.get("verb") == "add":
+                    comment_id = str(value.get("comment_id", ""))
+                    author_id = str(value.get("from", {}).get("id", ""))
+                    text_in = (value.get("message") or "").strip()
+                    if not (comment_id and text_in and page_token):
+                        continue
+
+                    # Genera respuesta corta para el reply público
+                    short_reply = "¡Gracias por tu comentario! Te mando más detalles por DM."
+                    try:
+                        await fb_reply_comment(page_token, comment_id, short_reply)
+                    except Exception as e:
+                        log.error(f"fb_reply_comment error: {e}")
+
+                    # Private reply por DM (Messenger Private Replies)
+                    try:
+                        await meta_private_reply_to_comment(page_id, page_token, comment_id,
+                                                           "Hola, seguimos por mensaje para darte soporte rápido. ¿Qué necesitas lograr?")
+                    except Exception as e:
+                        log.error(f"fb private reply error: {e}")
+
+                    # Log de evento
+                    sid = ensure_session(f"fb:{tenant_slug}:comment:{comment_id}")
+                    asyncio.create_task(store_event(tenant_slug, sid, "page_comment_in",
+                                                    {"comment_id": comment_id, "author_id": author_id, "text": text_in}))
+
+                if obj == "instagram" and field == "comments":
+                    ig_comment_id = str(value.get("id", "")) or str(value.get("comment_id", ""))
+                    author_id = str(value.get("from", {}).get("id", ""))
+                    text_in = (value.get("text") or "").strip()
+                    if not (ig_comment_id and text_in and page_token):
+                        continue
+
+                    # Reply público en el comment de IG
+                    try:
+                        await ig_reply_comment(page_token, ig_comment_id,
+                                               "¡Gracias por comentar! Te escribimos por DM para ayudarte.")
+                    except Exception as e:
+                        log.error(f"ig_reply_comment error: {e}")
+
+                    # Private reply a ese comment (Messenger for IG)
+                    try:
+                        await meta_private_reply_to_comment(page_id, page_token, ig_comment_id,
+                                                           "Hola, te contacto por DM para resolverlo contigo. ¿Puedes contarme un poco más?")
+                    except Exception as e:
+                        log.error(f"ig private reply error: {e}")
+
+                    sid = ensure_session(f"ig:{tenant_slug}:comment:{ig_comment_id}")
+                    asyncio.create_task(store_event(tenant_slug, sid, "instagram_comment_in",
+                                                    {"comment_id": ig_comment_id, "author_id": author_id, "text": text_in}))
+
+        return {"ok": True}
+    except Exception as e:
+        log.error(f"/v1/meta/webhook error: {e}")
+        return {"ok": False}
+
+
 @app.post("/v1/chat/stream")
 async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(default="")):
     if tenant and not valid_slug(tenant):
@@ -812,8 +1006,6 @@ async def export_events_csv(tenant: str = Query(default=""), days: int = 30):
 async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default="")):
     if tenant and not valid_slug(tenant):
         raise HTTPException(400, "Invalid tenant")
-    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN):
-        raise HTTPException(503, "Twilio no configurado")
 
     form = await request.form()
     # Validación de firma (opcional en local). Si activas, valida con params:
