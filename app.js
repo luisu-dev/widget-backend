@@ -292,3 +292,73 @@ document.addEventListener("DOMContentLoaded", () => {
   // Enviar
   document.getElementById("send")?.addEventListener("click", startStream);
 });
+
+// ===== Nube de puntos neon en header =====
+(function neonBlob(){
+  const cvs = document.getElementById('cw-viz');
+  if(!cvs) return;
+  const ctx = cvs.getContext('2d');
+  let w=0,h=0, dpr=window.devicePixelRatio||1, t=0;
+  const grid = { cols: 72, rows: 42, gap: 7 };
+
+  function rn(i){ const x=Math.sin(i)*43758.5453; return x-Math.floor(x); }
+  function hash(x,y){ return rn(x*157.31+y*789.23); }
+  function noise(x,y){
+    const xi=Math.floor(x), yi=Math.floor(y);
+    const xf=x-xi, yf=y-yi;
+    const tl=hash(xi,yi), tr=hash(xi+1,yi), bl=hash(xi,yi+1), br=hash(xi+1,yi+1);
+    const u=xf*xf*(3-2*xf), v=yf*yf*(3-2*yf);
+    const a=tl+(tr-tl)*u, b=bl+(br-bl)*u;
+    return a+(b-a)*v;
+  }
+
+  function resize(){
+    const rect = cvs.getBoundingClientRect();
+    w = Math.max(1, Math.floor(rect.width*dpr));
+    h = Math.max(1, Math.floor(rect.height*dpr));
+    cvs.width = w; cvs.height = h; ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  resize(); addEventListener('resize', resize);
+
+  function lerp(a,b,u){ return a+(b-a)*u; }
+  function hue(u){
+    const c1=[80,180,255], c2=[180,90,255];
+    return `rgb(${Math.round(lerp(c1[0],c2[0],u))},${Math.round(lerp(c1[1],c2[1],u))},${Math.round(lerp(c1[2],c2[2],u))})`;
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,cvs.width,cvs.height);
+    const cols = grid.cols, rows = grid.rows;
+    const gx = cvs.clientWidth/(cols-1), gy = cvs.clientHeight/(rows-1);
+    const cx = cvs.clientWidth/2, cy = cvs.clientHeight/2;
+    const scale = Math.min(cx, cy)*0.9;
+    t += 0.006;
+
+    ctx.save();
+    ctx.translate(0,0);
+    ctx.globalCompositeOperation='lighter';
+
+    for(let y=0; y<rows; y++){
+      for(let x=0; x<cols; x++){
+        const nx = (x/(cols-1))*2-1;
+        const ny = (y/(rows-1))*2-1;
+        const r = Math.hypot(nx, ny);
+        const ang = Math.atan2(ny, nx);
+        const warp = 0.38*noise(Math.cos(ang)*1.2 + t*0.7, Math.sin(ang)*1.2 - t*0.5);
+        const radius = (0.55 + warp - r*0.15)*scale;
+
+        const px = cx + Math.cos(ang)*(radius);
+        const py = cy + Math.sin(ang)*(radius);
+        const n = noise(nx*1.8 + t*0.8, ny*1.6 - t*0.6);
+        const c = hue(n*0.85);
+
+        ctx.fillStyle = c;
+        const s = 1.2 + n*1.8;
+        ctx.beginPath(); ctx.arc(px, py, s, 0, Math.PI*2); ctx.fill();
+      }
+    }
+    ctx.restore();
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+})();
