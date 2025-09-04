@@ -2,11 +2,12 @@
 "use strict";
 
 document.addEventListener("DOMContentLoaded", () => {
-  // ------- API con tenant -------
+  // ------- API con tenant (solo frontend) -------
   const RAW_API = window.CHAT_API || "https://widget-backend-zia.onrender.com/v1/chat/stream";
   const TENANT  = window.TENANT   || "demo";
   const API     = `${RAW_API}?tenant=${encodeURIComponent(TENANT)}`;
-  const BOOTSTRAP = (RAW_API || "").replace(/\/v1\/chat\/stream$/, "") + `/v1/widget/bootstrap?tenant=${encodeURIComponent(TENANT)}`;
+  const BOOTSTRAP = (RAW_API || "").replace(/\/v1\/chat\/stream$/, "")
+                    + `/v1/widget/bootstrap?tenant=${encodeURIComponent(TENANT)}`;
 
   // ------- DOM -------
   const thread   = document.getElementById("msgs");
@@ -20,30 +21,47 @@ document.addEventListener("DOMContentLoaded", () => {
   const launcher = document.getElementById("cw-launcher");
   const closeBtn = document.getElementById("cw-close");
   const minBtn   = document.getElementById("cw-min");
+  const badgeEl  = document.querySelector(".cw-badge");
+
+  // ------- Unread badge + modos del orb -------
+  let unreadCount = 0;
+  function setUnread(n){
+    unreadCount = Math.max(0, n|0);
+    if (!badgeEl) return;
+    if (unreadCount > 0){
+      badgeEl.hidden = false;
+      badgeEl.textContent = String(unreadCount);
+      window.__orbSetMode?.("unread");
+    } else {
+      badgeEl.hidden = true;
+      badgeEl.textContent = "";
+      window.__orbSetMode?.("idle");
+    }
+  }
 
   // ------- sesión persistente -------
-  (function persistSessionId() {
-    try {
+  (function persistSessionId(){
+    try{
       const saved = localStorage.getItem("sid");
-      if (saved && sid) sid.value = saved;
-      else if (sid) {
+      if(saved && sid) sid.value = saved;
+      else if (sid){
         sid.value = "sess_" + Math.random().toString(16).slice(2);
         localStorage.setItem("sid", sid.value);
       }
-    } catch {}
+    }catch{}
   })();
-  newBtn?.addEventListener("click", () => {
-    if (!sid) return;
+  newBtn?.addEventListener("click", ()=>{
+    if(!sid) return;
     sid.value = "sess_" + Math.random().toString(16).slice(2);
-    try { localStorage.setItem("sid", sid.value); } catch {}
+    try{ localStorage.setItem("sid", sid.value); }catch{}
   });
 
   // ------- helpers UI -------
-  const autoscroll = () => {
+  const autoscroll = ()=>{
     const scroller = thread?.parentElement || thread;
     if (scroller) scroller.scrollTop = scroller.scrollHeight;
   };
-  const makeBubble = (role, html = "") => {
+  const makeBubble = (role, html="")=>{
     const el = document.createElement("div");
     el.className = `msg ${role}`;
     el.innerHTML = html;
@@ -51,313 +69,319 @@ document.addEventListener("DOMContentLoaded", () => {
     autoscroll();
     return el;
   };
-  const closePanelFn = () => panel?.classList.remove("open");
 
-  // saludo: usa nombre real del tenant si está disponible
+  // ------- saludo -------
   let BRAND_NAME = window.TENANT_NAME || null;
-  function greetOnce() {
+  function greetOnce(){
     const session = sid?.value || "anon";
     const flagKey = `welcomed:${TENANT}:${session}`;
     if (localStorage.getItem(flagKey)) return;
     const brand = BRAND_NAME || window.TENANT_NAME || "zIA";
-    const text  = `Hola — soy ${brand}, tu asistente con IA. Puedo resolver dudas, cotizar y coordinar por WhatsApp. ¿Qué necesitas hoy?`;
-    makeBubble("bot", text);
-    localStorage.setItem(flagKey, "1");
+    makeBubble("bot", `Hola — soy ${brand}, tu asistente con IA. Puedo resolver dudas, cotizar y coordinar por WhatsApp. ¿Qué necesitas hoy?`);
+    localStorage.setItem(flagKey,"1");
   }
 
-  const openPanel = () => {
+  const openPanel = ()=>{
     panel?.classList.add("open");
+    setUnread(0); // reset no leídos
     if (thread && thread.childElementCount === 0) greetOnce();
   };
 
   launcher?.addEventListener("click", openPanel);
-  closeBtn?.addEventListener("click", closePanelFn);
-  minBtn?.addEventListener("click", () => panel?.classList.toggle("open"));
-  msg?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendBtn?.click();
-    }
+  closeBtn?.addEventListener("click", ()=>panel?.classList.remove("open"));
+  minBtn?.addEventListener("click", ()=>panel?.classList.toggle("open"));
+
+  msg?.addEventListener("keydown",(e)=>{
+    if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); sendBtn?.click(); }
   });
 
-  // --- typing indicator ---
-  let typingEl = null;
-  let typingTimer = null;
-  function showTyping() {
-    if (typingEl) return;
-    typingEl = makeBubble("bot", "...");
-    typingEl.style.opacity = "0.6";
+  // --- typing indicator (sin backend) ---
+  let typingEl=null, typingTimer=null;
+  function showTyping(){
+    if(typingEl) return;
+    typingEl = makeBubble("bot","...");
+    typingEl.style.opacity=".6";
     typingEl.classList.add("typing");
-    let dots = 1;
-    typingTimer = setInterval(() => {
-      dots = (dots % 3) + 1;
-      if (typingEl) typingEl.textContent = ".".repeat(dots);
-    }, 350);
+    window.__orbSetMode?.("thinking");
+    let dots=1;
+    typingTimer = setInterval(()=>{ dots=(dots%3)+1; if(typingEl) typingEl.textContent=".".repeat(dots); },350);
   }
-  function hideTyping() {
-    if (typingTimer) { clearInterval(typingTimer); typingTimer = null; }
-    if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
-    typingEl = null;
+  function hideTyping(){
+    if(typingTimer){ clearInterval(typingTimer); typingTimer=null; }
+    if(typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
+    typingEl=null;
+    if (unreadCount > 0) window.__orbSetMode?.("unread");
+    else window.__orbSetMode?.("idle");
   }
 
-  // Convierte URLs en <a href="...">
-  const linkify = (text) => {
-    if (!text) return "";
+  // linkify
+  const linkify = (text)=>{
+    if(!text) return "";
     const urlRe = /(https?:\/\/[^\s<>"']+)/g;
-    return text.replace(urlRe, (u) => {
-      const safe = u.replace(/"/g, "&quot;");
+    return text.replace(urlRe,(u)=>{
+      const safe = u.replace(/"/g,"&quot;");
       return `<a href="${safe}" target="_blank" rel="noopener noreferrer">${safe}</a>`;
     });
   };
 
   // ------- chips -------
-  function renderChips(items = []) {
-    if (!chipsBox) return;
-    chipsBox.innerHTML = "";
-    if (!items.length) return;
-    items.forEach((label) => {
-      const b = document.createElement("button");
-      b.className = "chip";
-      b.textContent = label;
-      b.onclick = () => {
-        msg.value = label;
-        sendBtn?.click();
-      };
+  function renderChips(items=[]){
+    if(!chipsBox) return;
+    chipsBox.innerHTML="";
+    if(!items.length) return;
+    for(const label of items){
+      const b=document.createElement("button");
+      b.className="chip"; b.textContent=label;
+      b.onclick=()=>{ msg.value=label; sendBtn?.click(); };
       chipsBox.appendChild(b);
-    });
+    }
   }
 
-  // ------- Bootstrap inicial (nombre del tenant + sugerencias) -------
+  // ------- Bootstrap inicial -------
   (async function initBootstrap(){
-    try {
+    try{
       const res = await fetch(BOOTSTRAP);
-      if (!res.ok) return;
+      if(!res.ok) return;
       const data = await res.json();
       BRAND_NAME = data?.tenant?.name || BRAND_NAME;
-      const suggestions = data?.ui?.suggestions || [];
-      renderChips(suggestions);
-    } catch {}
-    const suggestions = data?.ui?.suggestions || [];
-    renderChips(suggestions);
-
+      renderChips(data?.ui?.suggestions || []);
+    }catch(e){
+      console.warn("bootstrap skipped:", e?.message || e);
+    }
   })();
 
-  // ------- Streaming SSE -------
-  let currentController = null;
-  let currentBotBubble = null;
-  let lastShownWhatsApp = "";
+  // ------- Streaming -------
+  let currentController=null, currentBotBubble=null, lastShownWhatsApp="";
 
-  async function startStream() {
-    if (!msg) return;
-    if (currentController) currentController.abort();
+  async function startStream(){
+    if(!msg) return;
+    if(currentController) currentController.abort();
 
     const userText = msg.value || "(vacío)";
     makeBubble("user", linkify(userText));
-    msg.value = "";
+    msg.value="";
 
-    const body = { message: userText, sessionId: sid?.value || null };
-
+    const body = { message:userText, sessionId: sid?.value || null };
     currentController = new AbortController();
-    stopBtn && (stopBtn.onclick = () => currentController?.abort());
+    if(stopBtn) stopBtn.onclick=()=>currentController?.abort();
 
     let res;
-    try {
+    try{
       showTyping();
-      res = await fetch(API, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      res = await fetch(API,{
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
         body: JSON.stringify(body),
-        signal: currentController.signal,
+        signal: currentController.signal
       });
-    } catch (err) {
+    }catch(err){
       hideTyping();
-      makeBubble("bot", "[error] No se pudo conectar con el backend");
-      console.error("Fetch failed:", err);
-      currentController = null;
+      makeBubble("bot","[error] No se pudo conectar con el backend");
+      console.error(err);
+      currentController=null;
       return;
     }
 
-    if (!res.ok) {
+    if(!res.ok){
       hideTyping();
       const retry = res.headers.get("Retry-After");
-      const text = await res.text().catch(() => "");
-      const msgErr =
-        `Error ${res.status} ${res.statusText}` +
-        (retry ? ` — Retry-After: ${retry}s` : "") +
-        (text ? `\n${text}` : "");
-      makeBubble("bot", msgErr);
-      currentController = null;
+      const txt = await res.text().catch(()=> "");
+      makeBubble("bot", `Error ${res.status} ${res.statusText}` + (retry?` — Retry-After: ${retry}s`:"") + (txt?`\n${txt}`:""));
+      currentController=null;
       return;
     }
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
-    let buffer = "";
-    let lastSeq = 0;
-    currentBotBubble = null;
+    let buffer=""; let lastSeq=0; currentBotBubble=null;
 
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        if (value) buffer += decoder.decode(value, { stream: true });
-        buffer = buffer.replace(/\r\n/g, "\n");
+    try{
+      while(true){
+        const {value, done} = await reader.read();
+        if(done) break;
+        if(value) buffer += decoder.decode(value,{stream:true});
+        buffer = buffer.replace(/\r\n/g,"\n");
 
         let idx;
-        while ((idx = buffer.indexOf("\n\n")) !== -1) {
+        while((idx = buffer.indexOf("\n\n")) !== -1){
           const rawEvent = buffer.slice(0, idx);
           buffer = buffer.slice(idx + 2);
 
-          let evType = "message";
-          let data = "";
-
-          for (const line of rawEvent.split("\n")) {
-            if (!line) continue;
-            if (line.startsWith(":")) continue;
-            if (line.startsWith("event:")) { evType = line.slice(6).trim(); continue; }
-            if (line.startsWith("data:")) {
-              let chunk = line.slice(5);
-              if (chunk.startsWith(" ")) chunk = chunk.slice(1);
+          let evType="message"; let data="";
+          for(const line of rawEvent.split("\n")){
+            if(!line) continue;
+            if(line.startsWith(":")) continue;
+            if(line.startsWith("event:")){ evType=line.slice(6).trim(); continue; }
+            if(line.startsWith("data:")){
+              let chunk=line.slice(5); if(chunk.startsWith(" ")) chunk=chunk.slice(1);
               data += (data ? "\n" : "") + chunk;
             }
           }
 
-          if (evType === "delta") {
-            if (!currentBotBubble) {
-              hideTyping();
-              currentBotBubble = makeBubble("bot", "");
-            }
-            let text = data;
-            try {
-              const obj = JSON.parse(data);
-              if (obj && typeof obj.content === "string") {
-                if (typeof obj.i === "number") {
-                  if (obj.i <= lastSeq) continue;
-                  lastSeq = obj.i;
-                }
-                text = obj.content;
+          if(evType==="delta"){
+            if(!currentBotBubble){ hideTyping(); currentBotBubble = makeBubble("bot",""); }
+            let text=data;
+            try{
+              const obj=JSON.parse(data);
+              if(obj && typeof obj.content==="string"){
+                if(typeof obj.i==="number"){ if(obj.i<=lastSeq) continue; lastSeq=obj.i; }
+                text=obj.content;
               }
-            } catch {}
+            }catch{}
             currentBotBubble.innerHTML += linkify(text);
             autoscroll();
 
-          } else if (evType === "ui") {
-            try {
-            const ui = JSON.parse(data);
+            if (!panel?.classList.contains("open")) setUnread(unreadCount + 1);
 
-    // A) Burbuja de WhatsApp (una sola vez por valor)
-            const shouldBubble = (ui?.showWhatsAppBubble ?? !!ui?.whatsapp);
-            if (shouldBubble && ui?.whatsapp && ui.whatsapp !== lastShownWhatsApp) {
-              makeBubble(
-                "bot",
-                `Puedes escribirnos por WhatsApp aquí: <a href="${ui.whatsapp}" target="_blank" rel="noopener">Abrir WhatsApp</a>`
-              );
-              lastShownWhatsApp = ui.whatsapp;
-            }
+          }else if(evType==="ui"){
+            try{
+              const ui = JSON.parse(data);
 
-    // B) Chips (incluye “WhatsApp / Email / Llamada” cuando el backend los mande)
-            const chips = (ui?.chips || []).filter(c =>
-              !(shouldBubble && /whats\s*app|whatsapp|wasap/i.test(c))
-            );
-            renderChips(chips);
-          } catch {}
-          } else if (evType === "done") {
-            currentBotBubble = null;
-          } else if (evType === "error") {
+              const shouldBubble = (ui?.showWhatsAppBubble ?? !!ui?.whatsapp);
+              if (shouldBubble && ui?.whatsapp && ui.whatsapp !== lastShownWhatsApp) {
+                makeBubble("bot", `Puedes escribirnos por WhatsApp aquí: <a href="${ui.whatsapp}" target="_blank" rel="noopener">Abrir WhatsApp</a>`);
+                lastShownWhatsApp = ui.whatsapp;
+              }
+
+              const chips = (ui?.chips || []).filter(c => !(shouldBubble && /whats\s*app|whatsapp|wasap/i.test(c)));
+              renderChips(chips);
+            }catch{}
+          }else if(evType==="done"){
+            currentBotBubble=null;
+          }else if(evType==="error"){
             makeBubble("bot", `[error] ${data}`);
-            console.error("SSE error event:", data);
+            console.error("SSE error:", data);
           }
         }
       }
-    } catch (err) {
+    }catch(err){
       hideTyping();
-      if (String(err?.name) === "AbortError") {
-        const el = makeBubble("bot", "[cancelado]");
-        el.style.opacity = ".85";
-      } else {
+      if(String(err?.name)==="AbortError"){
+        const el = makeBubble("bot","[cancelado]"); el.style.opacity=".85";
+      }else{
         makeBubble("bot", `[stream-error] ${String(err)}`);
-        console.error("Stream read failed:", err);
+        console.error("read failed:", err);
       }
-    } finally {
-      currentController = null;
-      currentBotBubble = null;
+    }finally{
+      currentController=null; currentBotBubble=null;
     }
   }
 
-  // Saludo si el panel ya venía abierto (p.ej. por CSS)
-  if (panel?.classList.contains("open") && thread?.childElementCount === 0) {
-    greetOnce();
-  }
-
-  // Enviar
+  if(panel?.classList.contains("open") && thread?.childElementCount===0){ greetOnce(); }
   document.getElementById("send")?.addEventListener("click", startStream);
 });
 
-// ===== Nube de puntos neon en header =====
-(function neonBlob(){
-  const cvs = document.getElementById('cw-viz');
-  if(!cvs) return;
-  const ctx = cvs.getContext('2d');
-  let w=0,h=0, dpr=window.devicePixelRatio||1, t=0;
-  const grid = { cols: 72, rows: 42, gap: 7 };
+/* -------------------------------------------------------------
+   Nube de puntos nítida + modos visuales del launcher (orb)
+------------------------------------------------------------- */
+(function orbDots(){
+  const cv = document.getElementById('cw-orb');
+  if(!cv) return;
+  const ctx = cv.getContext('2d', { alpha: true });
+  const dpr = window.devicePixelRatio || 1;
+  let t = 0;
+  let MODE = 'idle';                   // 'idle' | 'thinking' | 'unread'
+  window.__orbSetMode = (m)=>{ MODE = m || 'idle'; };
 
-  function rn(i){ const x=Math.sin(i)*43758.5453; return x-Math.floor(x); }
-  function hash(x,y){ return rn(x*157.31+y*789.23); }
+  const rn=i=>{const x=Math.sin(i)*43758.5453; return x-Math.floor(x);};
+  const hash=(x,y)=>rn(x*157.31+y*789.23);
   function noise(x,y){
     const xi=Math.floor(x), yi=Math.floor(y);
     const xf=x-xi, yf=y-yi;
     const tl=hash(xi,yi), tr=hash(xi+1,yi), bl=hash(xi,yi+1), br=hash(xi+1,yi+1);
     const u=xf*xf*(3-2*xf), v=yf*yf*(3-2*yf);
-    const a=tl+(tr-tl)*u, b=bl+(br-bl)*u;
-    return a+(b-a)*v;
+    return (tl+(tr-tl)*u) + ( (bl+(br-bl)*u) - (tl+(tr-tl)*u) )*v;
   }
+  const lerp=(a,b,u)=>a+(b-a)*u;
+  const mixRGB=(a,b,u)=>`rgb(${Math.round(lerp(a[0],b[0],u))},${Math.round(lerp(a[1],b[1],u))},${Math.round(lerp(a[2],b[2],u))})`;
+
+  const BLUE1=[90,190,255], BLUE2=[200,95,255];
+  const MINT1=[110,231,183], MINT2=[120,250,210];
 
   function resize(){
-    const rect = cvs.getBoundingClientRect();
-    w = Math.max(1, Math.floor(rect.width*dpr));
-    h = Math.max(1, Math.floor(rect.height*dpr));
-    cvs.width = w; cvs.height = h; ctx.setTransform(dpr,0,0,dpr,0,0);
+    const r = cv.getBoundingClientRect();
+    cv.width  = Math.max(1, Math.round(r.width * dpr));
+    cv.height = Math.max(1, Math.round(r.height* dpr));
+    ctx.setTransform(dpr,0,0,dpr,0,0);
   }
   resize(); addEventListener('resize', resize);
 
-  function lerp(a,b,u){ return a+(b-a)*u; }
-  function hue(u){
-    const c1=[80,180,255], c2=[180,90,255];
-    return `rgb(${Math.round(lerp(c1[0],c2[0],u))},${Math.round(lerp(c1[1],c2[1],u))},${Math.round(lerp(c1[2],c2[2],u))})`;
+  const SAMPLES = 1000;
+  const MIN_R   = 0.08;
+  const DOT_MIN = 0.9, DOT_MAX = 1.9;
+  const BLUR_MIN= 2,   BLUR_MAX= 4;
+
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  function sample(i, N, R){
+    const u = (i+0.5)/N;
+    const r = Math.sqrt(lerp(MIN_R*MIN_R, 1, u)) * R;
+    const drift = MODE==='thinking' ? 0.7 : 0.5;
+    const a = i * golden + t*drift;
+    const wob = (noise(Math.cos(a)*1.4 + t*0.6, Math.sin(a)*1.4 - t*0.5)-0.5) * R*0.10;
+    const rr  = Math.max(0, r + wob);
+    return [ rr*Math.cos(a), rr*Math.sin(a), rr/R ];
+  }
+
+  function palette(){
+    if (MODE === 'unread') return [MINT1, MINT2];
+    if (MODE === 'thinking') return [BLUE1, [180,80,255]];
+    return [BLUE1, BLUE2];
   }
 
   function draw(){
-    ctx.clearRect(0,0,cvs.width,cvs.height);
-    const cols = grid.cols, rows = grid.rows;
-    const gx = cvs.clientWidth/(cols-1), gy = cvs.clientHeight/(rows-1);
-    const cx = cvs.clientWidth/2, cy = cvs.clientHeight/2;
-    const scale = Math.min(cx, cy)*0.9;
-    t += 0.006;
+    const w = cv.clientWidth, h = cv.clientHeight;
+    const cx = w/2, cy = h/2;
+    const R  = Math.min(cx, cy) * 0.88;
 
+    ctx.clearRect(0,0,cv.width,cv.height);
+
+    // clip circular
     ctx.save();
-    ctx.translate(0,0);
-    ctx.globalCompositeOperation='lighter';
+    ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2); ctx.clip();
 
-    for(let y=0; y<rows; y++){
-      for(let x=0; x<cols; x++){
-        const nx = (x/(cols-1))*2-1;
-        const ny = (y/(rows-1))*2-1;
-        const r = Math.hypot(nx, ny);
-        const ang = Math.atan2(ny, nx);
-        const warp = 0.38*noise(Math.cos(ang)*1.2 + t*0.7, Math.sin(ang)*1.2 - t*0.5);
-        const radius = (0.55 + warp - r*0.15)*scale;
+    // base oscura
+    const base = ctx.createRadialGradient(cx,cy,0, cx,cy,R*1.05);
+    base.addColorStop(0,  '#0f131c');
+    base.addColorStop(0.65,'#0b0d13');
+    base.addColorStop(1,  '#090a0f');
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = base;
+    ctx.fillRect(cx-R-2, cy-R-2, (R+2)*2, (R+2)*2);
 
-        const px = cx + Math.cos(ang)*(radius);
-        const py = cy + Math.sin(ang)*(radius);
-        const n = noise(nx*1.8 + t*0.8, ny*1.6 - t*0.6);
-        const c = hue(n*0.85);
+    // puntos
+    ctx.globalCompositeOperation = 'screen';
+    // pulso más marcado si hay unread
+    t += (MODE==='unread' ? 0.013 : 0.010);
 
-        ctx.fillStyle = c;
-        const s = 1.2 + n*1.8;
-        ctx.beginPath(); ctx.arc(px, py, s, 0, Math.PI*2); ctx.fill();
-      }
+    const [C1, C2] = palette();
+
+    for(let i=0;i<SAMPLES;i++){
+      const [dx,dy,ru] = sample(i, SAMPLES, R);
+      const x = cx + dx, y = cy + dy;
+
+      const n   = noise(i*0.013 + t*0.7, i*0.021 - t*0.5);
+      const col = mixRGB(C1, C2, Math.min(1, Math.max(0, n*0.9 + 0.1)));
+
+      const size = DOT_MIN + (DOT_MAX - DOT_MIN) * (0.35 + 0.65*n);
+      const blur = BLUR_MIN + (BLUR_MAX - BLUR_MIN) * (0.2 + 0.8*n);
+      const fall = 0.35 + 0.65 * ru;     // menos brillo al centro
+      const alpha= 0.18 * fall;
+
+      // glow suave
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle   = col;
+      ctx.shadowColor = col;
+      ctx.shadowBlur  = blur;
+      ctx.beginPath(); ctx.arc(x, y, size, 0, Math.PI*2); ctx.fill();
+
+      // núcleo nítido
+      ctx.shadowBlur  = 0;
+      ctx.globalAlpha = Math.min(0.35, alpha + 0.08);
+      ctx.beginPath(); ctx.arc(x, y, Math.max(0.7, size*0.6), 0, Math.PI*2); ctx.fill();
     }
+
     ctx.restore();
+    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);

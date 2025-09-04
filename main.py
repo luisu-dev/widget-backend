@@ -876,6 +876,8 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 yield sse_event(json.dumps(ui), event="ui")
                 yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
                 return
+            
+            final_text = "" 
 
             client_rt = client.with_options(timeout=60.0)  # corta cuelgues largos
             stream = None

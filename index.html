@@ -9,25 +9,21 @@
 <body>
 
   <!-- Botón flotante (launcher) -->
+  <!-- Botón flotante (launcher) -->
   <button id="cw-launcher" class="cw-launcher" aria-label="Abrir chat">
-    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-      <path d="M4 4h16v11H7l-3 3V4z" fill="currentColor"></path>
-    </svg>
+    <canvas id="cw-orb" aria-hidden="true"></canvas>
     <span class="cw-badge" hidden></span>
   </button>
+
 
   <!-- Panel del chat -->
   <section id="cw-panel" class="cw-panel" aria-label="Chat">
     <header class="cw-header">
-      <div class="cw-hero">
-        <canvas id="cw-viz" aria-hidden="true"></canvas>
-      </div>
       <div class="cw-title">
         <span class="cw-dot"></span>
         <strong>Asistente</strong>
         <small>en línea</small>
       </div>
-
       <div class="cw-actions">
         <button id="cw-min" class="cw-iconbtn" aria-label="Minimizar">—</button>
         <button id="cw-close" class="cw-iconbtn" aria-label="Cerrar">✕</button>
@@ -35,20 +31,13 @@
     </header>
 
     <div class="cw-body">
-      <!-- Mensajes -->
-      <div class="cw-messages">
-        <div id="msgs" class="cw-thread"></div>
-      </div>
+      <div class="cw-messages"><div id="msgs" class="cw-thread"></div></div>
       <div id="chips"></div>
-
-
-      <!-- Input -->
       <footer class="cw-footer">
         <textarea id="msg" placeholder="Escribe tu mensaje…" rows="1"></textarea>
         <button id="send" class="cw-send">Enviar</button>
       </footer>
 
-      <!-- Opciones avanzadas -->
       <details class="cw-advanced">
         <summary>Opciones avanzadas</summary>
         <div class="row">
@@ -59,16 +48,14 @@
       </details>
     </div>
   </section>
+
   <script>
-    window.CHAT_API = "http://127.0.0.1:8000/v1/chat/stream";
-    window.TENANT = "zia";
+    window.CHAT_API    = "https://widget-backend-zia.onrender.com/v1/chat/stream";
+    window.TENANT      = "zia";     /* o el slug del cliente */
     window.TENANT_NAME = "zIA";
-    window.DEBUG_WIDGET = /[?&]debug=1/.test(location.search) ||
-                        ["localhost","127.0.0.1"].includes(location.hostname);
-
   </script>
-  <!-- Lógica del widget (NECESARIO) -->
-  <script type="module" src="app.js"></script>
 
+
+  <script type="module" src="app.js"></script>
 </body>
 </html>
