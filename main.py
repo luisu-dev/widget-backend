@@ -15,6 +15,8 @@ from twilio.twiml.messaging_response import MessagingResponse
 from twilio.request_validator import RequestValidator
 from fastapi import Body
 import httpx
+from fastapi.staticfiles import StaticFiles
+
 
 
 
@@ -25,6 +27,8 @@ log = logging.getLogger("zia")
 
 app = FastAPI(title="ZIA Backend", version="1.1")
 client = OpenAI()  # usa OPENAI_API_KEY del entorno
+app.mount("/assets", StaticFiles(directory="public", html=False), name="assets")
+
 
 # ── Config ─────────────────────────────────────────────────────────────
 def as_bool(val: Optional[str], default: bool = False) -> bool:
@@ -480,6 +484,66 @@ def suggest_ui_for_text(user_text: str, tenant: Optional[dict]) -> dict:
     }
 
 # ── Endpoints utilitarios ──────────────────────────────────────────────
+
+@app.get("/v1/widget.js")
+async def widget_loader(request: Request,
+                        tenant: str,
+                        name: str = "",
+                        api: str = ""):
+    base = f"{request.url.scheme}://{request.url.netloc}"
+    chat_api = api or f"{base}/v1/chat/stream"
+    safe_name = (name or tenant or "zIA").replace('"', '\\"')
+
+    html_widget = """
+<button id="cw-launcher" class="cw-launcher" aria-label="Abrir chat">
+  <canvas id="cw-orb" aria-hidden="true"></canvas>
+  <span class="cw-badge" hidden></span>
+</button>
+<section id="cw-panel" class="cw-panel" aria-label="Chat">
+  <header class="cw-header">
+    <div class="cw-title"><span class="cw-dot"></span><strong>Asistente</strong><small>en línea</small></div>
+    <div class="cw-actions">
+      <button id="cw-min" class="cw-iconbtn" aria-label="Minimizar">—</button>
+      <button id="cw-close" class="cw-iconbtn" aria-label="Cerrar">✕</button>
+    </div>
+  </header>
+  <div class="cw-body">
+    <div class="cw-messages"><div id="msgs" class="cw-thread"></div></div>
+    <div id="chips"></div>
+    <footer class="cw-footer">
+      <textarea id="msg" placeholder="Escribe tu mensaje…" rows="1"></textarea>
+      <button id="send" class="cw-send">Enviar</button>
+    </footer>
+    <details class="cw-advanced">
+      <summary>Opciones avanzadas</summary>
+      <div class="row">
+        <input id="sid" placeholder="sessionId (opcional)" />
+        <button id="new">Nuevo sessionId</button>
+        <button id="stop">Detener</button>
+      </div>
+    </details>
+  </div>
+</section>
+""".strip().replace("\n", "")
+
+    js = f"""(function(){{try{{
+      var d=document; 
+      // Config global para app.js
+      window.CHAT_API="{chat_api}";
+      window.TENANT="{tenant}";
+      window.TENANT_NAME="{safe_name}";
+      window.DEBUG_WIDGET=false;
+      // Evita duplicados
+      if(d.getElementById("zia-widget-installed")) return;
+      var flag=d.createElement("meta"); flag.id="zia-widget-installed"; d.head.appendChild(flag);
+      // CSS
+      var link=d.createElement("link"); link.rel="stylesheet"; link.href="{base}/assets/widget/styles.css"; d.head.appendChild(link);
+      // HTML
+      var host=d.createElement("div"); host.id="zia-widget-host"; host.innerHTML=`{html_widget}`; d.body.appendChild(host);
+      // JS principal
+      var s=d.createElement("script"); s.type="module"; s.src="{base}/assets/widget/app.js"; d.body.appendChild(s);
+    }}catch(e){{console.error("zia widget loader error:", e);}}}})();"""
+    return Response(js, media_type="application/javascript")
 @app.get("/health")
 async def health():
     return {"ok": True, "mode": "mock" if USE_MOCK else "real"}
@@ -1055,6 +1119,9 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
     twiml = MessagingResponse()
     twiml.message(answer)
     return Response(str(twiml), media_type="application/xml")
+
+
+
 
 
 
