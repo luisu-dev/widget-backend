@@ -488,59 +488,6 @@ def suggest_ui_for_text(user_text: str, tenant: Optional[dict]) -> dict:
 
 # ── Endpoints utilitarios ──────────────────────────────────────────────
 
-@app.get("/v1/widget.js")
-async def widget_loader(request: Request, tenant: str = Query(default=""), name: str = Query(default="zIA")):
-    base = f"{request.url.scheme}://{request.url.netloc}"
-    js = f"""
-(function(){{try{{
-  var d=document;
-  if(d.getElementById('cw-launcher')) return;
-
-  // globals para el widget
-  window.CHAT_API = '{base}/v1/chat/stream';
-  window.TENANT = {json.dumps(tenant)};
-  window.TENANT_NAME = {json.dumps(name)};
-
-  // inyecta HTML (botón + panel)
-  var html = `
-  <button id="cw-launcher" class="cw-launcher" aria-label="Abrir chat">
-    <canvas id="cw-orb" aria-hidden="true"></canvas>
-    <span class="cw-badge" hidden></span>
-  </button>
-  <section id="cw-panel" class="cw-panel" aria-label="Chat">
-    <header class="cw-header">
-      <div class="cw-title"><span class="cw-dot"></span><strong>Asistente</strong><small>en línea</small></div>
-      <div class="cw-actions"><button id="cw-min" class="cw-iconbtn" aria-label="Minimizar">—</button><button id="cw-close" class="cw-iconbtn" aria-label="Cerrar">✕</button></div>
-    </header>
-    <div class="cw-body">
-      <div class="cw-messages"><div id="msgs" class="cw-thread"></div></div>
-      <div id="chips"></div>
-      <footer class="cw-footer">
-        <textarea id="msg" placeholder="Escribe tu mensaje…" rows="1"></textarea>
-        <button id="send" class="cw-send">Enviar</button>
-      </footer>
-      <details class="cw-advanced"><summary>Opciones avanzadas</summary>
-        <div class="row"><input id="sid" placeholder="sessionId (opcional)" /><button id="new">Nuevo sessionId</button><button id="stop">Detener</button></div>
-      </details>
-    </div>
-  </section>`;
-  d.body.insertAdjacentHTML('beforeend', html);
-
-  // CSS
-  var css=d.createElement('link');
-  css.rel='stylesheet';
-  css.href='{base}/assets/widget/styles.css';
-  d.head.appendChild(css);
-
-  // JS como script clásico (no module → evita CORS de módulos)
-  var s=d.createElement('script');
-  s.defer = true;
-  s.crossOrigin = 'anonymous';
-  s.src='{base}/assets/widget/app.js';
-  d.body.appendChild(s);
-}}catch(e){{console.error('widget load failed',e);}}}})();
-"""
-    return Response(js, media_type="application/javascript", headers={"Cache-Control":"public, max-age=300"})
 
 
 @app.get("/health")
@@ -596,7 +543,7 @@ async def widget_loader(request: Request, tenant: str = Query(default="")):
         code = f"console.error('zia widget: no se pudieron leer assets', {repr(str(e))});"
         return Response(code, media_type="application/javascript")
 
-    # HTML mínimo del widget (igual al tuyo pero en una sola línea)
+    # HTML mínimo en una línea
     html = (
       '<button id="cw-launcher" class="cw-launcher" aria-label="Abrir chat">'
       '<canvas id="cw-orb" aria-hidden="true"></canvas><span class="cw-badge" hidden></span>'
@@ -618,35 +565,41 @@ async def widget_loader(request: Request, tenant: str = Query(default="")):
     base = str(request.base_url).rstrip("/")
     tenant_slug = (tenant or "demo").strip()
 
-    # empaquetamos todo inline, sin más fetches
-    import json
     code = f"""
     (function(){{try{{
-      // config por defecto
+      // configuración
       window.TENANT = window.TENANT || {json.dumps(tenant_slug)};
       window.TENANT_NAME = window.TENANT_NAME || {json.dumps(tenant_slug)};
       window.CHAT_API = window.CHAT_API || {json.dumps(base + "/v1/chat/stream")};
 
-      // CSS inline (evita otra descarga y CORS)
+      // CSS inline
       if(!document.querySelector('style[data-zia]')){{
         var st=document.createElement('style'); st.setAttribute('data-zia','1');
         st.textContent={json.dumps(css_src)}; document.head.appendChild(st);
       }}
 
-      // HTML (si no existe)
+      // HTML si no existe
       if(!document.getElementById('cw-launcher')){{
         var wrap=document.createElement('div'); wrap.setAttribute('data-zia','1');
         wrap.innerHTML={json.dumps(html)}; document.body.appendChild(wrap);
       }}
 
-      // ejecuta el app.js directamente
+      // ejecuta app.js
       (new Function({json.dumps(js_src)}))();
+
+      // si el DOM ya estaba listo, dispara el evento para que app.js inicialice
+      if (document.readyState !== 'loading') {{
+        try {{ document.dispatchEvent(new Event('DOMContentLoaded')); }}
+        catch(_e) {{
+          var ev = document.createEvent('Event'); ev.initEvent('DOMContentLoaded', true, true);
+          document.dispatchEvent(ev);
+        }}
+      }}
 
       console.log('[zia] widget cargado');
     }}catch(e){{ console.error('[zia] fallo al cargar widget', e); }}})();
     """
-    return Response(code, media_type="application/javascript")
-
+    return Response(code, media_type="application/javascript", headers={"Cache-Control":"public, max-age=300"})
 
 @app.options("/v1/chat/stream")
 async def options_stream():
