@@ -16,6 +16,8 @@ from twilio.request_validator import RequestValidator
 from fastapi import Body
 import httpx
 from fastapi.staticfiles import StaticFiles
+from pathlib import Path
+
 
 
 
@@ -583,6 +585,68 @@ async def widget_bootstrap(tenant: str):
     if not t:
         raise HTTPException(404, f"Tenant '{tenant}' no encontrado")
     return {"tenant": dict(t._mapping), "ui": {"suggestions": ["Solicitar cotización","Ver tarifas","Contactar por WhatsApp"]}}
+
+@app.get("/v1/widget.js")
+async def widget_loader(request: Request, tenant: str = Query(default="")):
+    try:
+        root = Path(__file__).parent / "public" / "widget"
+        js_src  = (root / "app.js").read_text("utf-8")
+        css_src = (root / "styles.css").read_text("utf-8")
+    except Exception as e:
+        code = f"console.error('zia widget: no se pudieron leer assets', {repr(str(e))});"
+        return Response(code, media_type="application/javascript")
+
+    # HTML mínimo del widget (igual al tuyo pero en una sola línea)
+    html = (
+      '<button id="cw-launcher" class="cw-launcher" aria-label="Abrir chat">'
+      '<canvas id="cw-orb" aria-hidden="true"></canvas><span class="cw-badge" hidden></span>'
+      '</button>'
+      '<section id="cw-panel" class="cw-panel" aria-label="Chat">'
+      '<header class="cw-header"><div class="cw-title"><span class="cw-dot"></span>'
+      '<strong>Asistente</strong><small>en línea</small></div>'
+      '<div class="cw-actions"><button id="cw-min" class="cw-iconbtn" aria-label="Minimizar">—</button>'
+      '<button id="cw-close" class="cw-iconbtn" aria-label="Cerrar">✕</button></div></header>'
+      '<div class="cw-body"><div class="cw-messages"><div id="msgs" class="cw-thread"></div></div>'
+      '<div id="chips"></div>'
+      '<footer class="cw-footer"><textarea id="msg" placeholder="Escribe tu mensaje…" rows="1"></textarea>'
+      '<button id="send" class="cw-send">Enviar</button></footer>'
+      '<details class="cw-advanced"><summary>Opciones avanzadas</summary><div class="row">'
+      '<input id="sid" placeholder="sessionId (opcional)" /><button id="new">Nuevo sessionId</button>'
+      '<button id="stop">Detener</button></div></details></div></section>'
+    )
+
+    base = str(request.base_url).rstrip("/")
+    tenant_slug = (tenant or "demo").strip()
+
+    # empaquetamos todo inline, sin más fetches
+    import json
+    code = f"""
+    (function(){{try{{
+      // config por defecto
+      window.TENANT = window.TENANT || {json.dumps(tenant_slug)};
+      window.TENANT_NAME = window.TENANT_NAME || {json.dumps(tenant_slug)};
+      window.CHAT_API = window.CHAT_API || {json.dumps(base + "/v1/chat/stream")};
+
+      // CSS inline (evita otra descarga y CORS)
+      if(!document.querySelector('style[data-zia]')){{
+        var st=document.createElement('style'); st.setAttribute('data-zia','1');
+        st.textContent={json.dumps(css_src)}; document.head.appendChild(st);
+      }}
+
+      // HTML (si no existe)
+      if(!document.getElementById('cw-launcher')){{
+        var wrap=document.createElement('div'); wrap.setAttribute('data-zia','1');
+        wrap.innerHTML={json.dumps(html)}; document.body.appendChild(wrap);
+      }}
+
+      // ejecuta el app.js directamente
+      (new Function({json.dumps(js_src)}))();
+
+      console.log('[zia] widget cargado');
+    }}catch(e){{ console.error('[zia] fallo al cargar widget', e); }}})();
+    """
+    return Response(code, media_type="application/javascript")
+
 
 @app.options("/v1/chat/stream")
 async def options_stream():
