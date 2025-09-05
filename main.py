@@ -18,10 +18,6 @@ import httpx
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-
-
-
-
 # ── Setup ──────────────────────────────────────────────────────────────
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -540,10 +536,9 @@ async def widget_loader(request: Request, tenant: str = Query(default="")):
         js_src  = (root / "app.js").read_text("utf-8")
         css_src = (root / "styles.css").read_text("utf-8")
     except Exception as e:
-        code = f"console.error('zia widget: no se pudieron leer assets', {repr(str(e))});"
+        code = "console.error('zia widget: no se pudieron leer assets', %r);" % (str(e),)
         return Response(code, media_type="application/javascript")
 
-    # HTML mínimo en una línea
     html = (
       '<button id="cw-launcher" class="cw-launcher" aria-label="Abrir chat">'
       '<canvas id="cw-orb" aria-hidden="true"></canvas><span class="cw-badge" hidden></span>'
@@ -565,40 +560,39 @@ async def widget_loader(request: Request, tenant: str = Query(default="")):
     base = str(request.base_url).rstrip("/")
     tenant_slug = (tenant or "demo").strip()
 
-    code = f"""
-    (function(){{try{{
-      // configuración
-      window.TENANT = window.TENANT || {json.dumps(tenant_slug)};
-      window.TENANT_NAME = window.TENANT_NAME || {json.dumps(tenant_slug)};
-      window.CHAT_API = window.CHAT_API || {json.dumps(base + "/v1/chat/stream")};
+    # Construimos el JS sin f-strings para no pelear con llaves
+    parts = [
+      "(function(){try{",
+      "  // configuración",
+      "  window.TENANT = window.TENANT || " + json.dumps(tenant_slug) + ";",
+      "  window.TENANT_NAME = window.TENANT_NAME || " + json.dumps(tenant_slug) + ";",
+      "  window.CHAT_API = window.CHAT_API || " + json.dumps(base + "/v1/chat/stream") + ";",
 
-      // CSS inline
-      if(!document.querySelector('style[data-zia]')){{
-        var st=document.createElement('style'); st.setAttribute('data-zia','1');
-        st.textContent={json.dumps(css_src)}; document.head.appendChild(st);
-      }}
+      "  // CSS inline",
+      "  if(!document.querySelector('style[data-zia]')){",
+      "    var st=document.createElement('style'); st.setAttribute('data-zia','1');",
+      "    st.textContent=" + json.dumps(css_src) + "; document.head.appendChild(st);",
+      "  }",
 
-      // HTML si no existe
-      if(!document.getElementById('cw-launcher')){{
-        var wrap=document.createElement('div'); wrap.setAttribute('data-zia','1');
-        wrap.innerHTML={json.dumps(html)}; document.body.appendChild(wrap);
-      }}
+      "  // HTML si no existe",
+      "  if(!document.getElementById('cw-launcher')){",
+      "    var wrap=document.createElement('div'); wrap.setAttribute('data-zia','1');",
+      "    wrap.innerHTML=" + json.dumps(html) + "; document.body.appendChild(wrap);",
+      "  }",
 
-      // ejecuta app.js
-      (new Function({json.dumps(js_src)}))();
+      "  // ejecuta app.js",
+      "  (new Function(" + json.dumps(js_src) + "))();",
 
-      // si el DOM ya estaba listo, dispara el evento para que app.js inicialice
-      if (document.readyState !== 'loading') {{
-        try {{ document.dispatchEvent(new Event('DOMContentLoaded')); }}
-        catch(_e) {{
-          var ev = document.createEvent('Event'); ev.initEvent('DOMContentLoaded', true, true);
-          document.dispatchEvent(ev);
-        }}
-      }}
+      "  // si el DOM ya estaba listo, dispara DOMContentLoaded para que app.js inicialice",
+      "  if (document.readyState !== 'loading') {",
+      "    try { document.dispatchEvent(new Event('DOMContentLoaded')); }",
+      "    catch(_e) { var ev = document.createEvent('Event'); ev.initEvent('DOMContentLoaded', true, true); document.dispatchEvent(ev); }",
+      "  }",
 
-      console.log('[zia] widget cargado');
-    }}catch(e){{ console.error('[zia] fallo al cargar widget', e); }}})();
-    """
+      "  console.log('[zia] widget cargado');",
+      "}catch(e){ console.error('[zia] fallo al cargar widget', e); }})();"
+    ]
+    code = "\n".join(parts)
     return Response(code, media_type="application/javascript", headers={"Cache-Control":"public, max-age=300"})
 
 @app.options("/v1/chat/stream")
