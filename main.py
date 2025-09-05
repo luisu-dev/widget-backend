@@ -27,7 +27,8 @@ log = logging.getLogger("zia")
 
 app = FastAPI(title="ZIA Backend", version="1.1")
 client = OpenAI()  # usa OPENAI_API_KEY del entorno
-app.mount("/assets", StaticFiles(directory="public", html=False), name="assets")
+app.mount("/assets/widget", StaticFiles(directory="public/widget"), name="widget_assets")
+
 
 
 # ── Config ─────────────────────────────────────────────────────────────
