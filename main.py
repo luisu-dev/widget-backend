@@ -35,8 +35,7 @@ def as_bool(val: Optional[str], default: bool = False) -> bool:
         return default
     return str(val).strip().lower() in ("1", "true", "yes", "y", "on")
 
-# arriba ya tienes: import os
-ALLOWED_ORIGIN_REGEX = os.getenv("ALLOWED_ORIGIN_REGEX", "")
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -52,6 +51,7 @@ ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
     "http://localhost:5173,http://127.0.0.1:5173"
 ).split(",")
+ALLOWED_ORIGIN_REGEX = os.getenv("ALLOWED_ORIGIN_REGEX", "")
 DATABASE_URL   = os.getenv("DATABASE_URL", "")
 USE_MOCK       = as_bool(os.getenv("USE_MOCK"), False)  # default: real mode
 OPENAI_MODEL   = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
