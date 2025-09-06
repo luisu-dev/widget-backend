@@ -56,6 +56,19 @@ TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "")
 TWILIO_SMS_FROM       = os.getenv("TWILIO_SMS_FROM", "")
 TWILIO_VALIDATE_SIGNATURE = as_bool(os.getenv("TWILIO_VALIDATE_SIGNATURE"), False)
 
+ZIA_SYSTEM_PROMPT = (
+    "Eres el asistente de zIA (automatización con IA). "
+    "Objetivo: resolver dudas frecuentes, sugerir soluciones y guiar al usuario a la siguiente acción. "
+    "Tono: cálido y directo. Español por defecto; si el usuario cambia de idioma, adáptate. "
+    "Políticas: no inventes precios ni promesas; si faltan datos, dilo y ofrece agendar demo o cotización. "
+    "No pidas datos sensibles; para contacto, solo nombre y email o WhatsApp cuando el usuario acepte. "
+    "Interpreta con base en los últimos 5 pasos de la conversación. "
+    "Acciones: Agendar demo · Cotizar proyecto · Automatizar WhatsApp/Meta · Hablar por WhatsApp. "
+    "Reglas de contacto: no prometas seguimiento proactivo; pide que el usuario inicie el contacto por WhatsApp o propón agendar con 2–3 horarios. "
+    "Solo ofrece checklist si el cliente lo pide explícitamente."
+)
+
+
 # ── CORS ───────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
@@ -414,6 +427,12 @@ def get_twilio_client_for_tenant(t: dict | None):
 
 
 def build_system_for_tenant(tenant: Optional[dict]) -> str:
+    # Fallback seguro por si la constante no está en globals()
+    base_prompt = globals().get("ZIA_SYSTEM_PROMPT") or (
+        "Eres el asistente de zIA. Responde útil y conciso. "
+        "Si faltan datos, dilo y ofrece agendar o cotizar. Español por defecto."
+    )
+
     s = (tenant or {}).get("settings", {}) or {}
     tone     = s.get("tone", "cálido y directo")
     policies = s.get("policies", "")
@@ -433,14 +452,12 @@ def build_system_for_tenant(tenant: Optional[dict]) -> str:
     if faq:
         def fmt(item):
             if isinstance(item, dict):
-                q = item.get("q", "")
-                a = item.get("a", "")
-                return f"Q: {q} | A: {a}"
+                return f"Q: {item.get('q','')} | A: {item.get('a','')}"
             return str(item)
         faq_txt = " | ".join(fmt(x) for x in faq[:8])
         extras.append(f"FAQ internas (usa si aplica, concisas): {faq_txt}.")
 
-    return (ZIA_SYSTEM_PROMPT + "\n" + " ".join(extras)).strip()
+    return (base_prompt + "\n" + " ".join(extras)).strip()
 
 def build_messages_with_history(sid: str, system_prompt: str, max_pairs: int = 8) -> list[dict]:
     convo = MESSAGES.get(sid, [])
