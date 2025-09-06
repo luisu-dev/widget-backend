@@ -35,6 +35,19 @@ def as_bool(val: Optional[str], default: bool = False) -> bool:
         return default
     return str(val).strip().lower() in ("1", "true", "yes", "y", "on")
 
+# arriba ya tienes: import os
+ALLOWED_ORIGIN_REGEX = os.getenv("ALLOWED_ORIGIN_REGEX", "")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in ALLOWED_ORIGINS if o.strip()],
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX or None,   # ← agrega esta línea
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
     "http://localhost:5173,http://127.0.0.1:5173"
