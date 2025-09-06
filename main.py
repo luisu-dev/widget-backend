@@ -35,25 +35,16 @@ def as_bool(val: Optional[str], default: bool = False) -> bool:
         return default
     return str(val).strip().lower() in ("1", "true", "yes", "y", "on")
 
-
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[o.strip() for o in ALLOWED_ORIGINS if o.strip()],
-    allow_origin_regex=ALLOWED_ORIGIN_REGEX or None,   # ← agrega esta línea
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
     "http://localhost:5173,http://127.0.0.1:5173"
 ).split(",")
+
+# Opcional: acepta todos los deploys *.vercel.app con una regex
 ALLOWED_ORIGIN_REGEX = os.getenv("ALLOWED_ORIGIN_REGEX", "")
+
 DATABASE_URL   = os.getenv("DATABASE_URL", "")
-USE_MOCK       = as_bool(os.getenv("USE_MOCK"), False)  # default: real mode
+USE_MOCK       = as_bool(os.getenv("USE_MOCK"), False)
 OPENAI_MODEL   = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 RATE_LIMIT     = int(os.getenv("RATE_LIMIT", "20"))
 RATE_WINDOW_SECONDS = int(os.getenv("RATE_WINDOW_SECONDS", "10"))
@@ -65,25 +56,11 @@ TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "")
 TWILIO_SMS_FROM       = os.getenv("TWILIO_SMS_FROM", "")
 TWILIO_VALIDATE_SIGNATURE = as_bool(os.getenv("TWILIO_VALIDATE_SIGNATURE"), False)
 
-
-ZIA_SYSTEM_PROMPT = (
-    "Eres el asistente de zIA (automatización con IA). "
-    "Objetivo: resolver dudas frecuentes, sugerir soluciones y guiar al usuario a la siguiente acción. "
-    "Tono: cálido y directo. Español por defecto; si el usuario cambia de idioma, adáptate. "
-    "Políticas: no inventes precios ni promesas; si faltan datos, dilo y ofrece agendar demo o cotización. "
-    "No pidas datos sensibles; para contacto, solo nombre y email o WhatsApp cuando el usuario acepte. "
-    "Interpreta con base en los últimos 5 pasos de la conversación. "
-    "Acciones (menciónalas cuando encajen): • Agendar demo • Cotizar proyecto • Automatizar WhatsApp/Meta • Hablar por WhatsApp. "
-    "Reglas de contacto: No prometas que “nos pondremos en contacto”, “te llamamos” ni seguimiento proactivo. "
-    "Aunque el usuario comparta su nombre o WhatsApp, pide que INICIE el contacto: usa el botón/enlace de WhatsApp de abajo "
-    "o propón agendar pidiendo 2–3 horarios."
-    "solo ofrece check list si el cliente lo menciona explicitamente"
-)
-
 # ── CORS ───────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in ALLOWED_ORIGINS if o.strip()],
+    allow_origin_regex=(ALLOWED_ORIGIN_REGEX or None),  # ← importante
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
