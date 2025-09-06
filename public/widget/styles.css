@@ -170,3 +170,99 @@ html,body{ margin:0; width:100%; max-width:100%;
 }
 .cw-launcher{ overflow: hidden; } /* recorte circular por si acaso */
 
+/* ====== zIA THEME OVERRIDES (light + dark) ====== */
+:where([data-zia]) {
+  /* Light (default) */
+  --cw-primary: #10b981;             /* verde botón/chips */
+  --cw-primary-contrast: #ffffff;
+
+  --cw-bg: #ffffff;                  /* fondo inputs */
+  --cw-surface: #f7f8fb;             /* superficies */
+  --cw-elev-1: #ffffff;              /* panel/launcher */
+  --cw-text: #0f172a;                /* texto principal */
+  --cw-muted: #64748b;               /* texto secundario */
+  --cw-border: #e5e7eb;              /* bordes suaves */
+
+  --cw-bubble: #f3f4f6;              /* burbuja asistente */
+  --cw-bubble-text: #111827;
+  --cw-user-bubble: var(--cw-primary);
+  --cw-user-text: var(--cw-primary-contrast);
+}
+
+@media (prefers-color-scheme: dark) {
+  :where([data-zia]) {
+    --cw-bg: #0b0f14;
+    --cw-surface: #0f141a;
+    --cw-elev-1: #0f141a;
+    --cw-text: #e5e7eb;
+    --cw-muted: #9ca3af;
+    --cw-border: #1f2937;
+
+    --cw-bubble: #1f2937;
+    --cw-bubble-text: #e5e7eb;
+    --cw-user-bubble: #10b981;
+    --cw-user-text: #05251b;
+  }
+}
+
+/* Panel y estructura */
+:where([data-zia]) .cw-panel{
+  background: var(--cw-elev-1) !important;
+  color: var(--cw-text) !important;
+  border: 1px solid var(--cw-border);
+  box-shadow: 0 12px 30px rgba(0,0,0,.18);
+  color-scheme: light dark;
+}
+:where([data-zia]) .cw-header{
+  background: var(--cw-elev-1) !important;
+  border-bottom: 1px solid var(--cw-border) !important;
+}
+:where([data-zia]) .cw-title small{ color: var(--cw-muted); }
+
+/* Burbujas */
+:where([data-zia]) .cw-thread .msg{
+  background: var(--cw-bubble) !important;
+  color: var(--cw-bubble-text) !important;
+}
+:where([data-zia]) .cw-thread .msg.me{
+  background: var(--cw-user-bubble) !important;
+  color: var(--cw-user-text) !important;
+}
+
+/* Chips / sugerencias */
+:where([data-zia]) #chips{ gap: .5rem; }
+:where([data-zia]) .cw-chip{
+  background: var(--cw-surface) !important;
+  color: var(--cw-text) !important;
+  border: 1px solid var(--cw-border) !important;
+}
+:where([data-zia]) .cw-chip:hover,
+:where([data-zia]) .cw-chip[aria-pressed="true"]{
+  background: var(--cw-primary) !important;
+  color: var(--cw-primary-contrast) !important;
+  border-color: var(--cw-primary) !important;
+}
+
+/* Input y botón enviar */
+:where([data-zia]) textarea#msg{
+  background: var(--cw-bg) !important;
+  color: var(--cw-text) !important;
+  border: 1px solid var(--cw-border) !important;
+}
+:where([data-zia]) .cw-send{
+  background: var(--cw-primary) !important;
+  color: var(--cw-primary-contrast) !important;
+}
+
+/* Launcher */
+:where([data-zia]) .cw-launcher{
+  background: var(--cw-elev-1) !important;
+  border: 1px solid var(--cw-border) !important;
+}
+
+/* Orb (un poco más tenue en claro) */
+:where([data-zia]) #cw-orb{ opacity: .85; }
+@media (prefers-color-scheme: light){
+  :where([data-zia]) #cw-orb{ opacity: .7; }
+}
+
