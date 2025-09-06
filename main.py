@@ -771,10 +771,19 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
     add_message(sid, "user", input.message)
     asyncio.create_task(store_event(tenant or "public", sid, "msg_in", {"text": (input.message or "")[:2000]}))
 
+    async def event_generator():
+        try:
+            # Enviar algo primero para fijar los headers
+            yield sse_event("ok", event="ping")
 
-    t = await fetch_tenant(tenant)
-    system_prompt = build_system_for_tenant(t)
-    messages = build_messages_with_history(sid, system_prompt)
+            # ⬇️ MOVER AQUÍ la resolución de tenant y mensajes
+            t = await fetch_tenant(tenant)
+            system_prompt = build_system_for_tenant(t)
+            messages = build_messages_with_history(sid, system_prompt)
+            # ⬆️
+
+            # (el resto de tu lógica igual…)
+
 
     async def event_generator():
         try:
