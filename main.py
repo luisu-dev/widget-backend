@@ -773,19 +773,15 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
 
     async def event_generator():
         try:
-            # Enviar algo primero para fijar los headers
+            # 1) Mandamos un primer evento para fijar headers y evitar 500 "parecidos a CORS"
             yield sse_event("ok", event="ping")
 
-            # ⬇️ MOVER AQUÍ la resolución de tenant y mensajes
+            # 2) Resolver tenant/mensajes AQUI dentro (si DB falla, igual ya enviamos headers)
             t = await fetch_tenant(tenant)
             system_prompt = build_system_for_tenant(t)
             messages = build_messages_with_history(sid, system_prompt)
-            # ⬆️
-    async def event_generator():
-        try:
-            yield sse_event("ok", event="ping")
 
-            # Atajo: checklist en cualquier momento
+            # 3) Atajos y flujo de captura de datos
             text_lc = (input.message or "").lower()
             if "checklist" in text_lc or text_lc.strip() in {"ver checklist"}:
                 checklist = (
@@ -804,14 +800,12 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
 
             flow = get_flow(sid)
 
-            # Disparar flujo SOLO si pide cotización explícita
             if flow["stage"] is None and wants_quote(input.message):
                 flow.update({"stage": "ask_name"})
                 yield sse_event(json.dumps({"content": "Genial, te ayudo con la cotización. ¿Cuál es tu nombre completo?"}), event="delta")
                 yield sse_event(json.dumps({}), event="done")
                 return
 
-            # Paso: pedir nombre
             if flow["stage"] == "ask_name":
                 name = (input.message or "").strip()
                 if not name:
@@ -825,11 +819,9 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 yield sse_event(json.dumps({}), event="done")
                 return
 
-            # Paso: elegir método
             if flow["stage"] == "ask_method":
                 m = (input.message or "").strip().lower()
-                if "whats" in m:
-                    m = "whatsapp"
+                if "whats" in m: m = "whatsapp"
                 if m not in {"whatsapp","email","llamada"}:
                     yield sse_event(json.dumps({"content":"Elige una opción: WhatsApp, Email o Llamada."}), event="delta")
                     yield sse_event(json.dumps({"chips": ["WhatsApp","Email","Llamada"]}), event="ui")
@@ -844,7 +836,6 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 yield sse_event(json.dumps({}), event="done")
                 return
 
-            # Paso: capturar dato del contacto y guardar
             if flow["stage"] == "ask_value":
                 value = (input.message or "").strip()
                 ok = (is_phone(value) if flow["method"] in {"whatsapp","llamada"} else is_email(value))
@@ -858,7 +849,6 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 contact = norm_phone(value) if flow["method"] in {"whatsapp","llamada"} else value.strip().lower()
                 lead = await save_lead(tenant or "public", sid, flow["name"], flow["method"], contact, meta={"source":"widget"})
 
-                # registra evento de servidor
                 try:
                     if db_engine:
                         async with db_engine.begin() as conn:
@@ -881,7 +871,6 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                     yield sse_event(json.dumps({}), event="done")
                     SESSIONS[sid]["contact_flow"] = {"stage": None, "name": None, "method": None, "contact": None}
                     return
-
                 elif flow["method"] == "email":
                     yield sse_event(json.dumps({"content": base + " Puedo compartir aquí un checklist breve para definir el alcance. ¿Quieres verlo?"}), event="delta")
                     yield sse_event(json.dumps({"chips": ["Ver checklist"]}), event="ui")
@@ -889,7 +878,6 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                     yield sse_event(json.dumps({}), event="done")
                     SESSIONS[sid]["contact_flow"] = {"stage": None, "name": None, "method": None, "contact": None}
                     return
-
                 else:  # llamada
                     yield sse_event(json.dumps({"content": base + " Para agendar, comparte 2–3 opciones con día y hora (ej.: mié 10:00–10:30; jue 16:00–16:30)."}), event="delta")
                     try:
@@ -901,14 +889,12 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                     yield sse_event(json.dumps({}), event="done")
                     return
 
-            # Paso: capturar horario propuesto (llamada)
             if flow["stage"] == "ask_slot":
                 slot_text = (input.message or "").strip()
                 if len(slot_text) < 5 or slot_text.lower() in {"cualquier hora","a cualquier hora","cuando sea","si","sí"}:
                     yield sse_event(json.dumps({"content":"¿Puedes darme 2–3 opciones concretas con día y hora? (ej.: mié 10:00–10:30; jue 16:00–16:30)"}), event="delta")
                     yield sse_event(json.dumps({}), event="done")
                     return
-
                 try:
                     lead_id = SESSIONS[sid].get("last_lead_id")
                     if db_engine and lead_id:
@@ -925,14 +911,13 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                             )
                 except Exception as e:
                     log.warning(f"no se pudo guardar preferred_slot: {e}")
-
                 yield sse_event(json.dumps({"content": f"Perfecto, anoté: {slot_text}. Cuando gustes podemos confirmar por aquí o por WhatsApp."}), event="delta")
                 yield sse_event(json.dumps({}), event="done")
                 SESSIONS[sid]["contact_flow"] = {"stage": None, "name": None, "method": None, "contact": None}
                 SESSIONS[sid].pop("last_lead_id", None)
                 return
 
-            # Sin flujo: streaming normal (real o mock)
+            # 4) Streaming normal
             if USE_MOCK:
                 full = f"(mock) Recibí: {input.message}"
                 for ch in full:
@@ -943,23 +928,22 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 yield sse_event(json.dumps(ui), event="ui")
                 yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
                 return
-            
-            final_text = "" 
 
-            client_rt = client.with_options(timeout=60.0)  # corta cuelgues largos
+            final_text = ""
+            client_rt = client.with_options(timeout=60.0)
             stream = None
-            for attempt in range(2):  # 1 intento + 1 reintento
+            for attempt in range(2):
                 try:
                     stream = client_rt.chat.completions.create(
-                    model=OPENAI_MODEL,
-                    messages=messages,
-                    stream=True
+                        model=OPENAI_MODEL,
+                        messages=messages,
+                        stream=True
                     )
                     break
-                except Exception as e:
+                except Exception:
                     if attempt == 1:
                         raise
-                    await asyncio.sleep(0.7)  # respiro corto antes del retry
+                    await asyncio.sleep(0.7)
 
             if stream is None:
                 raise RuntimeError("No se pudo iniciar stream")
@@ -973,6 +957,7 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 if await request.is_disconnected():
                     add_message(sid, "assistant", final_text)
                     return
+
             add_message(sid, "assistant", final_text)
             asyncio.create_task(store_event(tenant or "public", sid, "msg_out", {"text": final_text[:2000]}))
             ui = suggest_ui_for_text(input.message, t)
