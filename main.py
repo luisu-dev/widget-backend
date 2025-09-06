@@ -781,10 +781,6 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
             system_prompt = build_system_for_tenant(t)
             messages = build_messages_with_history(sid, system_prompt)
             # ⬆️
-
-            # (el resto de tu lógica igual…)
-
-
     async def event_generator():
         try:
             yield sse_event("ok", event="ping")
