@@ -740,7 +740,13 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                     comment_id = str(value.get("comment_id", ""))
                     author_id = str(value.get("from", {}).get("id", ""))
                     text_in = (value.get("message") or "").strip()
-                    if not (comment_id and text_in and page_token):
+
+                    # 1) no exijas siempre text_in
+                    if not (comment_id and page_token):
+                        continue
+
+                    # 2) evita responder si el autor es la propia página (para no ciclos)
+                    if author_id and page_id and author_id == page_id:
                         continue
 
                     # Genera respuesta corta para el reply público
