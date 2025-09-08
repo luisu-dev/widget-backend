@@ -1,6 +1,6 @@
 import os, uuid, time, asyncio, json, logging, re
 from typing import Optional, Dict, Any
-from fastapi import FastAPI, HTTPException, Request, Header, Depends, Query
+from fastapi import FastAPI, HTTPException, Request, Header, Depends, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import StreamingResponse, Response
 from dotenv import load_dotenv
@@ -13,10 +13,7 @@ import csv, io
 from twilio.rest import Client as TwilioClient
 from twilio.twiml.messaging_response import MessagingResponse
 from twilio.request_validator import RequestValidator
-from fastapi import Body
 import httpx
-from fastapi.staticfiles import StaticFiles
-from pathlib import Path
 
 # ── Setup ──────────────────────────────────────────────────────────────
 load_dotenv()
@@ -25,9 +22,6 @@ log = logging.getLogger("zia")
 
 app = FastAPI(title="ZIA Backend", version="1.1")
 client = OpenAI()  # usa OPENAI_API_KEY del entorno
-app.mount("/assets/widget", StaticFiles(directory="public/widget"), name="widget_assets")
-
-
 
 # ── Config ─────────────────────────────────────────────────────────────
 def as_bool(val: Optional[str], default: bool = False) -> bool:
@@ -39,9 +33,6 @@ ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
     "http://localhost:5173,http://127.0.0.1:5173"
 ).split(",")
-
-# Opcional: acepta todos los deploys *.vercel.app con una regex
-ALLOWED_ORIGIN_REGEX = os.getenv("ALLOWED_ORIGIN_REGEX", "")
 
 DATABASE_URL   = os.getenv("DATABASE_URL", "")
 USE_MOCK       = as_bool(os.getenv("USE_MOCK"), False)
@@ -63,17 +54,17 @@ ZIA_SYSTEM_PROMPT = (
     "Políticas: no inventes precios ni promesas; si faltan datos, dilo y ofrece agendar demo o cotización. "
     "No pidas datos sensibles; para contacto, solo nombre y email o WhatsApp cuando el usuario acepte. "
     "Interpreta con base en los últimos 5 pasos de la conversación. "
-    "Acciones: Agendar demo · Cotizar proyecto · Automatizar WhatsApp/Meta · Hablar por WhatsApp. "
-    "Reglas de contacto: no prometas seguimiento proactivo; pide que el usuario inicie el contacto por WhatsApp o propón agendar con 2–3 horarios. "
-    "Solo ofrece checklist si el cliente lo pide explícitamente."
+    "Acciones (menciónalas cuando encajen): • Agendar demo • Cotizar proyecto • Automatizar WhatsApp/Meta • Hablar por WhatsApp. "
+    "Reglas de contacto: No prometas que “nos pondremos en contacto”, “te llamamos” ni seguimiento proactivo. "
+    "Aunque el usuario comparta su nombre o WhatsApp, pide que INICIE el contacto: usa el botón/enlace de WhatsApp de abajo "
+    "o propón agendar pidiendo 2–3 horarios. "
+    "Solo ofrece checklist si el cliente lo menciona explícitamente."
 )
-
 
 # ── CORS ───────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in ALLOWED_ORIGINS if o.strip()],
-    allow_origin_regex=(ALLOWED_ORIGIN_REGEX or None),  # ← importante
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -139,7 +130,6 @@ def wants_quote(text: str) -> bool:
 def valid_slug(slug: str) -> bool:
     return bool(re.fullmatch(r"[a-z0-9\-]{1,40}", (slug or "")))
 
-
 # ── DB helpers ─────────────────────────────────────────────────────────
 def to_asyncpg(url: str) -> str:
     if not url:
@@ -147,10 +137,8 @@ def to_asyncpg(url: str) -> str:
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
     url = url.replace("postgresql+asyncpg://", "postgresql://", 1)
-
     p = urlparse(url)
     q = dict(parse_qsl(p.query, keep_blank_values=True))
-
     if "sslmode" in q:
         val = (q.pop("sslmode") or "").lower()
         if val in ("disable", "allow", "prefer", "require", "verify-ca", "verify-full"):
@@ -163,7 +151,6 @@ def to_asyncpg(url: str) -> str:
             q["ssl"] = "disable"
     if "ssl" not in q:
         q["ssl"] = "require"
-
     new_query = urlencode(q)
     scheme = "postgresql+asyncpg"
     return urlunparse((scheme, p.netloc, p.path, p.params, new_query, p.fragment))
@@ -225,7 +212,6 @@ async def on_startup():
         except Exception as e:
             log.warning(f"Twilio no inicializado: {e}")
 
-    
 async def store_event(tenant_slug: str, sid: str, etype: str, payload: dict | None = None):
     if not db_engine:
         return
@@ -241,11 +227,8 @@ def _twilio_req_is_valid(request: Request, auth_token: str) -> bool:
         return True
     try:
         sig = request.headers.get("X-Twilio-Signature", "")
-        url = str(request.url)  # debe ser la URL pública HTTPS configurada en Twilio
-        # Para validar firma de webhooks form-encoded usamos los pares clave/valor
-        # FastAPI: request.form() es async
-        # La validación se hace en el endpoint (ver abajo) con los datos ya parseados.
-        return bool(sig)  # validamos en el endpoint usando params concretos
+        url = str(request.url)
+        return bool(sig)
     except Exception:
         return False
 
@@ -276,8 +259,6 @@ async def twilio_send_sms(tenant_slug: str, to_e164: str, text: str) -> dict:
         body=text
     )
     return {"sid": msg.sid}
-
-
 
 # ── Modelos ────────────────────────────────────────────────────────────
 class TenantIn(BaseModel):
@@ -381,23 +362,6 @@ async def meta_send_text(page_token: str, recipient_id: str, text: str) -> dict:
         r.raise_for_status()
         return r.json()
 
-async def ig_private_reply_to_comment(page_token: str, ig_comment_id: str, message: str) -> dict:
-    """
-    Instagram private reply a un comentario.
-    Endpoint correcto: POST /{ig_comment_id}/private_replies
-    Requiere: instagram_manage_comments + token de página con permisos sobre la cuenta IG vinculada.
-    """
-    if not (page_token and ig_comment_id and message):
-        raise RuntimeError("Faltan datos para IG private reply")
-    url = f"https://graph.facebook.com/v20.0/{ig_comment_id}/private_replies"
-    async with httpx.AsyncClient(timeout=10.0) as cx:
-        r = await cx.post(url,
-                          params={"access_token": page_token},
-                          data={"message": message})
-        r.raise_for_status()
-        return r.json()
-
-
 async def fb_reply_comment(page_token: str, comment_id: str, message: str) -> dict:
     if not (page_token and comment_id and message):
         raise RuntimeError("Faltan datos para reply FB")
@@ -426,8 +390,6 @@ async def meta_private_reply_to_comment(page_id: str, page_token: str, comment_i
         r.raise_for_status()
         return r.json()
 
-
-
 def twilio_cfg_from_tenant(t: dict | None):
     s = (t or {}).get("settings", {}) or {}
     sid = s.get("twilio_account_sid") or TWILIO_ACCOUNT_SID
@@ -442,14 +404,7 @@ def get_twilio_client_for_tenant(t: dict | None):
         return None
     return TwilioClient(sid, tok)
 
-
 def build_system_for_tenant(tenant: Optional[dict]) -> str:
-    # Fallback seguro por si la constante no está en globals()
-    base_prompt = globals().get("ZIA_SYSTEM_PROMPT") or (
-        "Eres el asistente de zIA. Responde útil y conciso. "
-        "Si faltan datos, dilo y ofrece agendar o cotizar. Español por defecto."
-    )
-
     s = (tenant or {}).get("settings", {}) or {}
     tone     = s.get("tone", "cálido y directo")
     policies = s.get("policies", "")
@@ -469,12 +424,13 @@ def build_system_for_tenant(tenant: Optional[dict]) -> str:
     if faq:
         def fmt(item):
             if isinstance(item, dict):
-                return f"Q: {item.get('q','')} | A: {item.get('a','')}"
+                q = item.get("q", "")
+                a = item.get("a", "")
+                return f"Q: {q} | A: {a}"
             return str(item)
         faq_txt = " | ".join(fmt(x) for x in faq[:8])
         extras.append(f"FAQ internas (usa si aplica, concisas): {faq_txt}.")
-
-    return (base_prompt + "\n" + " ".join(extras)).strip()
+    return (ZIA_SYSTEM_PROMPT + "\n" + " ".join(extras)).strip()
 
 def build_messages_with_history(sid: str, system_prompt: str, max_pairs: int = 8) -> list[dict]:
     convo = MESSAGES.get(sid, [])
@@ -484,7 +440,6 @@ def build_messages_with_history(sid: str, system_prompt: str, max_pairs: int = 8
 
 def suggest_ui_for_text(user_text: str, tenant: Optional[dict]) -> dict:
     text_ = (user_text or "").lower()
-
     chips = []
     if any(w in text_ for w in ["reserva", "reservar", "booking"]):
         chips += ["Hacer reserva"]
@@ -492,14 +447,11 @@ def suggest_ui_for_text(user_text: str, tenant: Optional[dict]) -> dict:
         chips += ["Ver tarifas", "Solicitar cotización"]
     if not chips:
         chips = ["Solicitar cotización", "Ver tarifas", "Contactar por WhatsApp"]
-
     wa_num = clean_phone_for_wa((tenant or {}).get("whatsapp"))
     wa_link = f"https://wa.me/{wa_num}" if wa_num else None
-
     show_bubble = any(w in text_ for w in ["whatsapp", "wasap", "contacto", "contact"])
     if show_bubble:
         chips = [c for c in chips if "whats" not in c.lower()]
-
     return {
         "chips": chips,
         "whatsapp": wa_link if show_bubble and wa_link else None,
@@ -507,9 +459,6 @@ def suggest_ui_for_text(user_text: str, tenant: Optional[dict]) -> dict:
     }
 
 # ── Endpoints utilitarios ──────────────────────────────────────────────
-
-
-
 @app.get("/health")
 async def health():
     return {"ok": True, "mode": "mock" if USE_MOCK else "real"}
@@ -538,7 +487,6 @@ async def upsert_tenant(body: TenantIn):
 async def widget_bootstrap(tenant: str):
     if tenant and not valid_slug(tenant):
         raise HTTPException(400, "Invalid tenant")
-
     if not db_engine:
         return {
             "tenant": {"slug": tenant, "name": tenant or "zIA", "whatsapp": None, "settings": {}},
@@ -553,72 +501,6 @@ async def widget_bootstrap(tenant: str):
         raise HTTPException(404, f"Tenant '{tenant}' no encontrado")
     return {"tenant": dict(t._mapping), "ui": {"suggestions": ["Solicitar cotización","Ver tarifas","Contactar por WhatsApp"]}}
 
-@app.get("/v1/widget.js")
-async def widget_loader(request: Request, tenant: str = Query(default="")):
-    try:
-        root = Path(__file__).parent / "public" / "widget"
-        js_src  = (root / "app.js").read_text("utf-8")
-        css_src = (root / "styles.css").read_text("utf-8")
-    except Exception as e:
-        code = "console.error('zia widget: no se pudieron leer assets', %r);" % (str(e),)
-        return Response(code, media_type="application/javascript")
-
-    html = (
-      '<button id="cw-launcher" class="cw-launcher" aria-label="Abrir chat">'
-      '<canvas id="cw-orb" aria-hidden="true"></canvas><span class="cw-badge" hidden></span>'
-      '</button>'
-      '<section id="cw-panel" class="cw-panel" aria-label="Chat">'
-      '<header class="cw-header"><div class="cw-title"><span class="cw-dot"></span>'
-      '<strong>Asistente</strong><small>en línea</small></div>'
-      '<div class="cw-actions"><button id="cw-min" class="cw-iconbtn" aria-label="Minimizar">—</button>'
-      '<button id="cw-close" class="cw-iconbtn" aria-label="Cerrar">✕</button></div></header>'
-      '<div class="cw-body"><div class="cw-messages"><div id="msgs" class="cw-thread"></div></div>'
-      '<div id="chips"></div>'
-      '<footer class="cw-footer"><textarea id="msg" placeholder="Escribe tu mensaje…" rows="1"></textarea>'
-      '<button id="send" class="cw-send">Enviar</button></footer>'
-      '<details class="cw-advanced"><summary>Opciones avanzadas</summary><div class="row">'
-      '<input id="sid" placeholder="sessionId (opcional)" /><button id="new">Nuevo sessionId</button>'
-      '<button id="stop">Detener</button></div></details></div></section>'
-    )
-
-    base = str(request.base_url).rstrip("/")
-    tenant_slug = (tenant or "demo").strip()
-
-    # Construimos el JS sin f-strings para no pelear con llaves
-    parts = [
-      "(function(){try{",
-      "  // configuración",
-      "  window.TENANT = window.TENANT || " + json.dumps(tenant_slug) + ";",
-      "  window.TENANT_NAME = window.TENANT_NAME || " + json.dumps(tenant_slug) + ";",
-      "  window.CHAT_API = window.CHAT_API || " + json.dumps(base + "/v1/chat/stream") + ";",
-
-      "  // CSS inline",
-      "  if(!document.querySelector('style[data-zia]')){",
-      "    var st=document.createElement('style'); st.setAttribute('data-zia','1');",
-      "    st.textContent=" + json.dumps(css_src) + "; document.head.appendChild(st);",
-      "  }",
-
-      "  // HTML si no existe",
-      "  if(!document.getElementById('cw-launcher')){",
-      "    var wrap=document.createElement('div'); wrap.setAttribute('data-zia','1');",
-      "    wrap.innerHTML=" + json.dumps(html) + "; document.body.appendChild(wrap);",
-      "  }",
-
-      "  // ejecuta app.js",
-      "  (new Function(" + json.dumps(js_src) + "))();",
-
-      "  // si el DOM ya estaba listo, dispara DOMContentLoaded para que app.js inicialice",
-      "  if (document.readyState !== 'loading') {",
-      "    try { document.dispatchEvent(new Event('DOMContentLoaded')); }",
-      "    catch(_e) { var ev = document.createEvent('Event'); ev.initEvent('DOMContentLoaded', true, true); document.dispatchEvent(ev); }",
-      "  }",
-
-      "  console.log('[zia] widget cargado');",
-      "}catch(e){ console.error('[zia] fallo al cargar widget', e); }})();"
-    ]
-    code = "\n".join(parts)
-    return Response(code, media_type="application/javascript", headers={"Cache-Control":"public, max-age=300"})
-
 @app.options("/v1/chat/stream")
 async def options_stream():
     return Response(status_code=204)
@@ -631,7 +513,7 @@ async def options_bootstrap():
 async def options_events():
     return Response(status_code=204)
 
-# ── Chat sin streaming (por si lo necesitas) ───────────────────────────
+# ── Chat sin streaming ─────────────────────────────────────────────────
 def generate_answer(messages: list[dict]) -> str:
     if USE_MOCK:
         last = next((m for m in reversed(messages) if m["role"] == "user"), {"content": ""})
@@ -673,7 +555,7 @@ async def track_event(body: EventIn, request: Request, tenant: str = Query(defau
         )
     return {"ok": True, "stored": True}
 
-# ── Streaming SSE con flujo de contacto ────────────────────────────────
+# ── Meta Webhooks: GET verify + POST events ────────────────────────────
 @app.get("/v1/meta/webhook")
 async def meta_webhook_verify(
     hub_mode: str = Query(alias="hub.mode", default=""),
@@ -682,19 +564,18 @@ async def meta_webhook_verify(
 ):
     token = os.getenv("META_VERIFY_TOKEN", "")
     if hub_mode == "subscribe" and hub_verify_token == token:
-        # devolver el challenge en texto plano, EXACTO
         return Response(hub_challenge, media_type="text/plain")
+    log.warning(f"[META][verify] token inválido o modo no soportado. mode={hub_mode} token_ok={hub_verify_token == token}")
     raise HTTPException(status_code=403, detail="Verification failed")
 
 @app.post("/v1/meta/webhook")
 async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(...)):
     try:
-        # log crudo para probar desde el botón "Probar" del dashboard
         try:
-            body = await request.body()
-            log.info(f"[META] raw body: {body.decode('utf-8', 'ignore')}")
+            raw = await request.body()
+            log.info(f"[META] raw: {raw.decode('utf-8','ignore')[:4000]}")
         except Exception as e:
-            log.warning(f"[META] no raw body: {e}")
+            log.warning(f"[META] no raw: {e}")
 
         obj = payload.get("object")
         if obj not in {"page", "instagram"}:
@@ -703,78 +584,78 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
 
         for entry in payload.get("entry", []):
             owner_id = str(entry.get("id", ""))  # page_id o ig_user_id
-            tenant_slug = await resolve_tenant_by_page_or_ig_id(owner_id)
-            tenant_slug = tenant_slug or "public"
+            tenant_slug = await resolve_tenant_by_page_or_ig_id(owner_id) or "public"
             t = await fetch_tenant(tenant_slug)
             page_id, page_token, ig_user_id = fb_tokens_from_tenant(t)
-            page_token = (page_token or "").strip()
+            log.info(f"[META] entry id={owner_id} tenant={tenant_slug} fields={list(entry.keys())}")
 
-            # DMs (Messenger / IG)
+            # DMs (Messenger / IG Messaging via webhook 'messaging')
             for m in entry.get("messaging", []):
                 sender_id = str(m.get("sender", {}).get("id", ""))
                 msg = m.get("message", {}) or {}
                 text_in = (msg.get("text") or "").strip()
-                if not (sender_id and text_in):
+                log.info(f"[META][msg] from={sender_id} text={text_in!r}")
+                if not (sender_id and (text_in or msg)):
                     continue
 
                 sid = ensure_session(f"fb:{tenant_slug}:{sender_id}")
-                add_message(sid, "user", text_in)
-                asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_in", {"from": sender_id, "text": text_in}))
+                if text_in:
+                    add_message(sid, "user", text_in)
+                asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_in", {"from": sender_id, "message": msg}))
 
                 system_prompt = build_system_for_tenant(t)
                 messages = build_messages_with_history(sid, system_prompt)
-
                 answer = "Gracias por escribir. Te atiendo enseguida."
                 try:
                     client_rt = client.with_options(timeout=12.0)
                     resp = client_rt.chat.completions.create(model=OPENAI_MODEL, messages=messages)
                     answer = resp.choices[0].message.content or answer
                 except Exception as e:
-                    log.warning(f"meta fallback: {e}")
+                    log.warning(f"[META] completions fallback: {e}")
 
                 add_message(sid, "assistant", answer)
                 asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_out", {"to": sender_id, "text": answer[:2000]}))
                 try:
                     await meta_send_text(page_token, sender_id, answer)
                 except Exception as e:
-                    log.error(f"meta send error: {e}")
+                    log.error(f"[META] send error: {e}")
 
-            # Comments (FB Page / IG)
+            # Comments (Page feed / IG comments) a través de 'changes'
             for ch in entry.get("changes", []):
                 field = ch.get("field")
                 value = ch.get("value", {}) or {}
+                log.info(f"[META][change] field={field} keys={list(value.keys())}")
 
-                log.info(f"[META] change obj={obj} field={field} keys={list(value.keys())} "
-                         f"detail={{'item': {value.get('item')}, 'verb': {value.get('verb')}, "
-                         f"'comment_id': {value.get('comment_id') or value.get('id')}, "
-                         f"'message': {value.get('message') or value.get('text')}}}")
-
+                # Facebook Page: feed comments
                 if obj == "page" and field == "feed" and value.get("item") == "comment" and value.get("verb") == "add":
                     comment_id = str(value.get("comment_id", ""))
                     author_id = str(value.get("from", {}).get("id", ""))
                     text_in = (value.get("message") or "").strip()
-
                     if not (comment_id and page_token):
                         continue
                     if author_id and page_id and author_id == page_id:
+                        log.info("[META][page-comment] me salto comentario propio")
                         continue
 
+                    short_reply = "¡Gracias por tu comentario! Te mando más detalles por DM."
                     try:
-                        await fb_reply_comment(page_token, comment_id,
-                                               "¡Gracias por tu comentario! Te mando más detalles por DM.")
+                        await fb_reply_comment(page_token, comment_id, short_reply)
                     except Exception as e:
-                        log.error(f"fb_reply_comment error: {e}")
+                        log.error(f"[META] fb_reply_comment error: {e}")
 
                     try:
                         await meta_private_reply_to_comment(page_id, page_token, comment_id,
                                                            "Hola, seguimos por mensaje para darte soporte rápido. ¿Qué necesitas lograr?")
                     except Exception as e:
-                        log.error(f"fb private reply error: {e}")
+                        log.error(f"[META] private reply error: {e}")
 
                     sid = ensure_session(f"fb:{tenant_slug}:comment:{comment_id}")
-                    asyncio.create_task(store_event(tenant_slug, sid, "page_comment_in",
-                                                    {"comment_id": comment_id, "author_id": author_id, "text": text_in}))
+                    asyncio.create_task(store_event(
+                        tenant_slug, sid, "page_comment_in",
+                        {"comment_id": comment_id, "author_id": author_id, "text": text_in}
+                    ))
 
+                # Instagram: comments
                 if obj == "instagram" and field == "comments":
                     ig_comment_id = str(value.get("id", "")) or str(value.get("comment_id", ""))
                     author_id = str(value.get("from", {}).get("id", ""))
@@ -786,24 +667,26 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                         await ig_reply_comment(page_token, ig_comment_id,
                                                "¡Gracias por comentar! Te escribimos por DM para ayudarte.")
                     except Exception as e:
-                        log.error(f"ig_reply_comment error: {e}")
+                        log.error(f"[META] ig_reply_comment error: {e}")
 
                     try:
-                        await ig_private_reply_to_comment(page_token, ig_comment_id,
-                            "Hola, seguimos por mensaje para resolverlo contigo. ¿Puedes contarme un poco más?")
+                        await meta_private_reply_to_comment(page_id, page_token, ig_comment_id,
+                                                           "Hola, te contacto por DM para resolverlo contigo. ¿Puedes contarme un poco más?")
                     except Exception as e:
-                        log.error(f"ig private reply error: {e}")
+                        log.error(f"[META] ig private reply error: {e}")
 
                     sid = ensure_session(f"ig:{tenant_slug}:comment:{ig_comment_id}")
-                    asyncio.create_task(store_event(tenant_slug, sid, "instagram_comment_in",
-                                                    {"comment_id": ig_comment_id, "author_id": author_id, "text": text_in}))
+                    asyncio.create_task(store_event(
+                        tenant_slug, sid, "instagram_comment_in",
+                        {"comment_id": ig_comment_id, "author_id": author_id, "text": text_in}
+                    ))
 
         return {"ok": True}
     except Exception as e:
         log.error(f"/v1/meta/webhook error: {e}")
         return {"ok": False}
 
-
+# ── Streaming SSE con flujo de contacto ────────────────────────────────
 @app.post("/v1/chat/stream")
 async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(default="")):
     if tenant and not valid_slug(tenant):
@@ -816,17 +699,14 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
     add_message(sid, "user", input.message)
     asyncio.create_task(store_event(tenant or "public", sid, "msg_in", {"text": (input.message or "")[:2000]}))
 
+    t = await fetch_tenant(tenant)
+    system_prompt = build_system_for_tenant(t)
+    messages = build_messages_with_history(sid, system_prompt)
+
     async def event_generator():
         try:
-            # 1) Mandamos un primer evento para fijar headers y evitar 500 "parecidos a CORS"
             yield sse_event("ok", event="ping")
 
-            # 2) Resolver tenant/mensajes AQUI dentro (si DB falla, igual ya enviamos headers)
-            t = await fetch_tenant(tenant)
-            system_prompt = build_system_for_tenant(t)
-            messages = build_messages_with_history(sid, system_prompt)
-
-            # 3) Atajos y flujo de captura de datos
             text_lc = (input.message or "").lower()
             if "checklist" in text_lc or text_lc.strip() in {"ver checklist"}:
                 checklist = (
@@ -866,7 +746,8 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
 
             if flow["stage"] == "ask_method":
                 m = (input.message or "").strip().lower()
-                if "whats" in m: m = "whatsapp"
+                if "whats" in m:
+                    m = "whatsapp"
                 if m not in {"whatsapp","email","llamada"}:
                     yield sse_event(json.dumps({"content":"Elige una opción: WhatsApp, Email o Llamada."}), event="delta")
                     yield sse_event(json.dumps({"chips": ["WhatsApp","Email","Llamada"]}), event="ui")
@@ -916,6 +797,7 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                     yield sse_event(json.dumps({}), event="done")
                     SESSIONS[sid]["contact_flow"] = {"stage": None, "name": None, "method": None, "contact": None}
                     return
+
                 elif flow["method"] == "email":
                     yield sse_event(json.dumps({"content": base + " Puedo compartir aquí un checklist breve para definir el alcance. ¿Quieres verlo?"}), event="delta")
                     yield sse_event(json.dumps({"chips": ["Ver checklist"]}), event="ui")
@@ -923,7 +805,8 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                     yield sse_event(json.dumps({}), event="done")
                     SESSIONS[sid]["contact_flow"] = {"stage": None, "name": None, "method": None, "contact": None}
                     return
-                else:  # llamada
+
+                else:
                     yield sse_event(json.dumps({"content": base + " Para agendar, comparte 2–3 opciones con día y hora (ej.: mié 10:00–10:30; jue 16:00–16:30)."}), event="delta")
                     try:
                         SESSIONS[sid]["last_lead_id"] = lead.get("id")
@@ -962,7 +845,6 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 SESSIONS[sid].pop("last_lead_id", None)
                 return
 
-            # 4) Streaming normal
             if USE_MOCK:
                 full = f"(mock) Recibí: {input.message}"
                 for ch in full:
@@ -985,7 +867,7 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                         stream=True
                     )
                     break
-                except Exception:
+                except Exception as e:
                     if attempt == 1:
                         raise
                     await asyncio.sleep(0.7)
@@ -1107,7 +989,6 @@ async def export_events_csv(tenant: str = Query(default=""), days: int = 30):
     writer = csv.DictWriter(buf, fieldnames=["id","tenant_slug","session_id","type","payload","created_at"])
     writer.writeheader()
     for r in rows:
-        # payload a string para CSV
         row = dict(r)
         row["payload"] = json.dumps(row.get("payload") or {})
         writer.writerow(row)
@@ -1120,19 +1001,16 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
         raise HTTPException(400, "Invalid tenant")
 
     form = await request.form()
-    # Validación de firma (opcional en local). Si activas, valida con params:
     if TWILIO_VALIDATE_SIGNATURE:
         validator = RequestValidator(TWILIO_AUTH_TOKEN)
         sig = request.headers.get("X-Twilio-Signature", "")
-        # Params debe ser dict plano de form-encoded (str->str)
         params = {k: str(v) for k, v in form.items()}
         url = str(request.url)
         if not validator.validate(url, params, sig):
             raise HTTPException(403, "Invalid Twilio signature")
 
-    from_raw = str(form.get("From", ""))        # ej: 'whatsapp:+5215555555555'
+    from_raw = str(form.get("From", ""))
     body_txt = str(form.get("Body", "")).strip()
-
     if not from_raw or not body_txt:
         return Response("<Response></Response>", media_type="application/xml")
 
@@ -1153,13 +1031,10 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
     twiml.message(answer)
     return Response(str(twiml), media_type="application/xml")
 
-
-
-
-
-
 @app.options("/v1/admin/export/leads.csv")
-async def options_export_leads(): return Response(status_code=204)
+async def options_export_leads():
+    return Response(status_code=204)
 
 @app.options("/v1/admin/export/events.csv")
-async def options_export_events(): return Response(status_code=204)
+async def options_export_events():
+    return Response(status_code=204)
