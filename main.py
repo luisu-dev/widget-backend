@@ -381,6 +381,23 @@ async def meta_send_text(page_token: str, recipient_id: str, text: str) -> dict:
         r.raise_for_status()
         return r.json()
 
+async def ig_private_reply_to_comment(page_token: str, ig_comment_id: str, message: str) -> dict:
+    """
+    Instagram private reply a un comentario.
+    Endpoint correcto: POST /{ig_comment_id}/private_replies
+    Requiere: instagram_manage_comments + token de página con permisos sobre la cuenta IG vinculada.
+    """
+    if not (page_token and ig_comment_id and message):
+        raise RuntimeError("Faltan datos para IG private reply")
+    url = f"https://graph.facebook.com/v20.0/{ig_comment_id}/private_replies"
+    async with httpx.AsyncClient(timeout=10.0) as cx:
+        r = await cx.post(url,
+                          params={"access_token": page_token},
+                          data={"message": message})
+        r.raise_for_status()
+        return r.json()
+
+
 async def fb_reply_comment(page_token: str, comment_id: str, message: str) -> dict:
     if not (page_token and comment_id and message):
         raise RuntimeError("Faltan datos para reply FB")
@@ -755,20 +772,21 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                     # Reply público en el comment de IG
                     try:
                         await ig_reply_comment(page_token, ig_comment_id,
-                                               "¡Gracias por comentar! Te escribimos por DM para ayudarte.")
+                                            "¡Gracias por comentar! Te escribimos por DM para ayudarte.")
                     except Exception as e:
                         log.error(f"ig_reply_comment error: {e}")
 
-                    # Private reply a ese comment (Messenger for IG)
+                    # CAMBIO AQUÍ → usar el helper nuevo para private reply en IG
                     try:
-                        await meta_private_reply_to_comment(page_id, page_token, ig_comment_id,
-                                                           "Hola, te contacto por DM para resolverlo contigo. ¿Puedes contarme un poco más?")
+                        await ig_private_reply_to_comment(page_token, ig_comment_id,
+                            "Hola, seguimos por mensaje para resolverlo contigo. ¿Puedes contarme un poco más?")
                     except Exception as e:
                         log.error(f"ig private reply error: {e}")
 
                     sid = ensure_session(f"ig:{tenant_slug}:comment:{ig_comment_id}")
                     asyncio.create_task(store_event(tenant_slug, sid, "instagram_comment_in",
                                                     {"comment_id": ig_comment_id, "author_id": author_id, "text": text_in}))
+
 
         return {"ok": True}
     except Exception as e:
