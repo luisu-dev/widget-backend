@@ -687,9 +687,9 @@ async def meta_webhook_verify(
     raise HTTPException(status_code=403, detail="Verification failed")
 
 @app.post("/v1/meta/webhook")
-async def meta_webhook_events(payload: Dict[str, Any] = Body(...), request: Request):
+async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(...)):
     try:
-        # Log bruto del JSON que envía Meta (útil con el botón "Probar")
+        # log crudo para probar desde el botón "Probar" del dashboard
         try:
             body = await request.body()
             log.info(f"[META] raw body: {body.decode('utf-8', 'ignore')}")
@@ -709,7 +709,7 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...), request: Requ
             page_id, page_token, ig_user_id = fb_tokens_from_tenant(t)
             page_token = (page_token or "").strip()
 
-            # ---- DMs (Messenger / IG Messaging)
+            # DMs (Messenger / IG)
             for m in entry.get("messaging", []):
                 sender_id = str(m.get("sender", {}).get("id", ""))
                 msg = m.get("message", {}) or {}
@@ -739,27 +739,23 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...), request: Requ
                 except Exception as e:
                     log.error(f"meta send error: {e}")
 
-            # ---- Comments (Page feed / IG comments)
+            # Comments (FB Page / IG)
             for ch in entry.get("changes", []):
                 field = ch.get("field")
                 value = ch.get("value", {}) or {}
 
-                # Log útil para ver qué trae FB/IG
                 log.info(f"[META] change obj={obj} field={field} keys={list(value.keys())} "
                          f"detail={{'item': {value.get('item')}, 'verb': {value.get('verb')}, "
                          f"'comment_id': {value.get('comment_id') or value.get('id')}, "
                          f"'message': {value.get('message') or value.get('text')}}}")
 
-                # --- Facebook Page comments
                 if obj == "page" and field == "feed" and value.get("item") == "comment" and value.get("verb") == "add":
                     comment_id = str(value.get("comment_id", ""))
                     author_id = str(value.get("from", {}).get("id", ""))
                     text_in = (value.get("message") or "").strip()
 
-                    # no exijas siempre texto (emojis/stickers)
                     if not (comment_id and page_token):
                         continue
-                    # evita loop: no contestes si el autor es la propia página
                     if author_id and page_id and author_id == page_id:
                         continue
 
@@ -779,7 +775,6 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...), request: Requ
                     asyncio.create_task(store_event(tenant_slug, sid, "page_comment_in",
                                                     {"comment_id": comment_id, "author_id": author_id, "text": text_in}))
 
-                # --- Instagram comments
                 if obj == "instagram" and field == "comments":
                     ig_comment_id = str(value.get("id", "")) or str(value.get("comment_id", ""))
                     author_id = str(value.get("from", {}).get("id", ""))
