@@ -686,12 +686,19 @@ async def meta_webhook_verify(
         return Response(hub_challenge, media_type="text/plain")
     raise HTTPException(status_code=403, detail="Verification failed")
 
-
 @app.post("/v1/meta/webhook")
-async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
+async def meta_webhook_events(payload: Dict[str, Any] = Body(...), request: Request):
     try:
+        # Log bruto del JSON que envía Meta (útil con el botón "Probar")
+        try:
+            body = await request.body()
+            log.info(f"[META] raw body: {body.decode('utf-8', 'ignore')}")
+        except Exception as e:
+            log.warning(f"[META] no raw body: {e}")
+
         obj = payload.get("object")
         if obj not in {"page", "instagram"}:
+            log.info(f"[META] object no soportado: {obj}")
             return {"ok": True}
 
         for entry in payload.get("entry", []):
@@ -700,11 +707,12 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
             tenant_slug = tenant_slug or "public"
             t = await fetch_tenant(tenant_slug)
             page_id, page_token, ig_user_id = fb_tokens_from_tenant(t)
+            page_token = (page_token or "").strip()
 
-            # DMs (Messenger / IG Messaging)
+            # ---- DMs (Messenger / IG Messaging)
             for m in entry.get("messaging", []):
                 sender_id = str(m.get("sender", {}).get("id", ""))
-                msg = m.get("message", {})
+                msg = m.get("message", {}) or {}
                 text_in = (msg.get("text") or "").strip()
                 if not (sender_id and text_in):
                     continue
@@ -731,58 +739,60 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                 except Exception as e:
                     log.error(f"meta send error: {e}")
 
-            # Comments (Page feed / IG comments)
+            # ---- Comments (Page feed / IG comments)
             for ch in entry.get("changes", []):
                 field = ch.get("field")
                 value = ch.get("value", {}) or {}
 
+                # Log útil para ver qué trae FB/IG
+                log.info(f"[META] change obj={obj} field={field} keys={list(value.keys())} "
+                         f"detail={{'item': {value.get('item')}, 'verb': {value.get('verb')}, "
+                         f"'comment_id': {value.get('comment_id') or value.get('id')}, "
+                         f"'message': {value.get('message') or value.get('text')}}}")
+
+                # --- Facebook Page comments
                 if obj == "page" and field == "feed" and value.get("item") == "comment" and value.get("verb") == "add":
                     comment_id = str(value.get("comment_id", ""))
                     author_id = str(value.get("from", {}).get("id", ""))
                     text_in = (value.get("message") or "").strip()
 
-                    # 1) no exijas siempre text_in
+                    # no exijas siempre texto (emojis/stickers)
                     if not (comment_id and page_token):
                         continue
-
-                    # 2) evita responder si el autor es la propia página (para no ciclos)
+                    # evita loop: no contestes si el autor es la propia página
                     if author_id and page_id and author_id == page_id:
                         continue
 
-                    # Genera respuesta corta para el reply público
-                    short_reply = "¡Gracias por tu comentario! Te mando más detalles por DM."
                     try:
-                        await fb_reply_comment(page_token, comment_id, short_reply)
+                        await fb_reply_comment(page_token, comment_id,
+                                               "¡Gracias por tu comentario! Te mando más detalles por DM.")
                     except Exception as e:
                         log.error(f"fb_reply_comment error: {e}")
 
-                    # Private reply por DM (Messenger Private Replies)
                     try:
                         await meta_private_reply_to_comment(page_id, page_token, comment_id,
                                                            "Hola, seguimos por mensaje para darte soporte rápido. ¿Qué necesitas lograr?")
                     except Exception as e:
                         log.error(f"fb private reply error: {e}")
 
-                    # Log de evento
                     sid = ensure_session(f"fb:{tenant_slug}:comment:{comment_id}")
                     asyncio.create_task(store_event(tenant_slug, sid, "page_comment_in",
                                                     {"comment_id": comment_id, "author_id": author_id, "text": text_in}))
 
+                # --- Instagram comments
                 if obj == "instagram" and field == "comments":
                     ig_comment_id = str(value.get("id", "")) or str(value.get("comment_id", ""))
                     author_id = str(value.get("from", {}).get("id", ""))
                     text_in = (value.get("text") or "").strip()
-                    if not (ig_comment_id and text_in and page_token):
+                    if not (ig_comment_id and page_token):
                         continue
 
-                    # Reply público en el comment de IG
                     try:
                         await ig_reply_comment(page_token, ig_comment_id,
-                                            "¡Gracias por comentar! Te escribimos por DM para ayudarte.")
+                                               "¡Gracias por comentar! Te escribimos por DM para ayudarte.")
                     except Exception as e:
                         log.error(f"ig_reply_comment error: {e}")
 
-                    # CAMBIO AQUÍ → usar el helper nuevo para private reply en IG
                     try:
                         await ig_private_reply_to_comment(page_token, ig_comment_id,
                             "Hola, seguimos por mensaje para resolverlo contigo. ¿Puedes contarme un poco más?")
@@ -792,7 +802,6 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                     sid = ensure_session(f"ig:{tenant_slug}:comment:{ig_comment_id}")
                     asyncio.create_task(store_event(tenant_slug, sid, "instagram_comment_in",
                                                     {"comment_id": ig_comment_id, "author_id": author_id, "text": text_in}))
-
 
         return {"ok": True}
     except Exception as e:
