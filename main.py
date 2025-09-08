@@ -556,6 +556,7 @@ async def track_event(body: EventIn, request: Request, tenant: str = Query(defau
     return {"ok": True, "stored": True}
 
 # ── Meta Webhooks: GET verify + POST events ────────────────────────────
+
 @app.get("/v1/meta/webhook")
 async def meta_webhook_verify(
     hub_mode: str = Query(alias="hub.mode", default=""),
@@ -565,43 +566,47 @@ async def meta_webhook_verify(
     token = os.getenv("META_VERIFY_TOKEN", "")
     if hub_mode == "subscribe" and hub_verify_token == token:
         return Response(hub_challenge, media_type="text/plain")
-    log.warning(f"[META][verify] token inválido o modo no soportado. mode={hub_mode} token_ok={hub_verify_token == token}")
     raise HTTPException(status_code=403, detail="Verification failed")
 
 @app.post("/v1/meta/webhook")
 async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(...)):
     try:
+        # Logs útiles para ver si Meta pega al endpoint
         try:
             raw = await request.body()
-            log.info(f"[META] raw: {raw.decode('utf-8','ignore')[:4000]}")
+            log.info(f"[META] headers: {dict(request.headers)}")
+            log.info(f"[META] raw: {raw.decode('utf-8','ignore')}")
         except Exception as e:
-            log.warning(f"[META] no raw: {e}")
+            log.warning(f"[META] no raw body: {e}")
 
         obj = payload.get("object")
         if obj not in {"page", "instagram"}:
-            log.info(f"[META] object no soportado: {obj}")
+            log.info(f"[META] object no soportado: {obj} (ignorando)")
             return {"ok": True}
 
         for entry in payload.get("entry", []):
             owner_id = str(entry.get("id", ""))  # page_id o ig_user_id
-            tenant_slug = await resolve_tenant_by_page_or_ig_id(owner_id) or "public"
+            tenant_slug = await resolve_tenant_by_page_or_ig_id(owner_id)
+            tenant_slug = tenant_slug or "public"
             t = await fetch_tenant(tenant_slug)
             page_id, page_token, ig_user_id = fb_tokens_from_tenant(t)
-            log.info(f"[META] entry id={owner_id} tenant={tenant_slug} fields={list(entry.keys())}")
+            if not page_token:
+                log.error("[META] falta page_token en la DB para este tenant/Page")
+                continue
 
-            # DMs (Messenger / IG Messaging via webhook 'messaging')
+            # 1) Mensajes (DM: Messenger/IG)
             for m in entry.get("messaging", []):
                 sender_id = str(m.get("sender", {}).get("id", ""))
                 msg = m.get("message", {}) or {}
                 text_in = (msg.get("text") or "").strip()
-                log.info(f"[META][msg] from={sender_id} text={text_in!r}")
-                if not (sender_id and (text_in or msg)):
+                log.info(f"[META][DM] from={sender_id} text={text_in!r}")
+                if not sender_id:
                     continue
 
                 sid = ensure_session(f"fb:{tenant_slug}:{sender_id}")
                 if text_in:
                     add_message(sid, "user", text_in)
-                asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_in", {"from": sender_id, "message": msg}))
+                asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_in", {"from": sender_id, "text": text_in}))
 
                 system_prompt = build_system_for_tenant(t)
                 messages = build_messages_with_history(sid, system_prompt)
@@ -611,75 +616,73 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                     resp = client_rt.chat.completions.create(model=OPENAI_MODEL, messages=messages)
                     answer = resp.choices[0].message.content or answer
                 except Exception as e:
-                    log.warning(f"[META] completions fallback: {e}")
+                    log.warning(f"[META][DM] fallback OpenAI: {e}")
 
                 add_message(sid, "assistant", answer)
                 asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_out", {"to": sender_id, "text": answer[:2000]}))
                 try:
                     await meta_send_text(page_token, sender_id, answer)
                 except Exception as e:
-                    log.error(f"[META] send error: {e}")
+                    log.error(f"[META][DM] send error: {e}")
 
-            # Comments (Page feed / IG comments) a través de 'changes'
+            # 2) Cambios de feed (comentarios nuevos)
             for ch in entry.get("changes", []):
                 field = ch.get("field")
                 value = ch.get("value", {}) or {}
-                log.info(f"[META][change] field={field} keys={list(value.keys())}")
+                log.info(f"[META][CHANGE] field={field} value_keys={list(value.keys())}")
 
-                # Facebook Page: feed comments
+                # Facebook Page comments
                 if obj == "page" and field == "feed" and value.get("item") == "comment" and value.get("verb") == "add":
-                    comment_id = str(value.get("comment_id", ""))
+                    comment_id = str(value.get("comment_id", "")) or str(value.get("id", ""))
                     author_id = str(value.get("from", {}).get("id", ""))
                     text_in = (value.get("message") or "").strip()
-                    if not (comment_id and page_token):
+                    log.info(f"[META][FEED] comment_id={comment_id} author={author_id} text={text_in!r}")
+
+                    if not comment_id:
                         continue
                     if author_id and page_id and author_id == page_id:
-                        log.info("[META][page-comment] me salto comentario propio")
+                        log.info("[META][FEED] comentario propio de la página; ignorando")
                         continue
 
-                    short_reply = "¡Gracias por tu comentario! Te mando más detalles por DM."
                     try:
-                        await fb_reply_comment(page_token, comment_id, short_reply)
+                        await fb_reply_comment(page_token, comment_id, "¡Gracias por tu comentario! Te escribimos por DM para ayudarte.")
                     except Exception as e:
-                        log.error(f"[META] fb_reply_comment error: {e}")
+                        log.error(f"[META][FEED] fb_reply_comment error: {e}")
 
                     try:
                         await meta_private_reply_to_comment(page_id, page_token, comment_id,
-                                                           "Hola, seguimos por mensaje para darte soporte rápido. ¿Qué necesitas lograr?")
+                            "Hola, seguimos por mensaje para darte soporte rápido. ¿Qué necesitas lograr?")
                     except Exception as e:
-                        log.error(f"[META] private reply error: {e}")
+                        log.error(f"[META][FEED] private reply error: {e}")
 
                     sid = ensure_session(f"fb:{tenant_slug}:comment:{comment_id}")
-                    asyncio.create_task(store_event(
-                        tenant_slug, sid, "page_comment_in",
-                        {"comment_id": comment_id, "author_id": author_id, "text": text_in}
-                    ))
+                    asyncio.create_task(store_event(tenant_slug, sid, "page_comment_in",
+                        {"comment_id": comment_id, "author_id": author_id, "text": text_in}))
 
-                # Instagram: comments
+                # Instagram comments
                 if obj == "instagram" and field == "comments":
                     ig_comment_id = str(value.get("id", "")) or str(value.get("comment_id", ""))
                     author_id = str(value.get("from", {}).get("id", ""))
                     text_in = (value.get("text") or "").strip()
-                    if not (ig_comment_id and page_token):
-                        continue
+                    log.info(f"[META][IG] comment_id={ig_comment_id} author={author_id} text={text_in!r}")
 
+                    if not ig_comment_id:
+                        continue
                     try:
                         await ig_reply_comment(page_token, ig_comment_id,
-                                               "¡Gracias por comentar! Te escribimos por DM para ayudarte.")
+                            "¡Gracias por comentar! Te escribimos por DM para ayudarte.")
                     except Exception as e:
-                        log.error(f"[META] ig_reply_comment error: {e}")
+                        log.error(f"[META][IG] reply error: {e}")
 
                     try:
                         await meta_private_reply_to_comment(page_id, page_token, ig_comment_id,
-                                                           "Hola, te contacto por DM para resolverlo contigo. ¿Puedes contarme un poco más?")
+                            "Hola, te contacto por DM para resolverlo contigo. ¿Puedes contarme un poco más?")
                     except Exception as e:
-                        log.error(f"[META] ig private reply error: {e}")
+                        log.error(f"[META][IG] private reply error: {e}")
 
                     sid = ensure_session(f"ig:{tenant_slug}:comment:{ig_comment_id}")
-                    asyncio.create_task(store_event(
-                        tenant_slug, sid, "instagram_comment_in",
-                        {"comment_id": ig_comment_id, "author_id": author_id, "text": text_in}
-                    ))
+                    asyncio.create_task(store_event(tenant_slug, sid, "instagram_comment_in",
+                        {"comment_id": ig_comment_id, "author_id": author_id, "text": text_in}))
 
         return {"ok": True}
     except Exception as e:
