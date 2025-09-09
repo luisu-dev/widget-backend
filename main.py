@@ -46,7 +46,7 @@ TWILIO_AUTH_TOKEN  = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "")
 TWILIO_SMS_FROM       = os.getenv("TWILIO_SMS_FROM", "")
 TWILIO_VALIDATE_SIGNATURE = as_bool(os.getenv("TWILIO_VALIDATE_SIGNATURE"), False)
-META_DRY_RUN = as_bool(os.getenv("META_DRY_RUN"), True)  # True en dev por defecto
+
 
 
 ZIA_SYSTEM_PROMPT = (
