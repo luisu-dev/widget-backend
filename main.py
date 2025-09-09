@@ -287,6 +287,13 @@ class EventIn(BaseModel):
     sessionId: Optional[str] = None
     payload: Dict[str, Any] = Field(default_factory=dict)
 
+class MetaTestReplyIn(BaseModel):
+    tenant: str
+    platform: str  # 'facebook'|'instagram' (alias: 'page'|'fb'|'ig')
+    commentId: str
+    text: Optional[str] = None
+    mode: Optional[str] = "both"  # 'public'|'private'|'both'
+
 # ── Sesiones en memoria ────────────────────────────────────────────────
 SESSIONS: Dict[str, dict] = {}
 MESSAGES: Dict[str, list[dict]] = {}
@@ -363,7 +370,12 @@ async def meta_send_text(page_token: str, recipient_id: str, text: str) -> dict:
     if not page_token:
         raise RuntimeError("Falta fb_page_token")
     url = "https://graph.facebook.com/v20.0/me/messages"
-    payload = {"recipient": {"id": recipient_id}, "message": {"text": text}}
+    # Añadimos messaging_type para mejorar la entregabilidad del Send API
+    payload = {
+        "messaging_type": "RESPONSE",
+        "recipient": {"id": recipient_id},
+        "message": {"text": text}
+    }
     async with httpx.AsyncClient(timeout=10.0) as cx:
         r = await cx.post(url, params={"access_token": page_token}, json=payload)
         r.raise_for_status()
@@ -1013,6 +1025,66 @@ async def export_events_csv(tenant: str = Query(default=""), days: int = 30):
         writer.writerow(row)
     return Response(buf.getvalue(), media_type="text/csv",
                     headers={"Content-Disposition": "attachment; filename=events.csv"})
+
+@app.post("/v1/admin/meta/test-reply", dependencies=[Depends(require_admin)])
+async def admin_meta_test_reply(body: MetaTestReplyIn):
+    # Validar tenant
+    tenant_slug = (body.tenant or "").strip()
+    if tenant_slug and not valid_slug(tenant_slug):
+        raise HTTPException(400, "Invalid tenant")
+    t = await fetch_tenant(tenant_slug)
+    if not t:
+        raise HTTPException(404, f"Tenant '{tenant_slug}' no encontrado")
+
+    page_id, page_token, ig_user_id = fb_tokens_from_tenant(t)
+    if not page_token:
+        raise HTTPException(400, "Falta settings.fb_page_token para el tenant")
+
+    platform = (body.platform or "").strip().lower()
+    comment_id = (body.commentId or "").strip()
+    if not comment_id:
+        raise HTTPException(400, "Falta commentId")
+
+    message_public = body.text or "Prueba: respuesta pública desde backend (test)."
+    message_private = body.text or "Prueba: mensaje privado desde backend (test)."
+    mode = (body.mode or "both").strip().lower()
+
+    results = {"public": None, "private": None}
+
+    # Ejecutar reply público
+    if mode in {"public", "both"}:
+        try:
+            if platform in {"facebook", "page", "fb"}:
+                data = await fb_reply_comment(page_token, comment_id, message_public)
+            elif platform in {"instagram", "ig"}:
+                data = await ig_reply_comment(page_token, comment_id, message_public)
+            else:
+                raise HTTPException(400, "platform debe ser 'facebook'|'page'|'fb' o 'instagram'|'ig'")
+            results["public"] = {"ok": True, "data": data}
+        except Exception as e:
+            results["public"] = {"ok": False, "error": str(e)}
+
+    # Ejecutar reply privado (FB: private reply via Page Messages). IG puede fallar; se reporta el error.
+    if mode in {"private", "both"}:
+        try:
+            if platform in {"facebook", "page", "fb"}:
+                data = await meta_private_reply_to_comment(page_id, page_token, comment_id, message_private)
+            elif platform in {"instagram", "ig"}:
+                # Para IG, este método puede no estar soportado; intentamos y reportamos
+                data = await meta_private_reply_to_comment(page_id, page_token, comment_id, message_private)
+            else:
+                raise HTTPException(400, "platform debe ser 'facebook'|'page'|'fb' o 'instagram'|'ig'")
+            results["private"] = {"ok": True, "data": data}
+        except Exception as e:
+            results["private"] = {"ok": False, "error": str(e)}
+
+    return {
+        "ok": True,
+        "tenant": tenant_slug,
+        "platform": platform,
+        "commentId": comment_id,
+        "results": results,
+    }
 
 @app.post("/v1/twilio/whatsapp/webhook")
 async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default="")):
