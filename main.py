@@ -88,54 +88,6 @@ def get_client_ip(request: Request) -> str:
         return request.headers[PROXY_IP_HEADER].split(",")[0].strip()
     return request.client.host
 
-async def fb_reply_comment(page_token: str, comment_id: str, message: str) -> dict:
-    """
-    Facebook Pages: responder a un comentario con un "nested comment".
-    Endpoint correcto: /{comment-id}/comments
-    """
-    if not (page_token and comment_id and message):
-        raise RuntimeError("Faltan datos para reply FB")
-    url = f"https://graph.facebook.com/v20.0/{comment_id}/comments"
-    async with httpx.AsyncClient(timeout=10.0) as cx:
-        r = await cx.post(url, params={"access_token": page_token}, data={"message": message})
-        if r.status_code >= 400:
-            log.error(f"[META][FEED] fb_reply_comment body: {r.text}")
-            r.raise_for_status()
-        return r.json()
-
-async def ig_reply_comment(page_token: str, ig_comment_id: str, message: str) -> dict:
-    """
-    Instagram: responder va por /{comment-id}/replies
-    """
-    if not (page_token and ig_comment_id and message):
-        raise RuntimeError("Faltan datos para reply IG")
-    url = f"https://graph.facebook.com/v20.0/{ig_comment_id}/replies"
-    async with httpx.AsyncClient(timeout=10.0) as cx:
-        r = await cx.post(url, params={"access_token": page_token}, data={"message": message})
-        if r.status_code >= 400:
-            log.error(f"[META][IG] ig_reply_comment body: {r.text}")
-            r.raise_for_status()
-        return r.json()
-
-async def meta_private_reply_to_comment(page_id: str, page_token: str, comment_id: str, text: str) -> dict:
-    """
-    Respuesta privada a partir de un comment: /{page-id}/messages con recipient.comment_id
-    """
-    if not (page_id and page_token and comment_id and text):
-        raise RuntimeError("Faltan datos para private reply")
-    url = f"https://graph.facebook.com/v20.0/{page_id}/messages"
-    payload = {
-        "recipient": {"comment_id": comment_id},
-        "message": {"text": text},
-        "messaging_type": "RESPONSE"
-    }
-    async with httpx.AsyncClient(timeout=10.0) as cx:
-        r = await cx.post(url, params={"access_token": page_token}, json=payload)
-        if r.status_code >= 400:
-            log.error(f"[META][FEED] private reply body: {r.text}")
-            r.raise_for_status()
-        return r.json()
-
 def sse_event(data: str, event: Optional[str] = None) -> str:
     if event:
         return f"event: {event}\ndata: {data}\n\n"
