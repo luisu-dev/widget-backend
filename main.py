@@ -24,6 +24,7 @@ app = FastAPI(title="ZIA Backend", version="1.1")
 client = OpenAI()  # usa OPENAI_API_KEY del entorno
 
 # ── Config ─────────────────────────────────────────────────────────────
+# ── Config ─────────────────────────────────────────────────────────────
 def as_bool(val: Optional[str], default: bool = False) -> bool:
     if val is None:
         return default
@@ -41,11 +42,15 @@ RATE_LIMIT     = int(os.getenv("RATE_LIMIT", "20"))
 RATE_WINDOW_SECONDS = int(os.getenv("RATE_WINDOW_SECONDS", "10"))
 ADMIN_KEY      = os.getenv("ADMIN_KEY", "")
 PROXY_IP_HEADER = os.getenv("PROXY_IP_HEADER", "").lower()
+
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN  = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "")
 TWILIO_SMS_FROM       = os.getenv("TWILIO_SMS_FROM", "")
 TWILIO_VALIDATE_SIGNATURE = as_bool(os.getenv("TWILIO_VALIDATE_SIGNATURE"), False)
+
+# ← NUEVO: evita NameError en el webhook
+META_DRY_RUN = as_bool(os.getenv("META_DRY_RUN"), False)
 
 
 
@@ -84,9 +89,13 @@ def get_client_ip(request: Request) -> str:
     return request.client.host
 
 async def fb_reply_comment(page_token: str, comment_id: str, message: str) -> dict:
+    """
+    Facebook Pages: responder a un comentario con un "nested comment".
+    Endpoint correcto: /{comment-id}/comments
+    """
     if not (page_token and comment_id and message):
         raise RuntimeError("Faltan datos para reply FB")
-    url = f"https://graph.facebook.com/v20.0/{comment_id}/comments"  # ← OJO: /comments en Pages
+    url = f"https://graph.facebook.com/v20.0/{comment_id}/comments"
     async with httpx.AsyncClient(timeout=10.0) as cx:
         r = await cx.post(url, params={"access_token": page_token}, data={"message": message})
         if r.status_code >= 400:
@@ -95,9 +104,12 @@ async def fb_reply_comment(page_token: str, comment_id: str, message: str) -> di
         return r.json()
 
 async def ig_reply_comment(page_token: str, ig_comment_id: str, message: str) -> dict:
+    """
+    Instagram: responder va por /{comment-id}/replies
+    """
     if not (page_token and ig_comment_id and message):
         raise RuntimeError("Faltan datos para reply IG")
-    url = f"https://graph.facebook.com/v20.0/{ig_comment_id}/replies"  # IG sí va con /replies
+    url = f"https://graph.facebook.com/v20.0/{ig_comment_id}/replies"
     async with httpx.AsyncClient(timeout=10.0) as cx:
         r = await cx.post(url, params={"access_token": page_token}, data={"message": message})
         if r.status_code >= 400:
@@ -106,13 +118,16 @@ async def ig_reply_comment(page_token: str, ig_comment_id: str, message: str) ->
         return r.json()
 
 async def meta_private_reply_to_comment(page_id: str, page_token: str, comment_id: str, text: str) -> dict:
+    """
+    Respuesta privada a partir de un comment: /{page-id}/messages con recipient.comment_id
+    """
     if not (page_id and page_token and comment_id and text):
         raise RuntimeError("Faltan datos para private reply")
     url = f"https://graph.facebook.com/v20.0/{page_id}/messages"
     payload = {
         "recipient": {"comment_id": comment_id},
         "message": {"text": text},
-        "messaging_type": "RESPONSE"  # aclarar intención de respuesta
+        "messaging_type": "RESPONSE"
     }
     async with httpx.AsyncClient(timeout=10.0) as cx:
         r = await cx.post(url, params={"access_token": page_token}, json=payload)
@@ -120,7 +135,6 @@ async def meta_private_reply_to_comment(page_id: str, page_token: str, comment_i
             log.error(f"[META][FEED] private reply body: {r.text}")
             r.raise_for_status()
         return r.json()
-
 
 def sse_event(data: str, event: Optional[str] = None) -> str:
     if event:
@@ -664,13 +678,18 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                     text_in = (value.get("message") or "").strip()
                     log.info(f"[META][FEED] comment_id={comment_id} author={author_id} text={text_in!r}")
 
-                    if not (comment_id and page_token):
+                    if not comment_id:
+                        log.warning("[META][FEED] skip: falta comment_id")
+                        continue
+                    if not page_token:
+                        log.warning("[META][FEED] skip: falta page_token en settings.fb_page_token")
                         continue
                     if author_id and page_id and author_id == page_id:
-                        continue  # evita loops respondiendo a la propia página
+                        log.info("[META][FEED] skip: comentario de la propia página (loop guard)")
+                        continue
 
                     if META_DRY_RUN:
-                        log.info(f"[META][FEED] DRY_RUN: no se llama Graph (FB reply/private) para {comment_id}")
+                        log.info(f"[META][FEED] DRY_RUN: no se llama Graph para {comment_id}")
                     else:
                         try:
                             await fb_reply_comment(page_token, comment_id,
@@ -697,11 +716,15 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                     text_in = (value.get("text") or "").strip()
                     log.info(f"[META][IG] comment_id={ig_comment_id} author={author_id} text={text_in!r}")
 
-                    if not (ig_comment_id and page_token):
+                    if not ig_comment_id:
+                        log.warning("[META][IG] skip: falta ig_comment_id")
+                        continue
+                    if not page_token:
+                        log.warning("[META][IG] skip: falta page_token en settings.fb_page_token")
                         continue
 
                     if META_DRY_RUN:
-                        log.info(f"[META][IG] DRY_RUN: no se llama Graph (IG reply/private) para {ig_comment_id}")
+                        log.info(f"[META][IG] DRY_RUN: no se llama Graph para {ig_comment_id}")
                     else:
                         try:
                             await ig_reply_comment(page_token, ig_comment_id,
