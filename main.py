@@ -420,10 +420,12 @@ async def meta_send_text(page_token: str, recipient_id: str, text: str) -> dict:
 async def fb_reply_comment(page_token: str, comment_id: str, message: str) -> dict:
     if not (page_token and comment_id and message):
         raise RuntimeError("Faltan datos para reply FB")
-    url = f"https://graph.facebook.com/v20.0/{comment_id}/replies"
+    url = f"https://graph.facebook.com/v20.0/{comment_id}/comments"
     async with httpx.AsyncClient(timeout=10.0) as cx:
         r = await cx.post(url, params={"access_token": page_token}, data={"message": message})
-        r.raise_for_status()
+        if r.status_code >= 400:
+            log.error(f"[META][FEED] fb_reply_comment body: {r.text}")
+            r.raise_for_status()
         return r.json()
 
 async def ig_reply_comment(page_token: str, ig_comment_id: str, message: str) -> dict:
@@ -432,7 +434,9 @@ async def ig_reply_comment(page_token: str, ig_comment_id: str, message: str) ->
     url = f"https://graph.facebook.com/v20.0/{ig_comment_id}/replies"
     async with httpx.AsyncClient(timeout=10.0) as cx:
         r = await cx.post(url, params={"access_token": page_token}, data={"message": message})
-        r.raise_for_status()
+        if r.status_code >= 400:
+            log.error(f"[META][IG] ig_reply_comment body: {r.text}")
+            r.raise_for_status()
         return r.json()
 
 async def meta_private_reply_to_comment(page_id: str, page_token: str, comment_id: str, text: str) -> dict:
