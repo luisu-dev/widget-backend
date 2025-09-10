@@ -385,7 +385,6 @@ async def meta_send_text(page_token: str, recipient_id: str, text: str) -> dict:
     if not page_token:
         raise RuntimeError("Falta fb_page_token")
     url = "https://graph.facebook.com/v20.0/me/messages"
-    # Añadimos messaging_type para mejorar la entregabilidad del Send API
     payload = {
         "messaging_type": "RESPONSE",
         "recipient": {"id": recipient_id},
@@ -393,8 +392,12 @@ async def meta_send_text(page_token: str, recipient_id: str, text: str) -> dict:
     }
     async with httpx.AsyncClient(timeout=10.0) as cx:
         r = await cx.post(url, params={"access_token": page_token}, json=payload)
+        if r.status_code >= 400:
+            # 👇 NUEVO: logea el cuerpo de Graph para saber la causa exacta
+            log.error(f"[META][SEND][{r.status_code}] {r.text}")
         r.raise_for_status()
         return r.json()
+
 
 async def fb_reply_comment(page_token: str, comment_id: str, message: str) -> dict:
     if not (page_token and comment_id and message):
