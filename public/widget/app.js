@@ -75,10 +75,15 @@ document.addEventListener("DOMContentLoaded", () => {
   function greetOnce(){
     const session = sid?.value || "anon";
     const flagKey = `welcomed:${TENANT}:${session}`;
-    if (localStorage.getItem(flagKey)) return;
-    const brand = BRAND_NAME || window.TENANT_NAME || "zIA";
-    makeBubble("bot", `Hola — soy ${brand}, tu asistente con IA. Puedo resolver dudas, cotizar y coordinar por WhatsApp. ¿Qué necesitas hoy?`);
-    localStorage.setItem(flagKey,"1");
+    try{
+      if (localStorage.getItem(flagKey)) return;
+      const brand = BRAND_NAME || window.TENANT_NAME || "zIA";
+      makeBubble("bot", `Hola — soy ${brand}, tu asistente con IA. Puedo resolver dudas, cotizar y coordinar por WhatsApp. ¿Qué necesitas hoy?`);
+      localStorage.setItem(flagKey,"1");
+    }catch(e){
+      const brand = BRAND_NAME || window.TENANT_NAME || "zIA";
+      makeBubble("bot", `Hola — soy ${brand}, tu asistente con IA. Puedo resolver dudas, cotizar y coordinar por WhatsApp. ¿Qué necesitas hoy?`);
+    }
   }
 
   const openPanel = ()=>{
@@ -117,11 +122,22 @@ document.addEventListener("DOMContentLoaded", () => {
   // linkify
   const linkify = (text)=>{
     if(!text) return "";
+    const escape = (s)=>s
+      .replace(/&/g,"&amp;")
+      .replace(/</g,"&lt;")
+      .replace(/>/g,"&gt;")
+      .replace(/"/g,"&quot;");
     const urlRe = /(https?:\/\/[^\s<>"']+)/g;
-    return text.replace(urlRe,(u)=>{
-      const safe = u.replace(/"/g,"&quot;");
-      return `<a href="${safe}" target="_blank" rel="noopener noreferrer">${safe}</a>`;
+    let last=0, out="";
+    text.replace(urlRe,(url, idx)=>{
+      out += escape(text.slice(last, idx));
+      const safe = escape(url);
+      out += `<a href="${safe}" target="_blank" rel="noopener noreferrer">${safe}</a>`;
+      last = idx + url.length;
+      return url;
     });
+    out += escape(text.slice(last));
+    return out;
   };
 
   // ------- chips -------

@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import StreamingResponse, Response
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-from openai import OpenAI
+from openai import OpenAI, OpenAIError
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from sqlalchemy import text
 from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
@@ -102,7 +102,10 @@ def is_rate_limited(key: str, limit: int = RATE_LIMIT, window: int = RATE_WINDOW
         RATELIMIT[key] = bucket
         return True
     bucket.append(now)
-    RATELIMIT[key] = bucket
+    if bucket:
+        RATELIMIT[key] = bucket
+    else:
+        RATELIMIT.pop(key, None)
     return False
 
 # ── Token rough count (opcional) ───────────────────────────────────────
@@ -294,6 +297,14 @@ class MetaTestReplyIn(BaseModel):
     text: Optional[str] = None
     mode: Optional[str] = "both"  # 'public'|'private'|'both'
 
+def _mask(value: Optional[str], show: int = 4) -> Optional[str]:
+    if not value:
+        return None
+    s = str(value)
+    if len(s) <= show:
+        return "*" * len(s)
+    return "*" * (len(s) - show) + s[-show:]
+
 # ── Sesiones en memoria ────────────────────────────────────────────────
 SESSIONS: Dict[str, dict] = {}
 MESSAGES: Dict[str, list[dict]] = {}
@@ -360,11 +371,15 @@ async def resolve_tenant_by_page_or_ig_id(page_or_ig_id: str) -> str:
     return row[0] if row else ""
 
 def fb_tokens_from_tenant(t: dict | None) -> tuple[str, str, str]:
+    """Obtiene credenciales de Meta para el tenant exclusivamente desde DB.
+
+    Producción: ya no se usa fallback por variables de entorno para tokens/IDs.
+    """
     s = (t or {}).get("settings", {}) or {}
     page_id = s.get("fb_page_id", "")
     page_token = s.get("fb_page_token", "")
     ig_user_id = s.get("ig_user_id", "")
-    return page_id, page_token, ig_user_id
+    return str(page_id or ""), str(page_token or ""), str(ig_user_id or "")
 
 async def meta_send_text(page_token: str, recipient_id: str, text: str) -> dict:
     if not page_token:
@@ -541,8 +556,12 @@ def generate_answer(messages: list[dict]) -> str:
     if USE_MOCK:
         last = next((m for m in reversed(messages) if m["role"] == "user"), {"content": ""})
         return f"(mock) Recibí: {last['content']}"
-    resp = client.chat.completions.create(model=OPENAI_MODEL, messages=messages)
-    return resp.choices[0].message.content
+    try:
+        resp = client.chat.completions.create(model=OPENAI_MODEL, messages=messages)
+        return resp.choices[0].message.content
+    except OpenAIError as e:
+        log.error(f"OpenAI error: {e}")
+        raise HTTPException(status_code=502, detail="AI service error")
 
 @app.post("/v1/chat", response_model=ChatOut)
 async def chat(input: ChatIn, request: Request, tenant: str = Query(default="")):
@@ -604,6 +623,9 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
             tenant_slug = await resolve_tenant_by_page_or_ig_id(owner_id) or "public"
             t = await fetch_tenant(tenant_slug)
             page_id, page_token, ig_user_id = fb_tokens_from_tenant(t)
+            # Fallback: si no hay page_id en settings/env, usar owner_id
+            if not page_id and owner_id:
+                page_id = owner_id
 
             # Messenger / IG DMs (igual a como lo tenías)
             for m in entry.get("messaging", []):
@@ -628,10 +650,14 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
 
                 add_message(sid, "assistant", answer)
                 asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_out", {"to": sender_id, "text": answer[:2000]}))
-                try:
-                    await meta_send_text(page_token, sender_id, answer)
-                except Exception as e:
-                    log.error(f"meta send error: {e}")
+                # Enviar respuesta solo si tenemos token (desde DB)
+                if not page_token:
+                    log.warning("[META][DM] skip: falta page_token en settings.fb_page_token (DB)")
+                else:
+                    try:
+                        await meta_send_text(page_token, sender_id, answer)
+                    except Exception as e:
+                        log.error(f"meta send error: {e}")
 
             # Feed / Comments
             for ch in entry.get("changes", []):
@@ -650,7 +676,7 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                         log.warning("[META][FEED] skip: falta comment_id")
                         continue
                     if not page_token:
-                        log.warning("[META][FEED] skip: falta page_token en settings.fb_page_token")
+                        log.warning("[META][FEED] skip: falta page_token en settings.fb_page_token (DB)")
                         continue
                     if author_id and page_id and author_id == page_id:
                         log.info("[META][FEED] skip: comentario de la propia página (loop guard)")
@@ -688,7 +714,7 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                         log.warning("[META][IG] skip: falta ig_comment_id")
                         continue
                     if not page_token:
-                        log.warning("[META][IG] skip: falta page_token en settings.fb_page_token")
+                        log.warning("[META][IG] skip: falta page_token en settings.fb_page_token (DB)")
                         continue
 
                     if META_DRY_RUN:
@@ -1025,6 +1051,60 @@ async def export_events_csv(tenant: str = Query(default=""), days: int = 30):
         writer.writerow(row)
     return Response(buf.getvalue(), media_type="text/csv",
                     headers={"Content-Disposition": "attachment; filename=events.csv"})
+
+@app.get("/v1/admin/meta/diagnostics", dependencies=[Depends(require_admin)])
+async def admin_meta_diagnostics(tenant: str = Query(default="")):
+    """Diagnóstico de configuración Meta por tenant (DB-only), con máscaras.
+
+    Responde si el tenant existe y si tiene presentes:
+    - settings.fb_page_id
+    - settings.fb_page_token
+    - settings.ig_user_id
+    Además, muestra máscaras y checks básicos.
+    """
+    if tenant and not valid_slug(tenant):
+        raise HTTPException(400, "Invalid tenant")
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    t = await fetch_tenant(tenant)
+    if not t:
+        raise HTTPException(404, f"Tenant '{tenant}' no encontrado")
+
+    s = (t or {}).get("settings", {}) or {}
+    fb_page_id = str(s.get("fb_page_id", "") or "")
+    fb_page_token = str(s.get("fb_page_token", "") or "")
+    ig_user_id = str(s.get("ig_user_id", "") or "")
+
+    warnings: list[str] = []
+    if not fb_page_token:
+        warnings.append("Falta settings.fb_page_token en DB: no se pueden enviar respuestas")
+    if not fb_page_id:
+        warnings.append("Falta settings.fb_page_id en DB: private replies podrían fallar")
+    if not ig_user_id:
+        warnings.append("Falta settings.ig_user_id en DB: IG comments/DM podrían no mapear tenant")
+
+    return {
+        "ok": True,
+        "tenant": tenant,
+        "settings": {
+            "fb_page_id_present": bool(fb_page_id),
+            "fb_page_token_present": bool(fb_page_token),
+            "ig_user_id_present": bool(ig_user_id),
+            "fb_page_id_masked": _mask(fb_page_id, 4),
+            "fb_page_token_masked": _mask(fb_page_token, 6),
+            "ig_user_id_masked": _mask(ig_user_id, 4),
+        },
+        "capabilities": {
+            "can_reply_dms": bool(fb_page_token),
+            "can_reply_comments_fb": bool(fb_page_token),
+            "can_reply_comments_ig": bool(fb_page_token),
+        },
+        "webhook": {
+            "verify_token_present": bool(os.getenv("META_VERIFY_TOKEN", "")),
+        },
+        "warnings": warnings,
+    }
 
 @app.post("/v1/admin/meta/test-reply", dependencies=[Depends(require_admin)])
 async def admin_meta_test_reply(body: MetaTestReplyIn):
