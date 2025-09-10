@@ -666,7 +666,9 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
             for ch in entry.get("changes", []):
                 field = ch.get("field")
                 value = ch.get("value", {}) or {}
-                log.info(f"[META][CHANGE] field={field} value_keys={list(value.keys())}")
+                log.info(f"[META][CHANGE] field={field} value={json.dumps(value)[:500]}")
+                # ... luego tus if de comment
+
 
                 # Facebook Page comments (feed)
                 if obj == "page" and field == "feed" and value.get("item") == "comment" and value.get("verb") == "add":
