@@ -189,6 +189,24 @@ html,body{ margin:0; width:100%; max-width:100%;
   --cw-user-text: var(--cw-primary-contrast);
 }
 
+/* ====== Minimal Performance Theme (reduce animaciones y sombras) ====== */
+:root[data-zia-theme="minimal"] .cw-launcher{
+  background: #0f1116 !important;
+  box-shadow: none !important;
+  border: 1px solid rgba(255,255,255,.08) !important;
+  transition: none !important;
+}
+:root[data-zia-theme="minimal"] #cw-orb{ display:none !important; }
+:root[data-zia-theme="minimal"] .cw-launcher::after{ display:none !important; }
+:root[data-zia-theme="minimal"] .cw-panel{
+  box-shadow: none !important;
+  transition: none !important;
+}
+:root[data-zia-theme="minimal"] .cw-iconbtn,
+:root[data-zia-theme="minimal"] .chip,
+:root[data-zia-theme="minimal"] #msg,
+:root[data-zia-theme="minimal"] .cw-send{ transition: none !important; }
+
 @media (prefers-color-scheme: dark) {
   :where([data-zia]) {
     --cw-bg: #0b0f14;
@@ -265,4 +283,3 @@ html,body{ margin:0; width:100%; max-width:100%;
 @media (prefers-color-scheme: light){
   :where([data-zia]) #cw-orb{ opacity: .7; }
 }
-

@@ -302,10 +302,14 @@ if (document.readyState === "loading") {
 (function orbDots(){
   const cv = document.getElementById('cw-orb');
   if(!cv) return;
+  if (window.__ZIA_DISABLE_ORB) { return; }
   const ctx = cv.getContext('2d', { alpha: true });
-  const dpr = window.devicePixelRatio || 1;
+  const DPR_MAX = 1.5; // limitar para evitar trabajo extra en pantallas 2x/3x
+  let dpr = Math.min(window.devicePixelRatio || 1, DPR_MAX);
   let t = 0;
   let MODE = 'idle';                   // 'idle' | 'thinking' | 'unread'
+  let ENABLED = true;
+  const prefersReduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   window.__orbSetMode = (m)=>{ MODE = m || 'idle'; };
 
   const rn=i=>{const x=Math.sin(i)*43758.5453; return x-Math.floor(x);};
@@ -325,16 +329,23 @@ if (document.readyState === "loading") {
 
   function resize(){
     const r = cv.getBoundingClientRect();
+    dpr = Math.min(window.devicePixelRatio || 1, DPR_MAX);
     cv.width  = Math.max(1, Math.round(r.width * dpr));
     cv.height = Math.max(1, Math.round(r.height* dpr));
     ctx.setTransform(dpr,0,0,dpr,0,0);
   }
   resize(); addEventListener('resize', resize);
-
-  const SAMPLES = 1000;
+  // Dinamiza la carga de la animación según modo/perfil
   const MIN_R   = 0.08;
   const DOT_MIN = 0.9, DOT_MAX = 1.9;
-  const BLUR_MIN= 2,   BLUR_MAX= 4;
+  const BLUR_MIN= 1.5, BLUR_MAX= 3.0;
+
+  function samplesForMode(){
+    if (prefersReduce) return 220;
+    if (MODE === 'thinking') return 700;
+    if (MODE === 'unread') return 500;
+    return 350; // idle
+  }
 
   const golden = Math.PI * (3 - Math.sqrt(5));
   function sample(i, N, R){
@@ -353,7 +364,15 @@ if (document.readyState === "loading") {
     return [BLUE1, BLUE2];
   }
 
-  function draw(){
+  let lastTs = 0;
+  function draw(ts){
+    // Pausar si no visible o pestaña oculta
+    if (!ENABLED || document.hidden) { requestAnimationFrame(draw); return; }
+    // Limitar FPS (reduce CPU). Idle/unread: ~30fps, thinking: ~45fps, reduced: 20fps
+    const targetFps = prefersReduce ? 20 : (MODE==='thinking' ? 45 : 30);
+    const minDelta = 1000/targetFps;
+    if (ts && (ts - lastTs) < minDelta) { requestAnimationFrame(draw); return; }
+    lastTs = ts || 0;
     const w = cv.clientWidth, h = cv.clientHeight;
     const cx = w/2, cy = h/2;
     const R  = Math.min(cx, cy) * 0.88;
@@ -376,10 +395,10 @@ if (document.readyState === "loading") {
     // puntos
     ctx.globalCompositeOperation = 'screen';
     // pulso más marcado si hay unread
-    t += (MODE==='unread' ? 0.013 : 0.010);
+    t += (MODE==='thinking' ? 0.012 : MODE==='unread' ? 0.010 : 0.008);
 
     const [C1, C2] = palette();
-
+    const SAMPLES = samplesForMode();
     for(let i=0;i<SAMPLES;i++){
       const [dx,dy,ru] = sample(i, SAMPLES, R);
       const x = cx + dx, y = cy + dy;
@@ -410,4 +429,18 @@ if (document.readyState === "loading") {
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
+
+  // Pausar animación si el launcher está fuera de viewport o panel cerrado y no hay unread
+  const launcher = document.getElementById('cw-launcher');
+  function recomputeEnabled(){
+    if (prefersReduce) { ENABLED = false; return; }
+    if (!launcher) { ENABLED = true; return; }
+    const r = launcher.getBoundingClientRect();
+    const inView = r.bottom >= 0 && r.right >= 0 && r.top <= (window.innerHeight||document.documentElement.clientHeight) && r.left <= (window.innerWidth||document.documentElement.clientWidth);
+    ENABLED = inView;
+  }
+  recomputeEnabled();
+  addEventListener('scroll', recomputeEnabled, {passive:true});
+  addEventListener('resize', recomputeEnabled);
+  document.addEventListener('visibilitychange', recomputeEnabled);
 })();
