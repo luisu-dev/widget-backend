@@ -2,6 +2,7 @@ import os, uuid, time, asyncio, json, logging, re
 from typing import Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, Request, Header, Depends, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from starlette.responses import StreamingResponse, Response
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -14,6 +15,7 @@ from twilio.rest import Client as TwilioClient
 from twilio.twiml.messaging_response import MessagingResponse
 from twilio.request_validator import RequestValidator
 import httpx
+import stripe
 
 # ── Setup ──────────────────────────────────────────────────────────────
 load_dotenv()
@@ -51,6 +53,12 @@ TWILIO_VALIDATE_SIGNATURE = as_bool(os.getenv("TWILIO_VALIDATE_SIGNATURE"), Fals
 
 # ← NUEVO: evita NameError en el webhook
 META_DRY_RUN = as_bool(os.getenv("META_DRY_RUN"), False)
+#stripe keys 
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+SITE_URL = os.getenv("SITE_URL", "https://web-zia.vercel.app")
+
+stripe.api_key = STRIPE_SECRET_KEY
 
 
 
@@ -76,6 +84,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Static assets for the embeddable widget
+try:
+    app.mount("/widget", StaticFiles(directory="public/widget"), name="widget")
+except Exception as _e:
+    # In some environments the folder may not exist; ignore at import time.
+    pass
 
 # ── Auth util ──────────────────────────────────────────────────────────
 async def require_admin(x_api_key: str = Header(default="")):
@@ -164,6 +179,72 @@ def to_asyncpg(url: str) -> str:
     new_query = urlencode(q)
     scheme = "postgresql+asyncpg"
     return urlunparse((scheme, p.netloc, p.path, p.params, new_query, p.fragment))
+
+async def update_tenant_settings(slug: str, patch: dict):
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+    async with db_engine.begin() as conn:
+        await conn.execute(
+            text("""
+                UPDATE tenants
+                SET settings = COALESCE(settings,'{}'::jsonb) || CAST(:patch AS JSONB),
+                    updated_at = NOW()
+                WHERE slug = :slug
+            """),
+            {"slug": slug, "patch": json.dumps(patch)}
+        )
+
+async def find_tenant_by_acct(acct_id: str) -> Optional[str]:
+    if not (db_engine and acct_id):
+        return None
+    async with db_engine.connect() as conn:
+        row = (await conn.execute(
+            text("SELECT slug FROM tenants WHERE settings->>'stripe_acct' = :acct LIMIT 1"),
+            {"acct": acct_id}
+        )).first()
+    return row[0] if row else None
+
+def _tenant_stripe_acct(t: Optional[dict]) -> str:
+    return str(((t or {}).get("settings") or {}).get("stripe_acct") or "")
+
+def _tenant_stripe_prices(t: Optional[dict]) -> dict:
+    return ((t or {}).get("settings") or {}).get("stripe_prices") or {}
+
+async def ensure_prices_for_tenant(t: dict, mxn_starter_cents: int = 150000, mxn_meta_cents: int = 100000) -> dict:
+    acct = _tenant_stripe_acct(t)
+    if not acct:
+        raise HTTPException(400, "Tenant sin stripe_acct (conecta Stripe primero)")
+
+    prices = _tenant_stripe_prices(t).copy()
+    changed = False
+
+    if "starter" not in prices:
+        p = stripe.Price.create(
+            currency="mxn",
+            unit_amount=mxn_starter_cents,
+            recurring={"interval": "month"},
+            product_data={"name": "ZIA Starter"},
+            stripe_account=acct,
+        )
+        prices["starter"] = p.id
+        changed = True
+
+    if "meta" not in prices:
+        p = stripe.Price.create(
+            currency="mxn",
+            unit_amount=mxn_meta_cents,
+            recurring={"interval": "month"},
+            product_data={"name": "ZIA Meta"},
+            stripe_account=acct,
+        )
+        prices["meta"] = p.id
+        changed = True
+
+    if changed:
+        await update_tenant_settings(t["slug"], {"stripe_prices": prices})
+
+    return prices
+
 
 ASYNC_DB_URL = to_asyncpg(DATABASE_URL)
 db_engine: Optional[AsyncEngine] = None
@@ -1219,3 +1300,98 @@ async def options_export_leads():
 @app.options("/v1/admin/export/events.csv")
 async def options_export_events():
     return Response(status_code=204)
+
+#----------Integracion Stripe --------------
+#Endpoint para generar link de onboarding
+@app.post("/v1/admin/stripe/connect/onboard", dependencies=[Depends(require_admin)])
+async def stripe_connect_onboard(tenant: str = Query(...)):
+    t = await fetch_tenant(tenant)
+    if not t:
+        raise HTTPException(404, "Tenant no encontrado")
+
+    acct = _tenant_stripe_acct(t)
+    if not acct:
+        account = stripe.Account.create(
+            type="express",
+            country="MX",
+            capabilities={
+                "card_payments": {"requested": True},
+                "transfers": {"requested": True},
+            },
+        )
+        acct = account.id
+        await update_tenant_settings(tenant, {"stripe_acct": acct})
+
+    link = stripe.AccountLink.create(
+        account=acct,
+        refresh_url=f"{SITE_URL}/connect/refresh?tenant={tenant}",
+        return_url=f"{SITE_URL}/connect/return?tenant={tenant}",
+        type="account_onboarding",
+    )
+    return {"onboarding_url": link.url, "acct": acct}
+
+#Endpoint público que usará tu web/widget:
+@app.post("/v1/stripe/checkout/by-plan")
+async def stripe_checkout_by_plan(body: dict, tenant: str = Query(...)):
+    if tenant and not valid_slug(tenant):
+        raise HTTPException(400, "Invalid tenant")
+    t = await fetch_tenant(tenant)
+    if not t:
+        raise HTTPException(404, "Tenant no encontrado")
+
+    acct = _tenant_stripe_acct(t)
+    if not acct:
+        raise HTTPException(400, "Tenant no tiene Stripe conectado (stripe_acct)")
+
+    plan = (body.get("plan") or "").strip().lower()  # "starter" | "meta"
+    qty = int(body.get("quantity", 1))
+    if plan not in {"starter", "meta"} or qty <= 0:
+        raise HTTPException(400, "Parámetros inválidos")
+
+    prices = _tenant_stripe_prices(t)
+    if plan not in prices:
+        prices = await ensure_prices_for_tenant(t)
+
+    price_id = prices[plan]
+
+    session = stripe.checkout.Session.create(
+        mode="subscription",
+        line_items=[{"price": price_id, "quantity": qty}],
+        success_url=f"{SITE_URL}/pago-exitoso?sid={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"{SITE_URL}/pago-cancelado",
+        metadata={"tenant": tenant, "plan": plan},
+        customer_creation="always",
+        stripe_account=acct,
+    )
+    return {"id": session.id, "url": session.url}
+
+@app.post("/v1/stripe/webhook")
+async def stripe_webhook(request: Request):
+    raw = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+    try:
+        event = stripe.Webhook.construct_event(raw, sig, STRIPE_WEBHOOK_SECRET)
+    except Exception as e:
+        return Response(f"Webhook error: {e}", status_code=400)
+
+    acct = event.get("account")  # acct_XXXX de la cuenta conectada
+    tenant_slug = await find_tenant_by_acct(acct) or "public"
+    etype = event["type"]
+    data = event["data"]["object"]
+
+    # Ejemplos mínimos de manejo:
+    if etype == "checkout.session.completed":
+        sub_id = data.get("subscription")
+        cust_id = data.get("customer")
+        sid = data.get("id")
+        asyncio.create_task(store_event(tenant_slug, sid or "stripe", "stripe_checkout_completed",
+                                        {"subscription": sub_id, "customer": cust_id}))
+
+    elif etype == "invoice.paid":
+        asyncio.create_task(store_event(tenant_slug, "stripe", "stripe_invoice_paid",
+                                        {"invoice": data.get("id")}))
+    elif etype.startswith("customer.subscription."):
+        asyncio.create_task(store_event(tenant_slug, "stripe", etype.replace(".", "_"),
+                                        {"subscription": data.get("id")}))
+
+    return {"ok": True}

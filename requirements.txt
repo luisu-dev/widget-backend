@@ -9,3 +9,4 @@ openai==1.46.*
 twilio==9.2.*
 starlette==0.38.*
 markupsafe==2.1.5
+stripe==6.*
