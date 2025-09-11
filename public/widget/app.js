@@ -1,7 +1,9 @@
 // app.js
 "use strict";
 
-document.addEventListener("DOMContentLoaded", () => {
+function __ziaInit(){
+  if (window.__zia_widget_inited) return; // evita doble init si el script se carga dos veces
+  window.__zia_widget_inited = true;
   // ------- API con tenant (solo frontend) -------
   const RAW_API = window.CHAT_API || "https://widget-backend-zia.onrender.com/v1/chat/stream";
   const TENANT  = window.TENANT   || "demo";
@@ -285,7 +287,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if(panel?.classList.contains("open") && thread?.childElementCount===0){ greetOnce(); }
   document.getElementById("send")?.addEventListener("click", startStream);
-});
+}
+
+// Ejecuta incluso si el script se inyecta después de DOMContentLoaded
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", __ziaInit);
+} else {
+  __ziaInit();
+}
 
 /* -------------------------------------------------------------
    Nube de puntos nítida + modos visuales del launcher (orb)
