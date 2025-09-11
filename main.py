@@ -554,6 +554,65 @@ def build_system_for_tenant(tenant: Optional[dict]) -> str:
         extras.append(f"FAQ internas (usa si aplica, concisas): {faq_txt}.")
     return (ZIA_SYSTEM_PROMPT + "\n" + " ".join(extras)).strip()
 
+# ── Catálogo externo (por tenant) ─────────────────────────────────────
+CATALOG_CACHE: Dict[str, dict] = {}
+CATALOG_TTL_SECONDS = 300  # 5 minutos
+
+async def fetch_catalog_for_tenant(t: dict | None) -> list[dict]:
+    s = (t or {}).get("settings", {}) or {}
+    url = s.get("catalog_url")
+    slug = (t or {}).get("slug", "")
+    if not url or not slug:
+        return []
+    now = time.time()
+    cached = CATALOG_CACHE.get(slug)
+    if cached and (now - cached.get("at", 0)) < CATALOG_TTL_SECONDS:
+        return cached.get("items", []) or []
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as cx:
+            r = await cx.get(str(url))
+            r.raise_for_status()
+            data = r.json()
+    except Exception as e:
+        log.warning(f"catalog fetch failed for {slug}: {e}")
+        return cached.get("items", []) if cached else []
+
+    items: list[dict] = []
+    if isinstance(data, list):
+        items = [x for x in data if isinstance(x, dict)]
+    elif isinstance(data, dict):
+        for key in ("items", "products", "catalog", "data"):
+            v = data.get(key)
+            if isinstance(v, list):
+                items = [x for x in v if isinstance(x, dict)]
+                break
+
+    # normalizar campos más comunes
+    normd: list[dict] = []
+    for it in items[:200]:
+        name = str(it.get("name") or it.get("title") or it.get("Nombre") or "").strip()
+        desc = str(it.get("description") or it.get("Descripcion") or it.get("Descripción") or "").strip()
+        pid  = str(it.get("product_id") or it.get("stripe_product_id") or it.get("stripe_id") or it.get("id") or "").strip()
+        meta = it.get("metadata") if isinstance(it.get("metadata"), dict) else {}
+        normd.append({"name": name, "description": desc, "product_id": pid, "metadata": meta, "raw": it})
+
+    CATALOG_CACHE[slug] = {"at": now, "items": normd}
+    return normd
+
+def summarize_catalog_for_prompt(items: list[dict], max_items: int = 14, max_desc: int = 120) -> str:
+    if not items:
+        return ""
+    parts: list[str] = []
+    for it in items[:max_items]:
+        name = (it.get("name") or "").strip()
+        pid  = (it.get("product_id") or "").strip()
+        desc = (it.get("description") or "").strip()
+        if len(desc) > max_desc:
+            desc = desc[:max_desc - 1].rstrip() + "…"
+        label = f"• {name} — {desc} ({pid})" if pid else f"• {name} — {desc}"
+        parts.append(label)
+    return ("Catálogo del cliente (resumen, usa como base para respuestas y links):\n" + "\n".join(parts)).strip()
+
 def build_messages_with_history(sid: str, system_prompt: str, max_pairs: int = 8) -> list[dict]:
     convo = MESSAGES.get(sid, [])
     recent = convo[-2*max_pairs:]
@@ -610,6 +669,7 @@ async def widget_bootstrap(tenant: str):
     if tenant and not valid_slug(tenant):
         raise HTTPException(400, "Invalid tenant")
     if not db_engine:
+        # Modo sin DB: entregar algo básico
         return {
             "tenant": {"slug": tenant, "name": tenant or "zIA", "whatsapp": None, "settings": {}},
             "ui": {"suggestions": ["Solicitar cotización","Ver tarifas","Contactar por WhatsApp"]}
@@ -621,7 +681,20 @@ async def widget_bootstrap(tenant: str):
         )).first()
     if not t:
         raise HTTPException(404, f"Tenant '{tenant}' no encontrado")
-    return {"tenant": dict(t._mapping), "ui": {"suggestions": ["Solicitar cotización","Ver tarifas","Contactar por WhatsApp"]}}
+    tenant_obj = dict(t._mapping)
+    # Pre-carga de catálogo para que el frontend pueda mostrar chips/estado si quiere
+    try:
+        items = await fetch_catalog_for_tenant(tenant_obj)
+        has_catalog = bool(items)
+    except Exception:
+        has_catalog = False
+    return {
+        "tenant": tenant_obj,
+        "ui": {
+            "suggestions": ["Solicitar cotización","Ver tarifas","Contactar por WhatsApp"]
+        },
+        "catalog": {"present": has_catalog}
+    }
 
 @app.options("/v1/chat/stream")
 async def options_stream():
@@ -655,7 +728,11 @@ async def chat(input: ChatIn, request: Request, tenant: str = Query(default=""))
     sid = ensure_session(input.sessionId)
     add_message(sid, "user", input.message)
     t = await fetch_tenant(tenant)
+    catalog_items = await fetch_catalog_for_tenant(t)
+    catalog_summary = summarize_catalog_for_prompt(catalog_items)
     system_prompt = build_system_for_tenant(t)
+    if catalog_summary:
+        system_prompt = f"{system_prompt}\n\n{catalog_summary}"
     messages = build_messages_with_history(sid, system_prompt)
     answer = generate_answer(messages)
     add_message(sid, "assistant", answer)
@@ -848,7 +925,11 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
     asyncio.create_task(store_event(tenant or "public", sid, "msg_in", {"text": (input.message or "")[:2000]}))
 
     t = await fetch_tenant(tenant)
+    catalog_items = await fetch_catalog_for_tenant(t)
+    catalog_summary = summarize_catalog_for_prompt(catalog_items)
     system_prompt = build_system_for_tenant(t)
+    if catalog_summary:
+        system_prompt = f"{system_prompt}\n\n{catalog_summary}"
     messages = build_messages_with_history(sid, system_prompt)
 
     async def event_generator():
@@ -1292,6 +1373,16 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
     twiml = MessagingResponse()
     twiml.message(answer)
     return Response(str(twiml), media_type="application/xml")
+
+@app.get("/v1/catalog")
+async def get_catalog(tenant: str = Query(...)):
+    if tenant and not valid_slug(tenant):
+        raise HTTPException(400, "Invalid tenant")
+    t = await fetch_tenant(tenant)
+    if not t:
+        raise HTTPException(404, "Tenant no encontrado")
+    items = await fetch_catalog_for_tenant(t)
+    return {"count": len(items), "items": items[:200]}
 
 @app.options("/v1/admin/export/leads.csv")
 async def options_export_leads():
