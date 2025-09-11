@@ -8,9 +8,9 @@
     var NAME     = ds.name   || window.TENANT_NAME || 'Asistente';
     var API      = ds.api    || window.CHAT_API || 'https://widget-backend-zia.onrender.com/v1/chat/stream';
     var ASSETS   = ds.assets || (function(){ try{ var u=new URL(s.src, location.href); return u.origin + '/widget'; }catch(_){ return '/widget'; } })();
-    var ORB_MODE = (ds.orb || '').toLowerCase(); // 'off' para desactivar animación
-    var THEME    = (ds.theme || '').toLowerCase(); // 'minimal' | ''
-    var PERF     = (ds.performance || 'auto').toLowerCase(); // 'auto' | 'default'
+    var ORB_MODE = (ds.orb || 'off').toLowerCase(); // default: sin animación
+    var THEME    = (ds.theme || 'flat').toLowerCase(); // default: plano
+    var PERF     = (ds.performance || 'default').toLowerCase();
     var DEFER    = (ds.defer || '').toLowerCase(); // 'idle' | 'interaction' | <ms>
 
     function boot(){
@@ -19,19 +19,9 @@
         window.TENANT = TENANT;
         window.TENANT_NAME = NAME;
         window.CHAT_API = API;
-        // Heurística de rendimiento (Android, poca RAM, reduce-motion)
-        var ua = (navigator.userAgent || '').toLowerCase();
-        var isAndroid = /android/.test(ua);
-        var lowMem = (navigator.deviceMemory && navigator.deviceMemory <= 2);
-        var reduce = false;
-        try { reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch(_){}
-
-        var wantMinimal = THEME === 'minimal' || (PERF === 'auto' && (isAndroid || lowMem || reduce));
-        if (wantMinimal) {
-          try { document.documentElement.setAttribute('data-zia-theme','minimal'); }catch(_){ }
-          window.__ZIA_DISABLE_ORB = true;
-        }
-        if (ORB_MODE === 'off') window.__ZIA_DISABLE_ORB = true;
+        // Forzar tema plano por defecto
+        try { document.documentElement.setAttribute('data-zia-theme', THEME || 'flat'); }catch(_){ }
+        window.__ZIA_DISABLE_ORB = (ORB_MODE !== 'on');
 
         // 1) Cargar CSS del widget
         var link = document.createElement('link');

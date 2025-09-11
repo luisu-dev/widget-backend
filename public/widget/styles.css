@@ -1,7 +1,7 @@
 :root{
   --cw-bg:#0b0b0c; --cw-panel:#141417; --cw-border:#2a2a2e;
-  --cw-muted:#8b8b93; --cw-text:#e9e9ee; --cw-primary:#6ee7b7;
-  --cw-shadow:0 10px 30px rgba(0,0,0,.35);
+  --cw-muted:#8b8b93; --cw-text:#e9e9ee; --cw-primary:#10b981;
+  --cw-shadow:none;
 }
 @media (prefers-color-scheme: light){
   :root{ --cw-bg:#f6f7fb; --cw-panel:#fff; --cw-border:#e6e6ef;
@@ -10,46 +10,15 @@
   }
 }
 *,*::before,*::after{ box-sizing: border-box; }
-html,body{ margin:0; width:100%; max-width:100%;
-  background:var(--cw-bg); color:var(--cw-text);
-  font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
-  overflow-x:hidden;
-}
+html,body{ margin:0; width:100%; max-width:100%; background:var(--cw-bg); color:var(--cw-text); font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; overflow-x:hidden; }
+*{ animation:none !important; }
 
 /* --- Launcher --- */
-.cw-launcher{
-  position:fixed; right:20px; bottom:20px; z-index:9999;
-  width:64px; height:64px; border-radius:999px; isolation:isolate;
-  border:1px solid rgba(255,255,255,.06);
-  background:
-    radial-gradient(120% 140% at 30% 20%, rgba(255,255,255,.06), rgba(0,0,0,0) 60%),
-    linear-gradient(180deg,#0f1116,#0a0b0f);
-  box-shadow:0 12px 24px rgba(0,0,0,.45),
-             inset 0 1px 0 rgba(255,255,255,.05),
-             inset 0 -1px 0 rgba(0,0,0,.35);
-  display:grid; place-items:center; color:#e6e9ee;
-  transition:transform .15s ease, box-shadow .2s ease;
-}
-.cw-launcher:hover{
-  transform:translateY(-2px);
-  box-shadow:0 16px 32px rgba(0,0,0,.55),
-             inset 0 1px 0 rgba(255,255,255,.07),
-             inset 0 -1px 0 rgba(0,0,0,.45);
-}
-.cw-launcher svg{ position:relative; z-index:2; opacity:.9;
-  filter:drop-shadow(0 1px 0 rgba(255,255,255,.08));
-}
-#cw-orb{
-  position:absolute; inset:-24px; width:calc(100% + 48px); height:calc(100% + 48px);
-  pointer-events:none; z-index:1; filter:blur(2px); opacity:1;
-}
-/* Halo extra CSS para sumar glow */
-.cw-launcher::after{
-  content:""; position:absolute; inset:-14px; border-radius:999px; z-index:0;
-  background:radial-gradient(circle at 55% 45%, rgba(120,160,255,.35), transparent 60%);
-  filter:blur(14px); animation:cw-lpulse 3s ease-in-out infinite;
-}
-@keyframes cw-lpulse{ 0%,100%{transform:scale(.95);opacity:.35} 50%{transform:scale(1.05);opacity:.75} }
+.cw-launcher{ position:fixed; right:20px; bottom:20px; z-index:9999; width:64px; height:64px; border-radius:999px; isolation:isolate; border:1px solid var(--cw-border); background:#0f1116; display:grid; place-items:center; color:#e6e9ee; }
+.cw-launcher:hover{ filter:none; }
+.cw-launcher svg{ position:relative; z-index:2; opacity:1; filter:none; }
+#cw-orb{ display:none !important; }
+.cw-launcher::after{ display:none !important; }
 
 .cw-badge{
   position:absolute; right:-2px; top:-2px; width:18px; height:18px; z-index:3;
@@ -58,22 +27,10 @@ html,body{ margin:0; width:100%; max-width:100%;
 }
 
 /* --- Panel --- */
-.cw-panel{
-  position:fixed; right:20px; bottom:92px; z-index:9998;
-  width:360px; max-width:min(420px,calc(100vw - 32px));
-  height:540px; max-height:calc(100vh - 140px);
-  background:var(--cw-panel); border:1px solid var(--cw-border); border-radius:16px;
-  box-shadow:var(--cw-shadow); overflow:hidden;
-  transform:translateY(20px) scale(.98); opacity:0; pointer-events:none;
-  transition:transform .2s ease, opacity .2s ease;
-}
-.cw-panel.open{ transform:translateY(0) scale(1); opacity:1; pointer-events:auto; }
+.cw-panel{ position:fixed; right:20px; bottom:92px; z-index:9998; width:360px; max-width:min(420px,calc(100vw - 32px)); height:540px; max-height:calc(100vh - 140px); background:var(--cw-panel); border:1px solid var(--cw-border); border-radius:16px; box-shadow:none; overflow:hidden; opacity:0; pointer-events:none; }
+.cw-panel.open{ opacity:1; pointer-events:auto; }
 
-.cw-header{
-  display:flex; align-items:center; justify-content:space-between;
-  padding:12px; border-bottom:1px solid var(--cw-border);
-  background:linear-gradient(180deg, rgba(255,255,255,.02), transparent);
-}
+.cw-header{ display:flex; align-items:center; justify-content:space-between; padding:12px; border-bottom:1px solid var(--cw-border); background:transparent; }
 .cw-title{ display:flex; align-items:baseline; gap:8px; }
 .cw-title strong{ font-weight:700; }
 .cw-title small{ color:var(--cw-muted); font-size:12px; }
@@ -81,9 +38,7 @@ html,body{ margin:0; width:100%; max-width:100%;
   display:inline-block; box-shadow:0 0 0 3px rgba(110,231,183,.15);
 }
 .cw-actions{ display:flex; gap:4px; }
-.cw-iconbtn{ width:28px; height:28px; border-radius:8px; cursor:pointer;
-  border:1px solid var(--cw-border); background:transparent; color:var(--cw-text);
-}
+.cw-iconbtn{ width:28px; height:28px; border-radius:8px; cursor:pointer; border:1px solid var(--cw-border); background:transparent; color:var(--cw-text); }
 .cw-body{ display:grid; grid-template-rows:1fr auto auto; height:calc(100% - 52px); }
 
 /* --- Mensajes --- */
@@ -96,15 +51,10 @@ html,body{ margin:0; width:100%; max-width:100%;
   word-break:break-word; overflow-wrap:anywhere; border:1px solid var(--cw-border);
 }
 .msg.user{ margin-left:auto; background:var(--cw-primary); color:#0b0b0c; }
-.msg.bot{ margin-right:auto; background:#15151b; color:var(--cw-text);
-  border:1px solid rgba(120,120,160,.25);
-  box-shadow:0 0 0 1px rgba(120,120,200,.06) inset, 0 8px 22px rgba(0,0,0,.35);
-}
+.msg.bot{ margin-right:auto; background:#15151b; color:var(--cw-text); border:1px solid var(--cw-border); box-shadow:none; }
 
 #chips{ display:flex; flex-wrap:wrap; gap:8px; padding:10px 12px; border-top:1px dashed var(--cw-border); }
-.chip{ border:1px solid var(--cw-border); background:transparent; color:var(--cw-text);
-  border-radius:999px; padding:6px 10px; font-size:13px; cursor:pointer;
-}
+.chip{ border:1px solid var(--cw-border); background:transparent; color:var(--cw-text); border-radius:999px; padding:6px 10px; font-size:13px; cursor:pointer; }
 .chip:hover{ border-color:var(--cw-primary); }
 
 /* --- Input --- */
@@ -116,9 +66,7 @@ html,body{ margin:0; width:100%; max-width:100%;
   font:inherit; outline:none; max-height:140px; overflow:auto;
 }
 #msg:focus{ box-shadow:0 0 0 2px rgba(110,231,183,.25); border-color:var(--cw-primary); }
-.cw-send{ padding:0 14px; border-radius:12px; border:1px solid var(--cw-border);
-  background:var(--cw-primary); color:#0b0b0c; font-weight:700; cursor:pointer;
-}
+.cw-send{ padding:0 14px; border-radius:12px; border:1px solid var(--cw-border); background:var(--cw-primary); color:#0b0b0c; font-weight:700; cursor:pointer; }
 
 /* ocultar debug por defecto */
 .cw-advanced{ display:none; }
@@ -130,45 +78,9 @@ html,body{ margin:0; width:100%; max-width:100%;
   .cw-advanced button,.cw-advanced input{ width:100%; }
 }
 
-/* Launcher minimal: esfera oscura */
-.cw-launcher{
-  position: fixed; right: 20px; bottom: 20px; z-index: 9999;
-  width: 72px; height: 72px; border-radius: 999px; isolation: isolate;
-  border: 1px solid rgba(255,255,255,.06);
-  background: radial-gradient(120% 120% at 45% 35%, #18202f, #0b0c12 70%);
-  box-shadow:
-    0 14px 28px rgba(0,0,0,.5),
-    inset 0 1px 0 rgba(255,255,255,.05),
-    inset 0 -1px 0 rgba(0,0,0,.45);
-  padding: 0; overflow: visible; /* para que los puntos respiren fuera */
-  cursor: pointer; transition: transform .15s ease, box-shadow .2s ease;
-}
-.cw-launcher:hover{ transform: translateY(-2px); }
-
-/* SIN icono ni halo ::after */
+/* Remueve estilos anteriores de orb y efectos */
 .cw-launcher svg, .cw-launcher::after { display: none !important; }
-
-/* Canvas ocupa y sobresale para que los puntos salgan “fuera” */
-#cw-orb{
-  position: absolute; inset: -28px;  /* respira fuera del botón */
-  width: calc(100% + 56px);
-  height: calc(100% + 56px);
-  pointer-events: none; z-index: 1;
-  filter: blur(0px); /* el glow lo hacemos en JS */
-}
-
-/* Badge (si lo usas) */
-.cw-badge{
-  position: absolute; right: -2px; top: -2px; width: 18px; height: 18px; z-index: 3;
-  border-radius: 999px; background: var(--cw-primary); border: 2px solid #0a0b0f;
-  box-shadow: 0 4px 10px rgba(110,231,183,.45);
-}
-.cw-launcher{ overflow: hidden; }  /* recorta lo que se salga */
-/* el canvas NO debe llevar blur por CSS */
-#cw-orb{
-  filter: none;
-}
-.cw-launcher{ overflow: hidden; } /* recorte circular por si acaso */
+.cw-badge{ position: absolute; right: -2px; top: -2px; width: 18px; height: 18px; z-index: 3; border-radius: 999px; background: var(--cw-primary); border: 2px solid #0a0b0f; box-shadow:none; }
 
 /* ====== zIA THEME OVERRIDES (light + dark) ====== */
 :where([data-zia]) {
@@ -190,22 +102,27 @@ html,body{ margin:0; width:100%; max-width:100%;
 }
 
 /* ====== Minimal Performance Theme (reduce animaciones y sombras) ====== */
-:root[data-zia-theme="minimal"] .cw-launcher{
+:root[data-zia-theme="minimal"], :root[data-zia-theme="flat"] {}
+:root[data-zia-theme="minimal"] .cw-launcher, :root[data-zia-theme="flat"] .cw-launcher{
   background: #0f1116 !important;
   box-shadow: none !important;
   border: 1px solid rgba(255,255,255,.08) !important;
   transition: none !important;
 }
-:root[data-zia-theme="minimal"] #cw-orb{ display:none !important; }
-:root[data-zia-theme="minimal"] .cw-launcher::after{ display:none !important; }
-:root[data-zia-theme="minimal"] .cw-panel{
+:root[data-zia-theme="minimal"] #cw-orb, :root[data-zia-theme="flat"] #cw-orb{ display:none !important; }
+:root[data-zia-theme="minimal"] .cw-launcher::after, :root[data-zia-theme="flat"] .cw-launcher::after{ display:none !important; }
+:root[data-zia-theme="minimal"] .cw-panel, :root[data-zia-theme="flat"] .cw-panel{
   box-shadow: none !important;
   transition: none !important;
 }
 :root[data-zia-theme="minimal"] .cw-iconbtn,
 :root[data-zia-theme="minimal"] .chip,
 :root[data-zia-theme="minimal"] #msg,
-:root[data-zia-theme="minimal"] .cw-send{ transition: none !important; }
+:root[data-zia-theme="minimal"] .cw-send,
+:root[data-zia-theme="flat"] .cw-iconbtn,
+:root[data-zia-theme="flat"] .chip,
+:root[data-zia-theme="flat"] #msg,
+:root[data-zia-theme="flat"] .cw-send{ transition: none !important; }
 
 @media (prefers-color-scheme: dark) {
   :where([data-zia]) {

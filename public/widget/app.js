@@ -261,6 +261,11 @@ function __ziaInit(){
                 lastShownWhatsApp = ui.whatsapp;
               }
 
+              if (ui?.checkout_url) {
+                const label = ui?.label || 'Pagar ahora';
+                makeBubble("bot", `Listo, puedes completar tu compra aquí: <a href="${ui.checkout_url}" target="_blank" rel="noopener">${label}</a>`);
+              }
+
               const chips = (ui?.chips || []).filter(c => !(shouldBubble && /whats\s*app|whatsapp|wasap/i.test(c)));
               renderChips(chips);
             }catch{}

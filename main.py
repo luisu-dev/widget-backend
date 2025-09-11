@@ -593,8 +593,9 @@ async def fetch_catalog_for_tenant(t: dict | None) -> list[dict]:
         name = str(it.get("name") or it.get("title") or it.get("Nombre") or "").strip()
         desc = str(it.get("description") or it.get("Descripcion") or it.get("Descripción") or "").strip()
         pid  = str(it.get("product_id") or it.get("stripe_product_id") or it.get("stripe_id") or it.get("id") or "").strip()
+        prc  = str(it.get("price_id") or it.get("stripe_price_id") or it.get("default_price") or "").strip()
         meta = it.get("metadata") if isinstance(it.get("metadata"), dict) else {}
-        normd.append({"name": name, "description": desc, "product_id": pid, "metadata": meta, "raw": it})
+        normd.append({"name": name, "description": desc, "product_id": pid, "price_id": prc, "metadata": meta, "raw": it})
 
     CATALOG_CACHE[slug] = {"at": now, "items": normd}
     return normd
@@ -612,6 +613,62 @@ def summarize_catalog_for_prompt(items: list[dict], max_items: int = 14, max_des
         label = f"• {name} — {desc} ({pid})" if pid else f"• {name} — {desc}"
         parts.append(label)
     return ("Catálogo del cliente (resumen, usa como base para respuestas y links):\n" + "\n".join(parts)).strip()
+
+def _match_catalog_item(user_text: str, items: list[dict]) -> dict | None:
+    t = (user_text or "").lower()
+    best = None
+    best_score = 0.0
+    for it in items or []:
+        name = (it.get("name") or "").lower()
+        desc = (it.get("description") or "").lower()
+        pid  = (it.get("product_id") or "").lower()
+        score = 0.0
+        # coincidencias fuertes en nombre / id
+        if name and name in t: score += 3.0
+        if pid and pid in t: score += 2.5
+        # coincidencias sueltas por palabras
+        for w in filter(None, re.split(r"[^a-z0-9ñáéíóúü]+", name)[:6]):
+            if len(w) >= 4 and w in t:
+                score += 0.8
+        if desc:
+            for w in filter(None, re.split(r"[^a-z0-9ñáéíóúü]+", desc)[:6]):
+                if len(w) >= 5 and w in t:
+                    score += 0.4
+        if score > best_score:
+            best_score = score
+            best = it
+    return best if best_score >= 1.2 else None
+
+async def _create_checkout_for_item(t: dict | None, item: dict, qty: int = 1, mode: str = "payment") -> dict:
+    acct = _tenant_stripe_acct(t)
+    if not acct:
+        raise HTTPException(400, "Tenant no tiene Stripe conectado (stripe_acct)")
+    price_id = (item.get("price_id") or "").strip()
+    product_id = (item.get("product_id") or "").strip()
+    if not price_id and product_id:
+        try:
+            prod = stripe.Product.retrieve(product_id, expand=["default_price"], stripe_account=acct)
+            dp = getattr(prod, "default_price", None)
+            price_id = getattr(dp, "id", "") if dp else ""
+        except Exception as e:
+            log.error(f"Stripe Product.retrieve error: {e}")
+            raise HTTPException(400, "Producto sin price válido")
+    if not price_id:
+        raise HTTPException(400, "No hay price_id para el producto")
+    try:
+        session = stripe.checkout.Session.create(
+            mode=mode,
+            line_items=[{"price": price_id, "quantity": max(1, int(qty))}],
+            success_url=f"{SITE_URL}/pago-exitoso?sid={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{SITE_URL}/pago-cancelado",
+            metadata={"tenant": (t or {}).get("slug", "public"), "product_id": product_id or None},
+            customer_creation="always",
+            stripe_account=acct,
+        )
+    except Exception as e:
+        log.error(f"Stripe checkout.Session.create error: {e}")
+        raise HTTPException(502, "No se pudo crear la sesión de pago")
+    return {"id": session.id, "url": session.url}
 
 def build_messages_with_history(sid: str, system_prompt: str, max_pairs: int = 8) -> list[dict]:
     convo = MESSAGES.get(sid, [])
@@ -959,6 +1016,22 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 yield sse_event(json.dumps({"content": "Genial, te ayudo con la cotización. ¿Cuál es tu nombre completo?"}), event="delta")
                 yield sse_event(json.dumps({}), event="done")
                 return
+
+            # Intento rápido: si el usuario quiere comprar y el catálogo tiene match, crear link de pago
+            purchase_intent = any(k in text_lc for k in ["compr", "compra", "adquir", "pagar", "orden", "checkout", "suscrib"])
+            if purchase_intent and catalog_items:
+                item = _match_catalog_item(text_lc, catalog_items)
+                if item:
+                    try:
+                        session = await _create_checkout_for_item(t, item, qty=1, mode="payment")
+                        name = (item.get("name") or "este producto")
+                        yield sse_event(json.dumps({"content": f"Perfecto. Te dejo el enlace para completar la compra de {name}."}), event="delta")
+                        yield sse_event(json.dumps({"checkout_url": session.get("url"), "label": "Comprar ahora"}), event="ui")
+                        yield sse_event(json.dumps({}), event="done")
+                        asyncio.create_task(store_event(tenant or "public", sid, "checkout_link_out", {"product": item.get("product_id"), "url": session.get("url")}))
+                        return
+                    except Exception as e:
+                        log.warning(f"no se pudo crear checkout por intent: {e}")
 
             if flow["stage"] == "ask_name":
                 name = (input.message or "").strip()
