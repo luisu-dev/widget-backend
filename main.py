@@ -155,6 +155,15 @@ def wants_quote(text: str) -> bool:
 def valid_slug(slug: str) -> bool:
     return bool(re.fullmatch(r"[a-z0-9\-]{1,40}", (slug or "")))
 
+#---- Modelos de Checkout 
+
+class CheckoutItemIn(BaseModel):
+    price_id: Optional[str] = None
+    product_id: Optional[str] = None
+    quantity: int = 1
+    mode: Optional[str] = None  # "payment" | "subscription" | None (auto)
+
+
 # ── DB helpers ─────────────────────────────────────────────────────────
 def to_asyncpg(url: str) -> str:
     if not url:
@@ -244,6 +253,63 @@ async def ensure_prices_for_tenant(t: dict, mxn_starter_cents: int = 150000, mxn
         await update_tenant_settings(t["slug"], {"stripe_prices": prices})
 
     return prices
+
+
+async def _create_checkout_for_any(
+    t: Optional[dict],
+    price_id: Optional[str] = None,
+    product_id: Optional[str] = None,
+    qty: int = 1,
+    mode: Optional[str] = None
+) -> dict:
+    acct = _tenant_stripe_acct(t)
+    if not acct:
+        raise HTTPException(400, "Tenant no tiene Stripe conectado (stripe_acct)")
+
+    if not price_id and product_id:
+        try:
+            prod = stripe.Product.retrieve(product_id, expand=["default_price"], stripe_account=acct)
+            dp = getattr(prod, "default_price", None)
+            price_id = getattr(dp, "id", "") if dp else ""
+        except Exception as e:
+            log.error(f"Stripe Product.retrieve error: {e}")
+            raise HTTPException(400, "Producto sin price válido")
+
+    if not price_id:
+        raise HTTPException(400, "Falta price_id o product_id con default_price")
+
+    if mode is None:
+        try:
+            price = stripe.Price.retrieve(price_id, stripe_account=acct)
+            mode = "subscription" if getattr(price, "recurring", None) else "payment"
+        except Exception as e:
+            log.warning(f"No se pudo leer Price para autodetección, fallback a 'payment': {e}")
+            mode = "payment"
+
+    if mode not in {"payment", "subscription"}:
+        raise HTTPException(400, "mode inválido (usa 'payment' o 'subscription')")
+
+    try:
+        session = stripe.checkout.Session.create(
+            mode=mode,
+            line_items=[{"price": price_id, "quantity": max(1, int(qty))}],
+            success_url=f"{SITE_URL}/pago-exitoso?sid={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{SITE_URL}/pago-cancelado",
+            metadata={
+                "tenant": (t or {}).get("slug", "public"),
+                "source": "catalog",
+                "price_id": price_id,
+                "product_id": product_id or None,
+            },
+            customer_creation="always",
+            stripe_account=acct,
+        )
+    except Exception as e:
+        log.error(f"Stripe checkout.Session.create error: {e}")
+        raise HTTPException(502, "No se pudo crear la sesión de pago")
+
+    return {"id": session.id, "url": session.url, "mode": mode}
+
 
 
 ASYNC_DB_URL = to_asyncpg(DATABASE_URL)
@@ -1018,7 +1084,9 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 return
 
             # Intento rápido: si el usuario quiere comprar y el catálogo tiene match, crear link de pago
-            purchase_intent = any(k in text_lc for k in ["compr", "compra", "adquir", "pagar", "orden", "checkout", "suscrib"])
+            purchase_intent = any(k in text_lc for k in [
+                "compr", "compra", "adquir", "pagar", "pago", "orden", "checkout", "suscrib"
+            ])
             if purchase_intent and catalog_items:
                 item = _match_catalog_item(text_lc, catalog_items)
                 if item:
@@ -1032,6 +1100,27 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                         return
                     except Exception as e:
                         log.warning(f"no se pudo crear checkout por intent: {e}")
+                else:
+                    # Sin match específico: ofrecer selección rápida (top 3) o compra directa si solo hay 1
+                    safe_items = [x for x in catalog_items if (x.get("price_id") or x.get("product_id"))]
+                    if len(safe_items) == 1:
+                        try:
+                            session = await _create_checkout_for_item(t, safe_items[0], qty=1, mode="payment")
+                            name = (safe_items[0].get("name") or "este producto")
+                            yield sse_event(json.dumps({"content": f"Puedo procesarlo ya. Aquí tienes el enlace para {name}."}), event="delta")
+                            yield sse_event(json.dumps({"checkout_url": session.get("url"), "label": "Comprar ahora"}), event="ui")
+                            yield sse_event(json.dumps({}), event="done")
+                            asyncio.create_task(store_event(tenant or "public", sid, "checkout_link_out", {"product": safe_items[0].get("product_id"), "url": session.get("url")}))
+                            return
+                        except Exception as e:
+                            log.warning(f"checkout directo (1 item) falló: {e}")
+                    # Mostrar chips de selección
+                    names = [x.get("name") for x in safe_items[:3] if x.get("name")]
+                    if names:
+                        yield sse_event(json.dumps({"content": "¿Cuál quieres comprar?"}), event="delta")
+                        yield sse_event(json.dumps({"chips": names}), event="ui")
+                        yield sse_event(json.dumps({}), event="done")
+                        return
 
             if flow["stage"] == "ask_name":
                 name = (input.message or "").strip()
@@ -1559,3 +1648,39 @@ async def stripe_webhook(request: Request):
                                         {"subscription": data.get("id")}))
 
     return {"ok": True}
+
+
+@app.post("/v1/stripe/checkout/by-item")
+async def stripe_checkout_by_item(body: CheckoutItemIn, tenant: str = Query(...)):
+    if tenant and not valid_slug(tenant):
+        raise HTTPException(400, "Invalid tenant")
+    t = await fetch_tenant(tenant)
+    if not t:
+        raise HTTPException(404, "Tenant no encontrado")
+
+    price_id = (body.price_id or "").strip()
+    product_id = (body.product_id or "").strip()
+    qty = max(1, int(body.quantity or 1))
+    mode = (body.mode or None)
+
+    if not price_id and not product_id:
+        raise HTTPException(400, "Debes enviar price_id o product_id")
+
+    session = await _create_checkout_for_any(
+        t, price_id=price_id, product_id=product_id, qty=qty, mode=mode
+    )
+    return session
+
+
+@app.get("/v1/catalog")
+async def get_catalog(tenant: str = Query(...)):
+    if tenant and not valid_slug(tenant):
+        raise HTTPException(400, "Invalid tenant")
+    t = await fetch_tenant(tenant)
+    if not t:
+        raise HTTPException(404, "Tenant no encontrado")
+    items = await fetch_catalog_for_tenant(t)
+    for it in items:
+        it["can_checkout"] = bool((it.get("price_id") or it.get("product_id")))
+    return {"count": len(items), "items": items[:200]}
+

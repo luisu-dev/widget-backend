@@ -92,6 +92,7 @@ function __ziaInit(){
     panel?.classList.add("open");
     setUnread(0); // reset no leídos
     if (thread && thread.childElementCount === 0) greetOnce();
+    loadBootstrapOnce();
   };
 
   launcher?.addEventListener("click", openPanel);
@@ -155,8 +156,11 @@ function __ziaInit(){
     }
   }
 
-  // ------- Bootstrap inicial -------
-  (async function initBootstrap(){
+  // ------- Bootstrap (cargar al abrir por primera vez) -------
+  let __BOOT_DONE = false;
+  async function loadBootstrapOnce(){
+    if (__BOOT_DONE) return;
+    __BOOT_DONE = true;
     try{
       const res = await fetch(BOOTSTRAP);
       if(!res.ok) return;
@@ -166,7 +170,7 @@ function __ziaInit(){
     }catch(e){
       console.warn("bootstrap skipped:", e?.message || e);
     }
-  })();
+  }
 
   // ------- Streaming -------
   let currentController=null, currentBotBubble=null, lastShownWhatsApp="";
