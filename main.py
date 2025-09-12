@@ -16,6 +16,9 @@ from twilio.twiml.messaging_response import MessagingResponse
 from twilio.request_validator import RequestValidator
 import httpx
 import stripe
+from io import BytesIO
+import qrcode
+from fastapi.responses import StreamingResponse
 
 # ── Setup ──────────────────────────────────────────────────────────────
 load_dotenv()
@@ -162,6 +165,16 @@ class CheckoutItemIn(BaseModel):
     product_id: Optional[str] = None
     quantity: int = 1
     mode: Optional[str] = None  # "payment" | "subscription" | None (auto)
+
+#Modelo de chekout para whatsapp
+
+class SendWaCheckoutIn(BaseModel):
+    to: str                         # E.164 o con lada; ej. 52155...
+    price_id: Optional[str] = None
+    product_id: Optional[str] = None
+    plan: Optional[str] = None      # "starter" | "meta"
+    quantity: int = 1
+    mode: Optional[str] = None     
 
 
 # ── DB helpers ─────────────────────────────────────────────────────────
@@ -443,6 +456,15 @@ class MetaTestReplyIn(BaseModel):
     commentId: str
     text: Optional[str] = None
     mode: Optional[str] = "both"  # 'public'|'private'|'both'
+
+
+#modelos para qr
+class CheckoutQrIn(BaseModel):
+    price_id: Optional[str] = None
+    product_id: Optional[str] = None
+    plan: Optional[str] = None
+    quantity: int = 1
+    mode: Optional[str] = None
 
 def _mask(value: Optional[str], show: int = 4) -> Optional[str]:
     if not value:
@@ -1684,3 +1706,84 @@ async def get_catalog(tenant: str = Query(...)):
         it["can_checkout"] = bool((it.get("price_id") or it.get("product_id")))
     return {"count": len(items), "items": items[:200]}
 
+#checkout para whatsapp 
+
+@app.post("/v1/stripe/checkout/send-wa")
+async def stripe_checkout_send_whatsapp(body: SendWaCheckoutIn, tenant: str = Query(...)):
+    if tenant and not valid_slug(tenant):
+        raise HTTPException(400, "Invalid tenant")
+    t = await fetch_tenant(tenant)
+    if not t:
+        raise HTTPException(404, "Tenant no encontrado")
+
+    # 1) Crear checkout
+    session = None
+    if body.plan:
+        # Reusa tu endpoint/función by-plan si quieres; aquí lo hacemos directo:
+        prices = _tenant_stripe_prices(t)
+        if body.plan not in prices:
+            _ = await ensure_prices_for_tenant(t)
+            prices = _tenant_stripe_prices(t)
+        price_id = prices[body.plan]
+        session = await _create_checkout_for_any(t, price_id=price_id, qty=body.quantity, mode="subscription")
+    else:
+        session = await _create_checkout_for_any(
+            t,
+            price_id=(body.price_id or None),
+            product_id=(body.product_id or None),
+            qty=body.quantity,
+            mode=body.mode or None
+        )
+
+    url = session["url"]
+    # 2) Enviar por WhatsApp
+    to = body.to
+    if not is_phone(to):
+        raise HTTPException(400, "El campo 'to' debe ser un teléfono válido con lada")
+    to_e164 = norm_phone(to)
+    txt = f"Hola 👋 Aquí tienes tu enlace de pago seguro: {url}\n\nSi necesitas ayuda, responde este WhatsApp."
+    try:
+        await twilio_send_whatsapp(tenant, to_e164, txt)
+    except Exception as e:
+        log.error(f"WA send error: {e}")
+        raise HTTPException(502, "No se pudo enviar el WhatsApp")
+
+    return {"ok": True, "checkout": session, "to": to_e164}
+
+#qr checkout por whatsapp
+@app.post("/v1/stripe/checkout/qr")
+async def stripe_checkout_qr(body: CheckoutQrIn, tenant: str = Query(...)):
+    if tenant and not valid_slug(tenant):
+        raise HTTPException(400, "Invalid tenant")
+    t = await fetch_tenant(tenant)
+    if not t:
+        raise HTTPException(404, "Tenant no encontrado")
+
+    if body.plan:
+        prices = _tenant_stripe_prices(t)
+        if body.plan not in prices:
+            _ = await ensure_prices_for_tenant(t)
+            prices = _tenant_stripe_prices(t)
+        price_id = prices[body.plan]
+        session = await _create_checkout_for_any(t, price_id=price_id, qty=body.quantity, mode="subscription")
+    else:
+        session = await _create_checkout_for_any(
+            t,
+            price_id=(body.price_id or None),
+            product_id=(body.product_id or None),
+            qty=body.quantity,
+            mode=body.mode or None
+        )
+
+    url = session["url"]
+
+    qr = qrcode.QRCode(box_size=8, border=2)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    headers = {"Cache-Control": "no-store"}
+    return StreamingResponse(buf, media_type="image/png", headers=headers)
