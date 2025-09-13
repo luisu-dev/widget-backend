@@ -4,6 +4,7 @@
 function __ziaInit(){
   if (window.__zia_widget_inited) return; // evita doble init si el script se carga dos veces
   window.__zia_widget_inited = true;
+
   // ------- API con tenant (solo frontend) -------
   const RAW_API = window.CHAT_API || "https://widget-backend-zia.onrender.com/v1/chat/stream";
   const TENANT  = window.TENANT   || "demo";
@@ -14,6 +15,7 @@ function __ziaInit(){
   // ------- DOM -------
   const thread   = document.getElementById("msgs");
   const chipsBox = document.getElementById("chips");
+  const ctaBox   = document.getElementById("zia-cta");
   const msg      = document.getElementById("msg");
   const sid      = document.getElementById("sid");
   const sendBtn  = document.getElementById("send");
@@ -72,6 +74,43 @@ function __ziaInit(){
     return el;
   };
 
+  // CTA renderer (botón de pago, chips y link a WhatsApp)
+  function renderZiaCTA(payload = {}){
+    if (!ctaBox) return;
+    ctaBox.innerHTML = "";
+
+    if (payload.checkout_url){
+      const btn = document.createElement("button");
+      btn.textContent = payload.label || "Pagar ahora";
+      btn.className = "zia-cta-btn";
+      btn.onclick = () => { window.location.href = payload.checkout_url; };
+      ctaBox.appendChild(btn);
+    }
+
+    if (Array.isArray(payload.chips) && payload.chips.length){
+      const wrap = document.createElement("div");
+      for(const label of payload.chips){
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "zia-chip";
+        b.textContent = label;
+        b.onclick = () => { if (msg){ msg.value = label; sendBtn?.click(); } };
+        wrap.appendChild(b);
+      }
+      ctaBox.appendChild(wrap);
+    }
+
+    if (payload.whatsapp){
+      const a = document.createElement("a");
+      a.href = payload.whatsapp;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.textContent = "Hablar por WhatsApp";
+      a.className = "zia-wa-link";
+      ctaBox.appendChild(a);
+    }
+  }
+
   // ------- saludo -------
   let BRAND_NAME = window.TENANT_NAME || null;
   function greetOnce(){
@@ -90,7 +129,7 @@ function __ziaInit(){
 
   const openPanel = ()=>{
     panel?.classList.add("open");
-    setUnread(0); // reset no leídos
+    setUnread(0);
     if (thread && thread.childElementCount === 0) greetOnce();
     loadBootstrapOnce();
   };
@@ -259,20 +298,27 @@ function __ziaInit(){
             try{
               const ui = JSON.parse(data);
 
+              // botón fijo en la zona CTA (y chips / WhatsApp si aplica)
+              renderZiaCTA(ui);
+
+              // además deja un enlace en el hilo (buena trazabilidad en la conversación)
               const shouldBubble = (ui?.showWhatsAppBubble ?? !!ui?.whatsapp);
               if (shouldBubble && ui?.whatsapp && ui.whatsapp !== lastShownWhatsApp) {
                 makeBubble("bot", `Puedes escribirnos por WhatsApp aquí: <a href="${ui.whatsapp}" target="_blank" rel="noopener">Abrir WhatsApp</a>`);
                 lastShownWhatsApp = ui.whatsapp;
               }
-
               if (ui?.checkout_url) {
                 const label = ui?.label || 'Pagar ahora';
                 makeBubble("bot", `Listo, puedes completar tu compra aquí: <a href="${ui.checkout_url}" target="_blank" rel="noopener">${label}</a>`);
               }
 
+              // chips del cuerpo (filtremos redundancias con WhatsApp si hay burbuja)
               const chips = (ui?.chips || []).filter(c => !(shouldBubble && /whats\s*app|whatsapp|wasap/i.test(c)));
               renderChips(chips);
-            }catch{}
+
+            }catch(e){
+              console.error("UI payload inválido:", e);
+            }
           }else if(evType==="done"){
             currentBotBubble=null;
           }else if(evType==="error"){
@@ -344,7 +390,7 @@ if (document.readyState === "loading") {
     ctx.setTransform(dpr,0,0,dpr,0,0);
   }
   resize(); addEventListener('resize', resize);
-  // Dinamiza la carga de la animación según modo/perfil
+
   const MIN_R   = 0.08;
   const DOT_MIN = 0.9, DOT_MAX = 1.9;
   const BLUR_MIN= 1.5, BLUR_MAX= 3.0;
@@ -375,9 +421,7 @@ if (document.readyState === "loading") {
 
   let lastTs = 0;
   function draw(ts){
-    // Pausar si no visible o pestaña oculta
     if (!ENABLED || document.hidden) { requestAnimationFrame(draw); return; }
-    // Limitar FPS (reduce CPU). Idle/unread: ~30fps, thinking: ~45fps, reduced: 20fps
     const targetFps = prefersReduce ? 20 : (MODE==='thinking' ? 45 : 30);
     const minDelta = 1000/targetFps;
     if (ts && (ts - lastTs) < minDelta) { requestAnimationFrame(draw); return; }
@@ -403,7 +447,6 @@ if (document.readyState === "loading") {
 
     // puntos
     ctx.globalCompositeOperation = 'screen';
-    // pulso más marcado si hay unread
     t += (MODE==='thinking' ? 0.012 : MODE==='unread' ? 0.010 : 0.008);
 
     const [C1, C2] = palette();
@@ -417,17 +460,15 @@ if (document.readyState === "loading") {
 
       const size = DOT_MIN + (DOT_MAX - DOT_MIN) * (0.35 + 0.65*n);
       const blur = BLUR_MIN + (BLUR_MAX - BLUR_MIN) * (0.2 + 0.8*n);
-      const fall = 0.35 + 0.65 * ru;     // menos brillo al centro
+      const fall = 0.35 + 0.65 * ru;
       const alpha= 0.18 * fall;
 
-      // glow suave
       ctx.globalAlpha = alpha;
       ctx.fillStyle   = col;
       ctx.shadowColor = col;
       ctx.shadowBlur  = blur;
       ctx.beginPath(); ctx.arc(x, y, size, 0, Math.PI*2); ctx.fill();
 
-      // núcleo nítido
       ctx.shadowBlur  = 0;
       ctx.globalAlpha = Math.min(0.35, alpha + 0.08);
       ctx.beginPath(); ctx.arc(x, y, Math.max(0.7, size*0.6), 0, Math.PI*2); ctx.fill();
@@ -439,10 +480,9 @@ if (document.readyState === "loading") {
   }
   requestAnimationFrame(draw);
 
-  // Pausar animación si el launcher está fuera de viewport o panel cerrado y no hay unread
   const launcher = document.getElementById('cw-launcher');
   function recomputeEnabled(){
-    if (prefersReduce) { ENABLED = false; return; }
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { return; }
     if (!launcher) { ENABLED = true; return; }
     const r = launcher.getBoundingClientRect();
     const inView = r.bottom >= 0 && r.right >= 0 && r.top <= (window.innerHeight||document.documentElement.clientHeight) && r.left <= (window.innerWidth||document.documentElement.clientWidth);

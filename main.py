@@ -1144,6 +1144,35 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
             purchase_intent = any(k in text_lc for k in [
                 "compr", "compra", "adquir", "pagar", "pago", "orden", "checkout", "suscrib"
             ])
+            # Disparo directo de suscripción por plan, sin catálogo
+            if purchase_intent and ("starter" in text_lc or "meta" in text_lc):
+                plan = "starter" if "starter" in text_lc else "meta"
+                try:
+                    prices = _tenant_stripe_prices(t)
+                    if plan not in prices:
+                        prices = await ensure_prices_for_tenant(t)
+                    price_id = prices[plan]
+
+                    session = await _create_checkout_for_any(
+                        t, price_id=price_id, qty=1, mode="subscription"
+                    )
+                    yield sse_event(json.dumps({
+                        "content": f"Perfecto. Te dejo el enlace para suscribirte al plan {plan.title()}."
+                    }), event="delta")
+                    yield sse_event(json.dumps({
+                        "checkout_url": session["url"],
+                        "label": "Pagar suscripción"
+                    }), event="ui")
+                    yield sse_event(json.dumps({}), event="done")
+                    asyncio.create_task(store_event(
+                        tenant or "public", sid, "checkout_link_out",
+                        {"plan": plan, "url": session["url"]}
+                    ))
+                    return
+                except Exception as e:
+                    log.warning(f"checkout por plan falló: {e}")
+                    # si falla, deja que continúe al flujo normal (catálogo/chips)
+
             if purchase_intent and catalog_items:
                 item = _match_catalog_item(text_lc, catalog_items)
                 if item:

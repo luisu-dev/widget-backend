@@ -200,3 +200,6 @@ html,body{ margin:0; width:100%; max-width:100%; background:var(--cw-bg); color:
 @media (prefers-color-scheme: light){
   :where([data-zia]) #cw-orb{ opacity: .7; }
 }
+.zia-cta-btn { padding: .6rem 1rem; border-radius: .5rem; border: none; cursor: pointer; }
+.zia-chip { margin:.25rem; padding:.4rem .7rem; border-radius:9999px; border:1px solid #ddd; background:#fff; cursor:pointer; }
+.zia-wa-link { display:inline-block; margin-left:.5rem; }
