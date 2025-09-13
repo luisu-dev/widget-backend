@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <title>Widget Chat – Demo</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="public/widget/styles.css" />
 </head>
 <body>
 
@@ -50,12 +50,13 @@
   </section>
 
   <script>
-    window.CHAT_API    = "https://widget-backend-zia.onrender.com/v1/chat/stream";
+    // Apunta al backend local durante desarrollo
+    window.CHAT_API    = "http://localhost:8000/v1/chat/stream";
     window.TENANT      = "zia";     /* o el slug del cliente */
     window.TENANT_NAME = "zIA";
   </script>
 
 
-  <script type="module" src="app.js"></script>
+  <script src="public/widget/app.js"></script>
 </body>
 </html>

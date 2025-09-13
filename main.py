@@ -303,7 +303,7 @@ async def _create_checkout_for_any(
         raise HTTPException(400, "mode inválido (usa 'payment' o 'subscription')")
 
     try:
-        session = stripe.checkout.Session.create(
+        kwargs = dict(
             mode=mode,
             line_items=[{"price": price_id, "quantity": max(1, int(qty))}],
             success_url=f"{SITE_URL}/pago-exitoso?sid={{CHECKOUT_SESSION_ID}}",
@@ -314,9 +314,13 @@ async def _create_checkout_for_any(
                 "price_id": price_id,
                 "product_id": product_id or None,
             },
-            customer_creation="always",
             stripe_account=acct,
         )
+        if mode == "payment":
+            kwargs["customer_creation"] = "always"
+
+        session = stripe.checkout.Session.create(**kwargs)
+
     except Exception as e:
         log.error(f"Stripe checkout.Session.create error: {e}")
         raise HTTPException(502, "No se pudo crear la sesión de pago")
@@ -331,49 +335,74 @@ db_engine: Optional[AsyncEngine] = None
 @app.on_event("startup")
 async def on_startup():
     global db_engine
+
+    # DB: si no hay URL, seguimos sin persistencia
     if not ASYNC_DB_URL:
         log.warning("DATABASE_URL no seteado: corriendo sin persistencia")
-        return
-    db_engine = create_async_engine(ASYNC_DB_URL, echo=False, pool_pre_ping=True)
-    async with db_engine.begin() as conn:
-        await conn.execute(text("SELECT 1"))
-        await conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS tenants (
-                id SERIAL PRIMARY KEY,
-                slug TEXT UNIQUE NOT NULL,
-                name TEXT NOT NULL,
-                whatsapp TEXT,
-                settings JSONB DEFAULT '{}'::jsonb,
-                created_at TIMESTAMPTZ DEFAULT NOW(),
-                updated_at TIMESTAMPTZ DEFAULT NOW()
-            );
-        """))
-        await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS idx_tenants_slug ON tenants(slug)"))
-        await conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS leads (
-                id SERIAL PRIMARY KEY,
-                tenant_slug TEXT NOT NULL,
-                session_id TEXT NOT NULL,
-                name TEXT,
-                method TEXT CHECK (method IN ('whatsapp','email','llamada')),
-                contact TEXT,
-                meta JSONB DEFAULT '{}'::jsonb,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            );
-        """))
-        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_leads_tenant ON leads(tenant_slug)"))
-        await conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS events (
-                id SERIAL PRIMARY KEY,
-                tenant_slug TEXT NOT NULL,
-                session_id TEXT NOT NULL,
-                type TEXT NOT NULL,
-                payload JSONB DEFAULT '{}'::jsonb,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            );
-        """))
-        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_events_tenant ON events(tenant_slug, type, created_at DESC)"))
-    log.info("Postgres listo ✅")
+        db_engine = None
+    else:
+        db_engine = create_async_engine(
+            ASYNC_DB_URL,
+            echo=False,
+            pool_pre_ping=True,
+        )
+
+        try:
+            async with db_engine.begin() as conn:
+                # Evita que Render se “cuelgue” si la DB tarda
+                await asyncio.wait_for(conn.execute(text("SELECT 1")), timeout=5.0)
+
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS tenants (
+                        id SERIAL PRIMARY KEY,
+                        slug TEXT UNIQUE NOT NULL,
+                        name TEXT NOT NULL,
+                        whatsapp TEXT,
+                        settings JSONB DEFAULT '{}'::jsonb,
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """))
+                await conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_tenants_slug ON tenants(slug)"
+                ))
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS leads (
+                        id SERIAL PRIMARY KEY,
+                        tenant_slug TEXT NOT NULL,
+                        session_id TEXT NOT NULL,
+                        name TEXT,
+                        method TEXT CHECK (method IN ('whatsapp','email','llamada')),
+                        contact TEXT,
+                        meta JSONB DEFAULT '{}'::jsonb,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """))
+                await conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_leads_tenant ON leads(tenant_slug)"
+                ))
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS events (
+                        id SERIAL PRIMARY KEY,
+                        tenant_slug TEXT NOT NULL,
+                        session_id TEXT NOT NULL,
+                        type TEXT NOT NULL,
+                        payload JSONB DEFAULT '{}'::jsonb,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """))
+                await conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_events_tenant ON events(tenant_slug, type, created_at DESC)"
+                ))
+
+            log.info("Postgres listo ✅")
+
+        except Exception as e:
+            # No bloquees el arranque si la DB falla/tarda
+            log.error(f"DB startup check failed, continuo sin persistencia: {e}")
+            db_engine = None
+
+    # Twilio: inicializa si hay credenciales
     app.state.twilio = None
     if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
         try:
@@ -381,6 +410,7 @@ async def on_startup():
             log.info("Twilio listo ✅")
         except Exception as e:
             log.warning(f"Twilio no inicializado: {e}")
+
 
 async def store_event(tenant_slug: str, sid: str, etype: str, payload: dict | None = None):
     if not db_engine:
@@ -744,15 +774,20 @@ async def _create_checkout_for_item(t: dict | None, item: dict, qty: int = 1, mo
     if not price_id:
         raise HTTPException(400, "No hay price_id para el producto")
     try:
-        session = stripe.checkout.Session.create(
+        kkwargs = dict(
             mode=mode,
             line_items=[{"price": price_id, "quantity": max(1, int(qty))}],
             success_url=f"{SITE_URL}/pago-exitoso?sid={{CHECKOUT_SESSION_ID}}",
             cancel_url=f"{SITE_URL}/pago-cancelado",
             metadata={"tenant": (t or {}).get("slug", "public"), "product_id": product_id or None},
-            customer_creation="always",
             stripe_account=acct,
         )
+        if mode == "payment":
+            kwargs["customer_creation"] = "always"
+
+        session = stripe.checkout.Session.create(**kwargs)
+
+
     except Exception as e:
         log.error(f"Stripe checkout.Session.create error: {e}")
         raise HTTPException(502, "No se pudo crear la sesión de pago")
@@ -1635,7 +1670,12 @@ async def stripe_checkout_by_plan(body: dict, tenant: str = Query(...)):
         success_url=f"{SITE_URL}/pago-exitoso?sid={{CHECKOUT_SESSION_ID}}",
         cancel_url=f"{SITE_URL}/pago-cancelado",
         metadata={"tenant": tenant, "plan": plan},
-        customer_creation="always",
+        session = stripe.checkout.Session.create(
+        mode="subscription",
+        line_items=[{"price": price_id, "quantity": qty}],
+        success_url=f"{SITE_URL}/pago-exitoso?sid={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"{SITE_URL}/pago-cancelado",
+        metadata={"tenant": tenant, "plan": plan},
         stripe_account=acct,
     )
     return {"id": session.id, "url": session.url}
