@@ -1654,8 +1654,8 @@ async def stripe_checkout_by_plan(body: dict, tenant: str = Query(...)):
         raise HTTPException(400, "Tenant no tiene Stripe conectado (stripe_acct)")
 
     plan = (body.get("plan") or "").strip().lower()  # "starter" | "meta"
-    qty = int(body.get("quantity", 1))
-    if plan not in {"starter", "meta"} or qty <= 0:
+    qty = max(1, int(body.get("quantity", 1)))
+    if plan not in {"starter", "meta"}:
         raise HTTPException(400, "Parámetros inválidos")
 
     prices = _tenant_stripe_prices(t)
@@ -1670,15 +1670,10 @@ async def stripe_checkout_by_plan(body: dict, tenant: str = Query(...)):
         success_url=f"{SITE_URL}/pago-exitoso?sid={{CHECKOUT_SESSION_ID}}",
         cancel_url=f"{SITE_URL}/pago-cancelado",
         metadata={"tenant": tenant, "plan": plan},
-        session = stripe.checkout.Session.create(
-        mode="subscription",
-        line_items=[{"price": price_id, "quantity": qty}],
-        success_url=f"{SITE_URL}/pago-exitoso?sid={{CHECKOUT_SESSION_ID}}",
-        cancel_url=f"{SITE_URL}/pago-cancelado",
-        metadata={"tenant": tenant, "plan": plan},
         stripe_account=acct,
     )
     return {"id": session.id, "url": session.url}
+
 
 @app.post("/v1/stripe/webhook")
 async def stripe_webhook(request: Request):
