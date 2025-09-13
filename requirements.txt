@@ -11,3 +11,4 @@ starlette==0.38.*
 markupsafe==2.1.5
 stripe==6.*
 qrcode[pil]==7.*
+python-multipart==0.0.9
