@@ -77,6 +77,10 @@ ZIA_SYSTEM_PROMPT = (
     "Aunque el usuario comparta su nombre o WhatsApp, pide que INICIE el contacto: usa el botón/enlace de WhatsApp de abajo "
     "o propón agendar pidiendo 2–3 horarios. "
     "Solo ofrece checklist si el cliente lo menciona explícitamente."
+    "Si el usuario expresa intención de comprar/pagar/suscribirse, NO pidas datos ni empujes a agendar: ofrece enlace de pago directo (Stripe Checkout) y confirma. "
+    "Solo activa el flujo de contacto cuando el usuario pida cotizar, precios detallados, seguimiento o cita."
+)
+
 )
 
 # ── CORS ───────────────────────────────────────────────────────────────
@@ -1117,6 +1121,8 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
             yield sse_event("ok", event="ping")
 
             text_lc = (input.message or "").lower()
+
+            # Atajo: checklist explícito
             if "checklist" in text_lc or text_lc.strip() in {"ver checklist"}:
                 checklist = (
                     "Checklist para cotización:\n"
@@ -1132,19 +1138,12 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 yield sse_event(json.dumps({}), event="done")
                 return
 
-            flow = get_flow(sid)
-
-            if flow["stage"] is None and wants_quote(input.message):
-                flow.update({"stage": "ask_name"})
-                yield sse_event(json.dumps({"content": "Genial, te ayudo con la cotización. ¿Cuál es tu nombre completo?"}), event="delta")
-                yield sse_event(json.dumps({}), event="done")
-                return
-
-            # Intento rápido: si el usuario quiere comprar y el catálogo tiene match, crear link de pago
+            # ——— PRIORIDAD: intención de compra/suscripción ———
             purchase_intent = any(k in text_lc for k in [
                 "compr", "compra", "adquir", "pagar", "pago", "orden", "checkout", "suscrib"
             ])
-            # Disparo directo de suscripción por plan, sin catálogo
+
+            # 1) Disparo directo por plan (starter/meta) → suscripción
             if purchase_intent and ("starter" in text_lc or "meta" in text_lc):
                 plan = "starter" if "starter" in text_lc else "meta"
                 try:
@@ -1171,8 +1170,9 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                     return
                 except Exception as e:
                     log.warning(f"checkout por plan falló: {e}")
-                    # si falla, deja que continúe al flujo normal (catálogo/chips)
+                    # si falla, continuamos al intento por catálogo
 
+            # 2) Compra por catálogo (pago único)
             if purchase_intent and catalog_items:
                 item = _match_catalog_item(text_lc, catalog_items)
                 if item:
@@ -1187,7 +1187,7 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                     except Exception as e:
                         log.warning(f"no se pudo crear checkout por intent: {e}")
                 else:
-                    # Sin match específico: ofrecer selección rápida (top 3) o compra directa si solo hay 1
+                    # Sin match específico: si solo hay 1, compra directa; si no, ofrecer top 3
                     safe_items = [x for x in catalog_items if (x.get("price_id") or x.get("product_id"))]
                     if len(safe_items) == 1:
                         try:
@@ -1207,6 +1207,15 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                         yield sse_event(json.dumps({"chips": names}), event="ui")
                         yield sse_event(json.dumps({}), event="done")
                         return
+
+            # ——— SOLO si no hubo compra, corren los flows de contacto/cotización ———
+            flow = get_flow(sid)
+
+            if flow["stage"] is None and wants_quote(input.message):
+                flow.update({"stage": "ask_name"})
+                yield sse_event(json.dumps({"content": "Genial, te ayudo con la cotización. ¿Cuál es tu nombre completo?"}), event="delta")
+                yield sse_event(json.dumps({}), event="done")
+                return
 
             if flow["stage"] == "ask_name":
                 name = (input.message or "").strip()
@@ -1322,6 +1331,7 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 SESSIONS[sid].pop("last_lead_id", None)
                 return
 
+            # ——— Respuesta del LLM si no hubo ninguna de las rutas anteriores ———
             if USE_MOCK:
                 full = f"(mock) Recibí: {input.message}"
                 for ch in full:
@@ -1604,6 +1614,29 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
     body_txt = str(form.get("Body", "")).strip()
     if not from_raw or not body_txt:
         return Response("<Response></Response>", media_type="application/xml")
+    
+    text_lc = body_txt.lower()
+    t = await fetch_tenant(tenant)
+
+    # Fast-path: "quiero suscribirme al plan starter/meta"
+    if any(k in text_lc for k in ["compr", "compra", "pagar", "pago", "checkout", "suscrib"]) and ("starter" in text_lc or "meta" in text_lc):
+        plan = "starter" if "starter" in text_lc else "meta"
+        try:
+            prices = _tenant_stripe_prices(t)
+            if plan not in prices:
+                prices = await ensure_prices_for_tenant(t)
+            price_id = prices[plan]
+            session = await _create_checkout_for_any(t, price_id=price_id, qty=1, mode="subscription")
+            answer = f"Listo ✅ Aquí tienes tu enlace de suscripción al plan {plan.title()}: {session['url']}"
+            add_message(sid, "assistant", answer)
+            asyncio.create_task(store_event(tenant or "public", sid, "wa_out", {"to": from_raw, "text": answer[:2000]}))
+            twiml = MessagingResponse()
+            twiml.message(answer)
+            return Response(str(twiml), media_type="application/xml")
+        except Exception as e:
+            log.warning(f"WA fast-path checkout falló: {e}")
+            # si falla, sigue al comportamiento normal con LLM
+
 
     phone = norm_phone(from_raw)
     sid_session = f"wa:{phone}"
