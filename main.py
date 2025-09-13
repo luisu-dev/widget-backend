@@ -81,7 +81,6 @@ ZIA_SYSTEM_PROMPT = (
     "Solo activa el flujo de contacto cuando el usuario pida cotizar, precios detallados, seguimiento o cita."
 )
 
-)
 
 # ── CORS ───────────────────────────────────────────────────────────────
 app.add_middleware(
