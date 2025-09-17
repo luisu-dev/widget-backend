@@ -109,18 +109,12 @@ function __ziaInit(){
 
   // ------- saludo -------
   let BRAND_NAME = window.TENANT_NAME || null;
+  let greetedOnce = false;
   function greetOnce(){
-    // Saludo por navegación (se reinicia al recargar la página)
-    const flagKey = `welcomed:${TENANT}`;
-    try{
-      if (sessionStorage.getItem(flagKey)) return;
-      const brand = BRAND_NAME || window.TENANT_NAME || "zIA";
-      makeBubble("bot", `Hola — soy ${brand}, tu asistente con IA. Puedo resolver dudas, cotizar y coordinar por WhatsApp. ¿Qué necesitas hoy?`);
-      sessionStorage.setItem(flagKey,"1");
-    }catch(e){
-      const brand = BRAND_NAME || window.TENANT_NAME || "zIA";
-      makeBubble("bot", `Hola — soy ${brand}, tu asistente con IA. Puedo resolver dudas, cotizar y coordinar por WhatsApp. ¿Qué necesitas hoy?`);
-    }
+    if (greetedOnce) return;
+    const brand = BRAND_NAME || window.TENANT_NAME || "zIA";
+    makeBubble("bot", `Hola — soy ${brand}, tu asistente con IA. Puedo resolver dudas, cotizar y coordinar por WhatsApp. ¿Qué necesitas hoy?`);
+    greetedOnce = true;
   }
 
   const openPanel = ()=>{
@@ -129,9 +123,13 @@ function __ziaInit(){
     // siempre saluda una vez por navegación
     greetOnce();
     loadBootstrapOnce();
+    try{ window.__ziaDismissTip?.(); }catch(_){ }
   };
 
-  launcher?.addEventListener("click", openPanel);
+  launcher?.addEventListener("click", ()=>{
+    openPanel();
+    try{ window.__ziaDismissTip?.(); }catch(_){ }
+  });
   closeBtn?.addEventListener("click", ()=>panel?.classList.remove("open"));
   minBtn?.addEventListener("click", ()=>panel?.classList.toggle("open"));
 

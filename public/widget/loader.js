@@ -95,16 +95,22 @@
               var r = btn.getBoundingClientRect();
               tip.style.position = 'fixed';
               tip.style.zIndex = '2147483600';
-              tip.style.right = Math.max(0, (window.innerWidth - r.right)) + 'px';
-              tip.style.bottom = Math.max(0, (window.innerHeight - r.top) + 10) + 'px';
+              tip.style.right = Math.max(0, (window.innerWidth - r.right) + 12) + 'px';
+              tip.style.bottom = Math.max(0, (window.innerHeight - r.top) + 8) + 'px';
+              tip.style.transform = 'translateY(-100%)';
             };
             place();
             window.addEventListener('resize', place);
             window.addEventListener('scroll', place, {passive:true});
-            tip.addEventListener('click', function(){
+            var dismiss = function(){
               try{ sessionStorage.setItem('zia_tip_dismissed','1'); }catch(_){ }
-              tip.remove();
-            });
+              try{ window.removeEventListener('resize', place); window.removeEventListener('scroll', place); }catch(_){ }
+              if(tip && tip.parentNode) tip.parentNode.removeChild(tip);
+              window.__ziaDismissTip = null;
+            };
+            tip.addEventListener('click', dismiss);
+            window.__ziaDismissTip = dismiss;
+            setTimeout(function(){ if (typeof window.__ziaDismissTip === 'function') window.__ziaDismissTip(); }, 12000);
           }
         }catch(_){ }
 
