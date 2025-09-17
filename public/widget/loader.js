@@ -8,7 +8,8 @@
     var NAME     = ds.name   || window.TENANT_NAME || 'Asistente';
     var API      = ds.api    || window.CHAT_API || 'https://widget-backend-zia.onrender.com/v1/chat/stream';
     var ASSETS   = ds.assets || (function(){ try{ var u=new URL(s.src, location.href); return u.origin + '/widget'; }catch(_){ return '/widget'; } })();
-    var ORB_MODE = (ds.orb || 'off').toLowerCase(); // default: sin animación
+    // Orb animado: por defecto encendido (lava lamp optimizado)
+    var ORB_MODE = (ds.orb || 'on').toLowerCase();
     var THEME    = (ds.theme || 'flat').toLowerCase(); // default: plano
     var PERF     = (ds.performance || 'default').toLowerCase();
     var DEFER    = (ds.defer || '').toLowerCase(); // 'idle' | 'interaction' | <ms>
@@ -20,7 +21,8 @@
         window.TENANT_NAME = NAME;
         window.CHAT_API = API;
         // Forzar tema plano por defecto
-        try { document.documentElement.setAttribute('data-zia-theme', THEME || 'flat'); }catch(_){ }
+        // Aplica tema al contenedor del widget (no al documento entero)
+        var __ziaTheme = THEME || 'flat';
         window.__ZIA_DISABLE_ORB = (ORB_MODE !== 'on');
 
         // 1) Cargar CSS del widget
@@ -29,7 +31,13 @@
         link.href = ASSETS + '/styles.css';
         document.head.appendChild(link);
 
-        // 2) Inyectar markup mínimo del widget (launcher + panel)
+        // 2) Inyectar contenedor aislado (evita interferir con el sitio)
+        var root = document.createElement('div');
+        root.id = 'zia-root';
+        root.setAttribute('data-zia','');
+        try { root.setAttribute('data-zia-theme', __ziaTheme); }catch(_){ }
+
+        // 3) Markup del widget (launcher + panel)
         var wrapper = document.createElement('div');
         wrapper.innerHTML = (
           '<button id="cw-launcher" class="cw-launcher" aria-label="Abrir chat">'
@@ -66,9 +74,10 @@
           + '  </div>'
           + '</section>'
         );
-        while (wrapper.firstChild) document.body.appendChild(wrapper.firstChild);
+        while (wrapper.firstChild) root.appendChild(wrapper.firstChild);
+        document.body.appendChild(root);
 
-        // 3) Cargar lógica del widget
+        // 4) Cargar lógica del widget
         var js = document.createElement('script');
         js.src = ASSETS + '/app.js';
         js.defer = true;

@@ -352,83 +352,74 @@ if (document.readyState === "loading") {
 }
 
 /* -------------------------------------------------------------
-   Nube de puntos nítida + modos visuales del launcher (orb)
-------------------------------------------------------------- */
-(function orbDots(){
+   "Lava lamp" orb — colores por estado y bajo uso de GPU
+   idle: morado, thinking: azul, unread: verde
+-------------------------------------------------------------- */
+(function orbLava(){
   const cv = document.getElementById('cw-orb');
   if(!cv) return;
   if (window.__ZIA_DISABLE_ORB) { return; }
   const ctx = cv.getContext('2d', { alpha: true });
-  const DPR_MAX = 1.5; // limitar para evitar trabajo extra en pantallas 2x/3x
+
+  // limitar resolución del canvas para móviles
+  const DPR_MAX = 1.4;
   let dpr = Math.min(window.devicePixelRatio || 1, DPR_MAX);
-  let t = 0;
-  let MODE = 'idle';                   // 'idle' | 'thinking' | 'unread'
+  let MODE = 'idle'; // 'idle' | 'thinking' | 'unread'
   let ENABLED = true;
   const prefersReduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
   window.__orbSetMode = (m)=>{ MODE = m || 'idle'; };
-
-  const rn=i=>{const x=Math.sin(i)*43758.5453; return x-Math.floor(x);};
-  const hash=(x,y)=>rn(x*157.31+y*789.23);
-  function noise(x,y){
-    const xi=Math.floor(x), yi=Math.floor(y);
-    const xf=x-xi, yf=y-yi;
-    const tl=hash(xi,yi), tr=hash(xi+1,yi), bl=hash(xi,yi+1), br=hash(xi+1,yi+1);
-    const u=xf*xf*(3-2*xf), v=yf*yf*(3-2*yf);
-    return (tl+(tr-tl)*u) + ( (bl+(br-bl)*u) - (tl+(tr-tl)*u) )*v;
-  }
-  const lerp=(a,b,u)=>a+(b-a)*u;
-  const mixRGB=(a,b,u)=>`rgb(${Math.round(lerp(a[0],b[0],u))},${Math.round(lerp(a[1],b[1],u))},${Math.round(lerp(a[2],b[2],u))})`;
-
-  const BLUE1=[90,190,255], BLUE2=[200,95,255];
-  const MINT1=[110,231,183], MINT2=[120,250,210];
 
   function resize(){
     const r = cv.getBoundingClientRect();
     dpr = Math.min(window.devicePixelRatio || 1, DPR_MAX);
-    cv.width  = Math.max(1, Math.round(r.width * dpr));
-    cv.height = Math.max(1, Math.round(r.height* dpr));
+    cv.width  = Math.max(1, Math.round(r.width  * dpr));
+    cv.height = Math.max(1, Math.round(r.height * dpr));
     ctx.setTransform(dpr,0,0,dpr,0,0);
   }
   resize(); addEventListener('resize', resize);
 
-  const MIN_R   = 0.08;
-  const DOT_MIN = 0.9, DOT_MAX = 1.9;
-  const BLUR_MIN= 1.5, BLUR_MAX= 3.0;
+  // blobs grandes con gradientes radiales — pocos por frame
+  const BLOB_COUNT = 5;
+  const blobs = Array.from({length:BLOB_COUNT}, (_,i)=>({
+    baseR: 0.36 + (i%3)*0.05,     // radio relativo al contenedor
+    angle: (i/BLOB_COUNT)*Math.PI*2,
+    speed: 0.15 + (i%2)*0.06,
+    dist:  0.18 + (i%4)*0.04,
+  }));
 
-  function samplesForMode(){
-    if (prefersReduce) return 220;
-    if (MODE === 'thinking') return 700;
-    if (MODE === 'unread') return 500;
-    return 350; // idle
-  }
+  // Paletas (RGB)
+  const PURPLE_A=[168,85,247], PURPLE_B=[147,51,234];  // idle
+  const BLUE_A  =[59,130,246], BLUE_B  =[56,189,248];  // typing
+  const GREEN_A =[16,185,129], GREEN_B =[34,197,94];   // unread
 
-  const golden = Math.PI * (3 - Math.sqrt(5));
-  function sample(i, N, R){
-    const u = (i+0.5)/N;
-    const r = Math.sqrt(lerp(MIN_R*MIN_R, 1, u)) * R;
-    const drift = MODE==='thinking' ? 0.7 : 0.5;
-    const a = i * golden + t*drift;
-    const wob = (noise(Math.cos(a)*1.4 + t*0.6, Math.sin(a)*1.4 - t*0.5)-0.5) * R*0.10;
-    const rr  = Math.max(0, r + wob);
-    return [ rr*Math.cos(a), rr*Math.sin(a), rr/R ];
-  }
+  const lerp=(a,b,u)=>a+(b-a)*u;
+  const mix=(c1,c2,u)=>[
+    Math.round(lerp(c1[0],c2[0],u)),
+    Math.round(lerp(c1[1],c2[1],u)),
+    Math.round(lerp(c1[2],c2[2],u))
+  ];
+  const rgba=(c,a)=>`rgba(${c[0]},${c[1]},${c[2]},${a})`;
 
   function palette(){
-    if (MODE === 'unread') return [MINT1, MINT2];
-    if (MODE === 'thinking') return [BLUE1, [180,80,255]];
-    return [BLUE1, BLUE2];
+    if (MODE==='unread') return [GREEN_A, GREEN_B];
+    if (MODE==='thinking') return [BLUE_A, BLUE_B];
+    return [PURPLE_A, PURPLE_B];
   }
 
   let lastTs = 0;
   function draw(ts){
     if (!ENABLED || document.hidden) { requestAnimationFrame(draw); return; }
-    const targetFps = prefersReduce ? 20 : (MODE==='thinking' ? 45 : 30);
+    // FPS moderado para no saturar GPU
+    const targetFps = prefersReduce ? 18 : 24;
     const minDelta = 1000/targetFps;
     if (ts && (ts - lastTs) < minDelta) { requestAnimationFrame(draw); return; }
+    const dt = Math.min(100, (ts - lastTs) || minDelta) / 1000;
     lastTs = ts || 0;
+
     const w = cv.clientWidth, h = cv.clientHeight;
     const cx = w/2, cy = h/2;
-    const R  = Math.min(cx, cy) * 0.88;
+    const R  = Math.min(cx, cy) * 0.92;
 
     ctx.clearRect(0,0,cv.width,cv.height);
 
@@ -436,53 +427,50 @@ if (document.readyState === "loading") {
     ctx.save();
     ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2); ctx.clip();
 
-    // base oscura
+    // fondo suave oscuro
     const base = ctx.createRadialGradient(cx,cy,0, cx,cy,R*1.05);
-    base.addColorStop(0,  '#0f131c');
-    base.addColorStop(0.65,'#0b0d13');
-    base.addColorStop(1,  '#090a0f');
+    base.addColorStop(0,  '#0f1116');
+    base.addColorStop(0.65,'#0c0f15');
+    base.addColorStop(1,  '#090b10');
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = base;
     ctx.fillRect(cx-R-2, cy-R-2, (R+2)*2, (R+2)*2);
 
-    // puntos
-    ctx.globalCompositeOperation = 'screen';
-    t += (MODE==='thinking' ? 0.012 : MODE==='unread' ? 0.010 : 0.008);
-
+    // blobs con mezcla 'screen' (barato, sin shadowBlur)
     const [C1, C2] = palette();
-    const SAMPLES = samplesForMode();
-    for(let i=0;i<SAMPLES;i++){
-      const [dx,dy,ru] = sample(i, SAMPLES, R);
-      const x = cx + dx, y = cy + dy;
+    ctx.globalCompositeOperation = 'screen';
+    const speedK = MODE==='thinking' ? 1.2 : MODE==='unread' ? 1.0 : 0.85;
 
-      const n   = noise(i*0.013 + t*0.7, i*0.021 - t*0.5);
-      const col = mixRGB(C1, C2, Math.min(1, Math.max(0, n*0.9 + 0.1)));
+    for(let i=0;i<blobs.length;i++){
+      const b = blobs[i];
+      b.angle += dt * b.speed * speedK * (prefersReduce ? 0.5 : 1);
+      const wobble = 0.06*Math.sin((lastTs/1000)* (0.6 + i*0.13));
+      const r  = R * (b.baseR + wobble);
+      const x  = cx + Math.cos(b.angle) * (R * b.dist);
+      const y  = cy + Math.sin(b.angle*0.9) * (R * (b.dist*0.9));
 
-      const size = DOT_MIN + (DOT_MAX - DOT_MIN) * (0.35 + 0.65*n);
-      const blur = BLUR_MIN + (BLUR_MAX - BLUR_MIN) * (0.2 + 0.8*n);
-      const fall = 0.35 + 0.65 * ru;
-      const alpha= 0.18 * fall;
+      // color varía levemente por blob
+      const mixU = (i % 2 ? 0.35 : 0.65);
+      const col  = mix(C1, C2, mixU);
 
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle   = col;
-      ctx.shadowColor = col;
-      ctx.shadowBlur  = blur;
-      ctx.beginPath(); ctx.arc(x, y, size, 0, Math.PI*2); ctx.fill();
-
-      ctx.shadowBlur  = 0;
-      ctx.globalAlpha = Math.min(0.35, alpha + 0.08);
-      ctx.beginPath(); ctx.arc(x, y, Math.max(0.7, size*0.6), 0, Math.PI*2); ctx.fill();
+      const g = ctx.createRadialGradient(x,y,0, x,y,r);
+      g.addColorStop(0,   rgba(col, MODE==='unread' ? 0.40 : MODE==='thinking' ? 0.38 : 0.36));
+      g.addColorStop(0.55,rgba(col, 0.12));
+      g.addColorStop(1,   rgba(col, 0.00));
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
     }
 
     ctx.restore();
-    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+    ctx.globalCompositeOperation='source-over';
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
 
+  // pausar si el launcher no está en viewport
   const launcher = document.getElementById('cw-launcher');
   function recomputeEnabled(){
-    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { return; }
+    if (prefersReduce) { ENABLED = false; return; }
     if (!launcher) { ENABLED = true; return; }
     const r = launcher.getBoundingClientRect();
     const inView = r.bottom >= 0 && r.right >= 0 && r.top <= (window.innerHeight||document.documentElement.clientHeight) && r.left <= (window.innerWidth||document.documentElement.clientWidth);
@@ -491,5 +479,5 @@ if (document.readyState === "loading") {
   recomputeEnabled();
   addEventListener('scroll', recomputeEnabled, {passive:true});
   addEventListener('resize', recomputeEnabled);
-  document.addEventListener('visibilitychange', recomputeEnabled);
+  document.addEventListener('visibilitychange', ()=>{ ENABLED = !document.hidden; });
 })();
