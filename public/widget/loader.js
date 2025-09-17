@@ -13,6 +13,7 @@
     var THEME    = (ds.theme || 'flat').toLowerCase(); // default: plano
     var PERF     = (ds.performance || 'default').toLowerCase();
     var DEFER    = (ds.defer || '').toLowerCase(); // 'idle' | 'interaction' | <ms>
+    var WA_NUM   = (ds.whatsapp || window.ZIA_WHATSAPP || '').trim();
 
     function boot(){
       try{
@@ -20,6 +21,7 @@
         window.TENANT = TENANT;
         window.TENANT_NAME = NAME;
         window.CHAT_API = API;
+        if (WA_NUM) { window.ZIA_WHATSAPP = WA_NUM; }
         // Forzar tema plano por defecto
         // Aplica tema al contenedor del widget (no al documento entero)
         var __ziaTheme = THEME || 'flat';

@@ -26,6 +26,7 @@ function __ziaInit(){
   const closeBtn = document.getElementById("cw-close");
   const minBtn   = document.getElementById("cw-min");
   const badgeEl  = document.querySelector(".cw-badge");
+  const WA_FALLBACK = (window.ZIA_WHATSAPP || '').replace(/\D+/g,'');
 
   // ------- Unread badge + modos del orb -------
   let unreadCount = 0;
@@ -34,7 +35,9 @@ function __ziaInit(){
     if (!badgeEl) return;
     if (unreadCount > 0){
       badgeEl.hidden = false;
-      badgeEl.textContent = String(unreadCount);
+      // solo un punto verde, sin número visible
+      try{ badgeEl.setAttribute('aria-label', `${unreadCount} mensajes sin leer`); }catch{}
+      badgeEl.textContent = "";
       window.__orbSetMode?.("unread");
     } else {
       badgeEl.hidden = true;
@@ -100,9 +103,10 @@ function __ziaInit(){
       ctaBox.appendChild(wrap);
     }
 
-    if (payload.whatsapp){
+    const waLink = payload.whatsapp || (WA_FALLBACK ? `https://wa.me/${WA_FALLBACK}` : "");
+    if (waLink){
       const a = document.createElement("a");
-      a.href = payload.whatsapp;
+      a.href = waLink;
       a.target = "_blank";
       a.rel = "noopener";
       a.textContent = "Hablar por WhatsApp";
@@ -114,13 +118,13 @@ function __ziaInit(){
   // ------- saludo -------
   let BRAND_NAME = window.TENANT_NAME || null;
   function greetOnce(){
-    const session = sid?.value || "anon";
-    const flagKey = `welcomed:${TENANT}:${session}`;
+    // Saludo por navegación (se reinicia al recargar la página)
+    const flagKey = `welcomed:${TENANT}`;
     try{
-      if (localStorage.getItem(flagKey)) return;
+      if (sessionStorage.getItem(flagKey)) return;
       const brand = BRAND_NAME || window.TENANT_NAME || "zIA";
       makeBubble("bot", `Hola — soy ${brand}, tu asistente con IA. Puedo resolver dudas, cotizar y coordinar por WhatsApp. ¿Qué necesitas hoy?`);
-      localStorage.setItem(flagKey,"1");
+      sessionStorage.setItem(flagKey,"1");
     }catch(e){
       const brand = BRAND_NAME || window.TENANT_NAME || "zIA";
       makeBubble("bot", `Hola — soy ${brand}, tu asistente con IA. Puedo resolver dudas, cotizar y coordinar por WhatsApp. ¿Qué necesitas hoy?`);
@@ -302,10 +306,11 @@ function __ziaInit(){
               renderZiaCTA(ui);
 
               // además deja un enlace en el hilo (buena trazabilidad en la conversación)
-              const shouldBubble = (ui?.showWhatsAppBubble ?? !!ui?.whatsapp);
-              if (shouldBubble && ui?.whatsapp && ui.whatsapp !== lastShownWhatsApp) {
-                makeBubble("bot", `Puedes escribirnos por WhatsApp aquí: <a href="${ui.whatsapp}" target="_blank" rel="noopener">Abrir WhatsApp</a>`);
-                lastShownWhatsApp = ui.whatsapp;
+              const computedWa = ui?.whatsapp || (WA_FALLBACK ? `https://wa.me/${WA_FALLBACK}` : "");
+              const shouldBubble = (ui?.showWhatsAppBubble ?? !!computedWa);
+              if (shouldBubble && computedWa && computedWa !== lastShownWhatsApp) {
+                makeBubble("bot", `Puedes escribirnos por WhatsApp aquí: <a href="${computedWa}" target="_blank" rel="noopener">Abrir WhatsApp</a>`);
+                lastShownWhatsApp = computedWa;
               }
               if (ui?.checkout_url) {
                 const label = ui?.label || 'Pagar ahora';
