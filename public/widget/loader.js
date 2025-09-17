@@ -16,6 +16,13 @@
     var WA_NUM   = (ds.whatsapp || window.ZIA_WHATSAPP || '').trim();
 
     var __booted = false;
+    var VERSION = '';
+    try {
+      var currentUrl = new URL(s.src, location.href);
+      var vSearch = currentUrl.searchParams.get('v');
+      if (vSearch) VERSION = '?v=' + encodeURIComponent(vSearch);
+    } catch(_){ }
+
     function boot(){
       if (__booted) return; __booted = true;
       try{
@@ -32,7 +39,7 @@
         // 1) Cargar CSS del widget
         var link = document.createElement('link');
         link.rel = 'stylesheet';
-        link.href = ASSETS + '/styles.css';
+        link.href = ASSETS + '/styles.css' + VERSION;
         document.head.appendChild(link);
 
         // 2) Inyectar contenedor aislado (evita interferir con el sitio)
@@ -93,6 +100,10 @@
               var btn = document.getElementById('cw-launcher');
               if(!btn) return;
               var r = btn.getBoundingClientRect();
+              if (!r.width || !r.height){
+                requestAnimationFrame(place);
+                return;
+              }
               tip.style.position = 'fixed';
               tip.style.zIndex = '2147483600';
               tip.style.right = Math.max(0, (window.innerWidth - r.right) + 12) + 'px';
@@ -100,6 +111,8 @@
               tip.style.transform = 'translateY(-100%)';
             };
             place();
+            requestAnimationFrame(place);
+            window.addEventListener('load', place, {once:true});
             window.addEventListener('resize', place);
             window.addEventListener('scroll', place, {passive:true});
             var dismiss = function(){
@@ -116,7 +129,7 @@
 
         // 5) Cargar lógica del widget
         var js = document.createElement('script');
-        js.src = ASSETS + '/app.js';
+        js.src = ASSETS + '/app.js' + VERSION;
         js.defer = true;
         document.body.appendChild(js);
       }catch(e){ console.error('[zia-widget] boot error:', e && e.message || e); }

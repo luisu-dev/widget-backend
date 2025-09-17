@@ -432,7 +432,7 @@ if (document.readyState === "loading") {
     ctx.fillStyle = base;
     ctx.fillRect(cx-R-2, cy-R-2, (R+2)*2, (R+2)*2);
 
-    // blobs con mezcla 'screen' (barato, sin shadowBlur)
+    // blobs con mezcla 'screen' (bordes nítidos, sin blur)
     const [C1, C2] = palette();
     ctx.globalCompositeOperation = 'screen';
     const speedK = MODE==='thinking' ? 1.2 : MODE==='unread' ? 1.0 : 0.85;
@@ -449,12 +449,17 @@ if (document.readyState === "loading") {
       const mixU = (i % 2 ? 0.35 : 0.65);
       const col  = mix(C1, C2, mixU);
 
-      const g = ctx.createRadialGradient(x,y,0, x,y,r);
-      g.addColorStop(0,   rgba(col, MODE==='unread' ? 0.40 : MODE==='thinking' ? 0.38 : 0.36));
-      g.addColorStop(0.55,rgba(col, 0.12));
-      g.addColorStop(1,   rgba(col, 0.00));
-      ctx.fillStyle = g;
+      const outerAlpha = MODE==='unread' ? 0.42 : MODE==='thinking' ? 0.38 : 0.35;
+      const innerAlpha = Math.min(0.85, outerAlpha + 0.22);
+
+      ctx.fillStyle = rgba(col, outerAlpha);
       ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+
+      ctx.fillStyle = rgba(col, innerAlpha);
+      ctx.beginPath(); ctx.arc(x,y,r*0.58,0,Math.PI*2); ctx.fill();
+
+      ctx.fillStyle = rgba([255,255,255], Math.min(0.18, innerAlpha*0.55));
+      ctx.beginPath(); ctx.arc(x + r*0.18, y - r*0.15, r*0.22, 0, Math.PI*2); ctx.fill();
     }
 
     ctx.restore();
