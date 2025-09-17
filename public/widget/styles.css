@@ -27,13 +27,7 @@
 :where([data-zia]) #cw-orb{ position:absolute; inset:0; width:100%; height:100%; display:block; }
 :where([data-zia]) .cw-launcher::after{ display:none !important; }
 
-:where([data-zia]) .cw-badge{
-  position:absolute; right:-2px; top:-2px; width:18px; height:18px; z-index:3;
-  border-radius:999px; background:var(--cw-primary); border:2px solid #0a0b0f;
-  box-shadow:0 4px 10px rgba(110,231,183,.45);
-  /* Solo punto (sin número visible) */
-  color: transparent; font-size: 0; line-height: 1;
-}
+:where([data-zia]) .cw-badge{ display:none !important; }
 
 /* --- Panel --- */
 :where([data-zia]) .cw-panel{ position:fixed; right:20px; bottom:92px; z-index:9998; width:360px; max-width:min(420px,calc(100vw - 32px)); height:540px; max-height:calc(100vh - 140px); background:var(--cw-panel); border:1px solid var(--cw-border); border-radius:16px; box-shadow:none; overflow:hidden; opacity:0; pointer-events:none; }

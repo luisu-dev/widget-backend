@@ -32,18 +32,10 @@ function __ziaInit(){
   let unreadCount = 0;
   function setUnread(n){
     unreadCount = Math.max(0, n|0);
-    if (!badgeEl) return;
-    if (unreadCount > 0){
-      badgeEl.hidden = false;
-      // solo un punto verde, sin número visible
-      try{ badgeEl.setAttribute('aria-label', `${unreadCount} mensajes sin leer`); }catch{}
-      badgeEl.textContent = "";
-      window.__orbSetMode?.("unread");
-    } else {
-      badgeEl.hidden = true;
-      badgeEl.textContent = "";
-      window.__orbSetMode?.("idle");
-    }
+    // Badge deshabilitada por diseño
+    if (badgeEl){ badgeEl.hidden = true; badgeEl.textContent = ""; }
+    if (unreadCount > 0) window.__orbSetMode?.("unread");
+    else window.__orbSetMode?.("idle");
   }
 
   // ------- sesión persistente -------
