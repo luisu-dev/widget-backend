@@ -126,7 +126,8 @@ function __ziaInit(){
   const openPanel = ()=>{
     panel?.classList.add("open");
     setUnread(0);
-    if (thread && thread.childElementCount === 0) greetOnce();
+    // siempre saluda una vez por navegación
+    greetOnce();
     loadBootstrapOnce();
   };
 

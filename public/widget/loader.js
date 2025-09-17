@@ -15,7 +15,9 @@
     var DEFER    = (ds.defer || '').toLowerCase(); // 'idle' | 'interaction' | <ms>
     var WA_NUM   = (ds.whatsapp || window.ZIA_WHATSAPP || '').trim();
 
+    var __booted = false;
     function boot(){
+      if (__booted) return; __booted = true;
       try{
         // Exponer configuración global que usa app.js
         window.TENANT = TENANT;
@@ -79,7 +81,34 @@
         while (wrapper.firstChild) root.appendChild(wrapper.firstChild);
         document.body.appendChild(root);
 
-        // 4) Cargar lógica del widget
+        // 4) Señal/tooltip especial para Acidia (solo sesión actual)
+        try {
+          if ((TENANT||'').toLowerCase() === 'acidia' && !sessionStorage.getItem('zia_tip_dismissed')){
+            var tip = document.createElement('div');
+            tip.id = 'cw-tip';
+            tip.textContent = 'Prueba nuestro asistente aquí';
+            tip.setAttribute('role','tooltip');
+            root.appendChild(tip);
+            var place = function(){
+              var btn = document.getElementById('cw-launcher');
+              if(!btn) return;
+              var r = btn.getBoundingClientRect();
+              tip.style.position = 'fixed';
+              tip.style.zIndex = '2147483600';
+              tip.style.right = Math.max(0, (window.innerWidth - r.right)) + 'px';
+              tip.style.bottom = Math.max(0, (window.innerHeight - r.top) + 10) + 'px';
+            };
+            place();
+            window.addEventListener('resize', place);
+            window.addEventListener('scroll', place, {passive:true});
+            tip.addEventListener('click', function(){
+              try{ sessionStorage.setItem('zia_tip_dismissed','1'); }catch(_){ }
+              tip.remove();
+            });
+          }
+        }catch(_){ }
+
+        // 5) Cargar lógica del widget
         var js = document.createElement('script');
         js.src = ASSETS + '/app.js';
         js.defer = true;
@@ -100,6 +129,10 @@
     } else {
       boot();
     }
+
+    // Fallback defensivo: si por algún motivo no se disparó, fuerza boot tras 1.2s y al load
+    setTimeout(function(){ if (!__booted) boot(); }, 1200);
+    window.addEventListener('load', function(){ if (!__booted) boot(); }, {once:true});
   }catch(e){
     console.error('[zia-widget] loader error:', e && e.message || e);
   }

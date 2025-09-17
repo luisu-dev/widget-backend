@@ -17,7 +17,7 @@
 
 /* --- Launcher --- */
 :where([data-zia]) .cw-launcher{
-  position:fixed; right:20px; bottom:20px; z-index:9999; width:64px; height:64px;
+  position:fixed; right:20px; bottom:20px; z-index:2147483000; width:64px; height:64px;
   border-radius:999px; isolation:isolate; border:1px solid var(--cw-border);
   background:#0f1116; display:grid; place-items:center; color:#e6e9ee;
   overflow:hidden; /* clip del orb */
@@ -30,7 +30,7 @@
 :where([data-zia]) .cw-badge{ display:none !important; }
 
 /* --- Panel --- */
-:where([data-zia]) .cw-panel{ position:fixed; right:20px; bottom:92px; z-index:9998; width:360px; max-width:min(420px,calc(100vw - 32px)); height:540px; max-height:calc(100vh - 140px); background:var(--cw-panel); border:1px solid var(--cw-border); border-radius:16px; box-shadow:none; overflow:hidden; opacity:0; pointer-events:none; }
+:where([data-zia]) .cw-panel{ position:fixed; right:20px; bottom:92px; z-index:2147483010; width:360px; max-width:min(420px,calc(100vw - 32px)); height:540px; max-height:calc(100vh - 140px); background:var(--cw-panel); border:1px solid var(--cw-border); border-radius:16px; box-shadow:none; overflow:hidden; opacity:0; pointer-events:none; }
 :where([data-zia]) .cw-panel.open{ opacity:1; pointer-events:auto; }
 
 :where([data-zia]) .cw-header{ display:flex; align-items:center; justify-content:space-between; padding:12px; border-bottom:1px solid var(--cw-border); background:transparent; }
@@ -203,3 +203,11 @@
 .zia-cta-btn { padding: .6rem 1rem; border-radius: .5rem; border: none; cursor: pointer; }
 .zia-chip { margin:.25rem; padding:.4rem .7rem; border-radius:9999px; border:1px solid #ddd; background:#fff; cursor:pointer; }
 .zia-wa-link { display:inline-block; margin-left:.5rem; }
+
+/* Tooltip para Acidia (solo si loader lo inserta) */
+:where([data-zia]) #cw-tip{
+  position:fixed; right:20px; bottom:96px;
+  background: #0f1116; color:#e5e7eb; border:1px solid var(--cw-border);
+  border-radius: 10px; padding: 8px 12px; font-size: 13px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.25);
+}
