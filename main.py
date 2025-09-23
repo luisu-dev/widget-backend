@@ -624,8 +624,12 @@ async def meta_send_text(page_token: str, recipient_id: str, text: str) -> dict:
     async with httpx.AsyncClient(timeout=10.0) as cx:
         r = await cx.post(url, params=_graph_params(page_token), json=payload)
         if r.status_code >= 400:
-            # 👇 NUEVO: logea el cuerpo de Graph para saber la causa exacta
-            log.error(f"[META][SEND][{r.status_code}] {r.text}")
+            log.error(
+                "[META][SEND][%s] response=%s payload=%s",
+                r.status_code,
+                (r.text or "").strip(),
+                json.dumps(payload, ensure_ascii=False)
+            )
         r.raise_for_status()
         return r.json()
 
