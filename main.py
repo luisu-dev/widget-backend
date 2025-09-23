@@ -578,6 +578,11 @@ async def resolve_tenant_by_page_or_ig_id(page_or_ig_id: str) -> str:
               FROM tenants
               WHERE settings->>'fb_page_id' = :x
                  OR settings->>'ig_user_id' = :x
+                 OR EXISTS (
+                      SELECT 1
+                      FROM jsonb_array_elements_text(COALESCE(settings->'ig_user_ids', '[]'::jsonb)) AS elem(val)
+                      WHERE elem.val = :x
+                 )
               LIMIT 1
             """),
             {"x": str(page_or_ig_id)}
@@ -601,6 +606,12 @@ def fb_tokens_from_tenant(t: dict | None) -> tuple[str, str, str]:
     page_id = _clean(s.get("fb_page_id"))
     page_token = _clean(s.get("fb_page_token"))
     ig_user_id = _clean(s.get("ig_user_id"))
+    ig_user_ids = []
+    raw_list = s.get("ig_user_ids")
+    if isinstance(raw_list, (list, tuple)):
+        ig_user_ids = [_clean(v) for v in raw_list if _clean(v)]
+    if not ig_user_id and ig_user_ids:
+        ig_user_id = ig_user_ids[0]
     return page_id, page_token, ig_user_id
 
 async def meta_send_text(page_token: str, recipient_id: str, text: str, platform: str = "facebook") -> dict:
