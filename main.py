@@ -679,8 +679,6 @@ async def meta_send_text(page_token: str, recipient_id: str, text: str, platform
         "message": {"text": safe_text}
     }
     payload["messaging_type"] = "RESPONSE"
-    if platform == "instagram":
-        payload["messaging_product"] = "instagram"
     def _graph_params(tok: str) -> dict:
         params = {"access_token": tok}
         app_secret = os.getenv("META_APP_SECRET", "")
