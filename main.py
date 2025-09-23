@@ -713,6 +713,7 @@ async def meta_send_text(page_token: str, recipient_id: str, text: str, platform
 
 
 SEEN_META_EVENTS: "OrderedDict[str, dict]" = OrderedDict()
+SEEN_META_MSGS: "OrderedDict[str, dict]" = OrderedDict()
 
 
 def _seen_key(obj: str, owner: str, field: str, verb: str, cid: str) -> str:
@@ -736,6 +737,24 @@ def meta_event_seen(key: str) -> bool:
         SEEN_META_EVENTS.popitem(last=False)
 
     SEEN_META_EVENTS[key] = {"at": now}
+    return False
+
+
+def meta_message_seen(mid: str) -> bool:
+    if not mid:
+        return False
+    now = time.time()
+    drop: list[str] = []
+    for k, v in SEEN_META_MSGS.items():
+        if now - v["at"] > META_SEEN_TTL:
+            drop.append(k)
+    for k in drop:
+        SEEN_META_MSGS.pop(k, None)
+    if mid in SEEN_META_MSGS:
+        return True
+    while len(SEEN_META_MSGS) >= META_SEEN_MAX > 0:
+        SEEN_META_MSGS.popitem(last=False)
+    SEEN_META_MSGS[mid] = {"at": now}
     return False
 
 
@@ -1206,6 +1225,10 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                 recipient_id_event = str(m.get("recipient", {}).get("id", ""))
                 msg = m.get("message", {})
                 business_ids = {x for x in (page_id, ig_user_id) if x}
+                mid = str(msg.get("mid", ""))
+                if meta_message_seen(mid):
+                    log.debug(f"[{rid}] DM dedupe mid={mid}")
+                    continue
                 if msg.get("is_echo"):
                     continue
                 if sender_id and sender_id in business_ids:
@@ -1234,12 +1257,50 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                 system_prompt = build_system_for_tenant(t)
                 messages = build_messages_with_history(sid, system_prompt)
                 answer = "Gracias por escribir. Te atiendo enseguida."
+                wa_num = clean_phone_for_wa((t or {}).get("whatsapp"))
+                wa_url = f"https://wa.me/{wa_num}" if wa_num else ""
+                text_dm = text_in.lower()
+                phone_in_msg = None
+                digits_in = norm_phone(text_in)
+                if digits_in and 8 <= len(digits_in) <= 15:
+                    phone_in_msg = digits_in
+                want_wa = any(k in text_dm for k in ["whats", "whatsapp", "contact", "hablar", "vende", "comunicar", "cotiza"])
+                if phone_in_msg:
+                    want_wa = True
                 try:
-                    client_rt = client.with_options(timeout=12.0)
-                    resp = client_rt.chat.completions.create(model=OPENAI_MODEL, messages=messages)
-                    answer = resp.choices[0].message.content or answer
+                    if want_wa and wa_url:
+                        if phone_in_msg:
+                            answer = (
+                                "Gracias por compartir tus datos. Para resguardar tu privacidad, "
+                                f"tú inicias la conversación desde aquí 👉 {wa_url} y seguimos por WhatsApp cuando nos escribas."
+                            )
+                        else:
+                            answer = (
+                                "Claro. Aquí tienes el enlace directo para hablar con nosotros por WhatsApp: "
+                                f"{wa_url}. Escríbenos ahí y seguimos la conversación."
+                            )
+                    else:
+                        client_rt = client.with_options(timeout=12.0)
+                        resp = client_rt.chat.completions.create(model=OPENAI_MODEL, messages=messages)
+                        answer = resp.choices[0].message.content or answer
+                        if want_wa and wa_url and "whats" in text_dm:
+                            answer += (
+                                " Recuerda que para avanzar debes iniciar tú la conversación en "
+                                f"WhatsApp desde este enlace 👉 {wa_url}."
+                            )
                 except Exception as e:
                     log.warning(f"[{rid}] meta fallback LLM: {e}")
+                    if want_wa and wa_url:
+                        if phone_in_msg:
+                            answer = (
+                                "Para continuar, inicia tú la conversación por WhatsApp en este enlace: "
+                                f"{wa_url}. Cuando nos escribas podremos darte seguimiento al instante."
+                            )
+                        else:
+                            answer = (
+                                "Aquí tienes el enlace directo a nuestro WhatsApp: "
+                                f"{wa_url}. Escríbenos y seguimos por ahí."
+                            )
 
                 add_message(sid, "assistant", answer)
                 asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_out", {"to": sender_id, "text": answer[:2000]}))
