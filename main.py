@@ -1205,12 +1205,17 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                 sender_id = str(m.get("sender", {}).get("id", ""))
                 recipient_id_event = str(m.get("recipient", {}).get("id", ""))
                 msg = m.get("message", {})
+                business_ids = {x for x in (page_id, ig_user_id) if x}
                 if msg.get("is_echo"):
+                    continue
+                if sender_id and sender_id in business_ids:
+                    log.debug(
+                        f"[{rid}] DM skip: mensaje propio sender={sender_id} recipient={recipient_id_event}"
+                    )
                     continue
                 text_in = (msg.get("text") or "").strip()
                 if not text_in:
                     continue
-                business_ids = {x for x in (page_id, ig_user_id) if x}
                 participant_id = sender_id or recipient_id_event
                 if participant_id in business_ids and recipient_id_event and recipient_id_event not in business_ids:
                     participant_id = recipient_id_event
