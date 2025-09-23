@@ -21,6 +21,8 @@ from io import BytesIO
 import qrcode
 from fastapi.responses import StreamingResponse
 
+
+
 # ── Setup ──────────────────────────────────────────────────────────────
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -62,6 +64,7 @@ META_DRY_RUN = as_bool(os.getenv("META_DRY_RUN"), False)
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 SITE_URL = os.getenv("SITE_URL", "https://web-zia.vercel.app")
+GRAPH = "https://graph.facebook.com/v20.0"
 
 stripe.api_key = STRIPE_SECRET_KEY
 
@@ -474,6 +477,53 @@ async def twilio_send_sms(tenant_slug: str, to_e164: str, text: str) -> dict:
         body=text
     )
     return {"sid": msg.sid}
+
+
+#helpers for meta tokens 
+async def _http_get(url, params):
+    async with httpx.AsyncClient(timeout=12) as cx:
+        r = await cx.get(url, params=params)
+        r.raise_for_status()
+        return r.json()
+
+async def refresh_page_token_for_tenant(slug: str) -> dict:
+    # Lee tenant
+    async with db_engine.connect() as conn:
+        row = (await conn.execute(
+            text("SELECT settings FROM tenants WHERE slug=:slug"),
+            {"slug": slug}
+        )).first()
+    if not row:
+        raise RuntimeError("Tenant no encontrado")
+
+    s = dict(row._mapping)["settings"] or {}
+    user_token = (s.get("fb_user_token") or "").strip()
+    page_id    = (s.get("fb_page_id") or "").strip()
+    if not user_token or not page_id:
+        raise RuntimeError("Faltan fb_user_token o fb_page_id en settings")
+
+    # Opción A: volver a pedir /me/accounts (recomendada)
+    data = await _http_get(f"{GRAPH}/me/accounts", {"access_token": user_token})
+    page_token = None
+    for p in data.get("data", []):
+        if str(p.get("id")) == page_id:
+            page_token = p.get("access_token")
+            break
+    if not page_token:
+        raise RuntimeError("No pude obtener page access token para esa Page")
+
+    patch = {"fb_page_token": page_token, "fb_page_refreshed_at": int(time.time())}
+    async with db_engine.begin() as conn:
+        await conn.execute(
+            text("""
+                UPDATE tenants
+                SET settings = COALESCE(settings,'{}'::jsonb) || CAST(:p AS JSONB),
+                    updated_at = NOW()
+                WHERE slug = :slug
+            """),
+            {"slug": slug, "p": json.dumps(patch)}
+        )
+    return {"ok": True, "page_id": page_id}
 
 # ── Modelos ────────────────────────────────────────────────────────────
 class TenantIn(BaseModel):
@@ -1223,6 +1273,33 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
         log.error(f"/v1/meta/webhook error: {e}")
         return {"ok": False}
 
+
+#rotacion de tokens de meta 
+@app.post("/v1/admin/meta/rotate-page-token", dependencies=[Depends(require_admin)])
+async def rotate_page_token(tenant: str = Query(...)):
+    try:
+        res = await refresh_page_token_for_tenant(tenant)
+        return {"ok": True, **res}
+    except Exception as e:
+        raise HTTPException(400, str(e))
+    
+async def meta_send_text_with_refresh(tenant_slug: str, recipient_id: str, text: str, platform: str):
+    t = await fetch_tenant(tenant_slug)
+    _, page_token, _ = fb_tokens_from_tenant(t)
+    try:
+        return await meta_send_text(page_token, recipient_id, text, platform=platform)
+    except httpx.HTTPStatusError as e:
+        body = e.response.text or ""
+        should_refresh = '"code":190' in body and ('"error_subcode":463' in body or "Session has expired" in body)
+        if not should_refresh:
+            raise
+        await refresh_page_token_for_tenant(tenant_slug)
+        # reintento
+        t2 = await fetch_tenant(tenant_slug)
+        _, page_token2, _ = fb_tokens_from_tenant(t2)
+        return await meta_send_text(page_token2, recipient_id, text, platform=platform)
+
+
 # ── Streaming SSE con flujo de contacto ────────────────────────────────
 @app.post("/v1/chat/stream")
 async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(default="")):
@@ -1744,6 +1821,12 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
         return Response("<Response></Response>", media_type="application/xml")
     
     text_lc = body_txt.lower()
+    phone = norm_phone(from_raw)
+    sid_session = f"wa:{phone}"
+    sid = ensure_session(sid_session)
+    add_message(sid, "user", body_txt)
+    asyncio.create_task(store_event(tenant or "public", sid, "wa_in", {"from": from_raw, "text": body_txt}))
+
     t = await fetch_tenant(tenant)
 
     # Fast-path: "quiero suscribirme al plan starter/meta"
@@ -1766,13 +1849,6 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
             # si falla, sigue al comportamiento normal con LLM
 
 
-    phone = norm_phone(from_raw)
-    sid_session = f"wa:{phone}"
-    sid = ensure_session(sid_session)
-    add_message(sid, "user", body_txt)
-    asyncio.create_task(store_event(tenant or "public", sid, "wa_in", {"from": from_raw, "text": body_txt}))
-
-    t = await fetch_tenant(tenant)
     system_prompt = build_system_for_tenant(t)
     messages = build_messages_with_history(sid, system_prompt)
     answer = generate_answer(messages)
@@ -1782,16 +1858,6 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
     twiml = MessagingResponse()
     twiml.message(answer)
     return Response(str(twiml), media_type="application/xml")
-
-@app.get("/v1/catalog")
-async def get_catalog(tenant: str = Query(...)):
-    if tenant and not valid_slug(tenant):
-        raise HTTPException(400, "Invalid tenant")
-    t = await fetch_tenant(tenant)
-    if not t:
-        raise HTTPException(404, "Tenant no encontrado")
-    items = await fetch_catalog_for_tenant(t)
-    return {"count": len(items), "items": items[:200]}
 
 @app.options("/v1/admin/export/leads.csv")
 async def options_export_leads():
