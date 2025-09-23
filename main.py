@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from openai import OpenAI, OpenAIError
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from sqlalchemy import text
-from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse, quote_plus
 import csv, io
 from twilio.rest import Client as TwilioClient
 from twilio.twiml.messaging_response import MessagingResponse
@@ -1291,12 +1291,40 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                         log.info(f"[{rid}] feed skip: comentario propio (loop guard)")
                         continue
 
+                    public_reply = "Gracias por tu comentario. Te escribo por DM para más detalles."
+                    if text_in:
+                        brand_prompt = build_system_for_tenant(t)
+                        reply_messages = [
+                            {"role": "system", "content": brand_prompt},
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Comentario público: "
+                                    + text_in
+                                    + "\n\nResponde en 1–2 oraciones, útil y concreta. "
+                                      "Evita pedir datos sensibles. Cierra con: 'Te escribo por DM para más detalles.'"
+                                ),
+                            },
+                        ]
+                        try:
+                            client_reply = client.with_options(timeout=10.0)
+                            resp = client_reply.chat.completions.create(
+                                model=OPENAI_MODEL,
+                                messages=reply_messages,
+                            )
+                            candidate = (resp.choices[0].message.content or "").strip()
+                            if candidate:
+                                public_reply = candidate
+                        except Exception as e:
+                            log.warning(f"[{rid}] feed reply LLM fallback: {e}")
+                    if "Te escribo por DM para más detalles." not in public_reply:
+                        public_reply = public_reply.rstrip() + " Te escribo por DM para más detalles."
+
                     if META_DRY_RUN:
                         log.debug(f"[{rid}] feed DRY_RUN omitido comment={comment_id}")
                     else:
                         try:
-                            await fb_reply_comment(page_token, comment_id,
-                                "¡Gracias por tu comentario! Te mando más detalles por DM.")
+                            await fb_reply_comment(page_token, comment_id, public_reply)
                         except Exception as e:
                             log.error(f"[{rid}] fb_reply_comment error: {e}")
 
@@ -1329,12 +1357,40 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                         log.info(f"[{rid}] IG skip: comentario propio (loop guard)")
                         continue
 
+                    public_reply = "Gracias por tu comentario. Te escribo por DM para más detalles."
+                    if text_in:
+                        brand_prompt = build_system_for_tenant(t)
+                        reply_messages = [
+                            {"role": "system", "content": brand_prompt},
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Comentario público: "
+                                    + text_in
+                                    + "\n\nResponde en 1–2 oraciones, útil y concreta. "
+                                      "Evita pedir datos sensibles. Cierra con: 'Te escribo por DM para más detalles.'"
+                                ),
+                            },
+                        ]
+                        try:
+                            client_reply = client.with_options(timeout=10.0)
+                            resp = client_reply.chat.completions.create(
+                                model=OPENAI_MODEL,
+                                messages=reply_messages,
+                            )
+                            candidate = (resp.choices[0].message.content or "").strip()
+                            if candidate:
+                                public_reply = candidate
+                        except Exception as e:
+                            log.warning(f"[{rid}] IG reply LLM fallback: {e}")
+                    if "Te escribo por DM para más detalles." not in public_reply:
+                        public_reply = public_reply.rstrip() + " Te escribo por DM para más detalles."
+
                     if META_DRY_RUN:
                         log.debug(f"[{rid}] IG DRY_RUN omitido comment={ig_comment_id}")
                     else:
                         try:
-                            await ig_reply_comment(page_token, ig_comment_id,
-                                "¡Gracias por comentar! Te escribimos por DM para ayudarte.")
+                            await ig_reply_comment(page_token, ig_comment_id, public_reply)
                         except Exception as e:
                             log.error(f"[{rid}] ig_reply_comment error: {e}")
 
@@ -1408,6 +1464,15 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
             yield sse_event("ok", event="ping")
 
             text_lc = (input.message or "").lower()
+            purchase_intent = any(k in text_lc for k in [
+                "compr", "compra", "adquir", "pagar", "pago", "orden", "checkout", "suscrib"
+            ])
+            flow = get_flow(sid)
+            if flow.get("stage"):
+                reset_keys = ["precio", "cost", "cotiza", "catalog", "catalogo", "producto", "plan", "gracias", "otra", "cancel"]
+                if purchase_intent or any(k in text_lc for k in reset_keys) or text_lc.endswith("?"):
+                    log.debug(f"[chat][flow] reset sid={sid}")
+                    flow.update({"stage": None, "name": None, "method": None, "contact": None})
 
             # Atajo: checklist explícito
             if "checklist" in text_lc or text_lc.strip() in {"ver checklist"}:
@@ -1426,10 +1491,6 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 return
 
             # ——— PRIORIDAD: intención de compra/suscripción ———
-            purchase_intent = any(k in text_lc for k in [
-                "compr", "compra", "adquir", "pagar", "pago", "orden", "checkout", "suscrib"
-            ])
-
             # 1) Disparo directo por plan (starter/meta) → suscripción
             if purchase_intent and ("starter" in text_lc or "meta" in text_lc):
                 plan = "starter" if "starter" in text_lc else "meta"
@@ -1496,8 +1557,6 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                         return
 
             # ——— SOLO si no hubo compra, corren los flows de contacto/cotización ———
-            flow = get_flow(sid)
-
             if flow["stage"] is None and wants_quote(input.message):
                 flow.update({"stage": "ask_name"})
                 yield sse_event(json.dumps({"content": "Genial, te ayudo con la cotización. ¿Cuál es tu nombre completo?"}), event="delta")
@@ -1562,10 +1621,14 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 base = f"Listo, registré tus datos: {flow['name']} · {flow['method']}."
                 if flow["method"] == "whatsapp":
                     wa_num = clean_phone_for_wa((t or {}).get("whatsapp"))
-                    yield sse_event(json.dumps({"content": base + " Para continuar, usa el botón de WhatsApp de aquí abajo para iniciar el chat."}), event="delta")
+                    wa_url = None
                     if wa_num:
-                        wa_url = f"https://wa.me/{wa_num}?text=Hola%20soy%20{flow['name']}"
-                        yield sse_event(json.dumps({"whatsapp": wa_url}), event="ui")
+                        default_text = quote_plus(f"Hola, soy {flow['name']} y vengo del asistente")
+                        wa_url = f"https://wa.me/{wa_num}?text={default_text}"
+                    msg_text = base + (f" Puedes escribirnos por WhatsApp aquí: 👉 {wa_url}" if wa_url else " Puedes escribirnos por WhatsApp en el botón de abajo.")
+                    yield sse_event(json.dumps({"content": msg_text}), event="delta")
+                    if wa_url:
+                        yield sse_event(json.dumps({"whatsapp": wa_url, "whatsappLabel": "Abrir WhatsApp"}), event="ui")
                     yield sse_event(json.dumps({"lead":{"id": lead.get("id"), "status":"saved"}}), event="ui")
                     yield sse_event(json.dumps({}), event="done")
                     SESSIONS[sid]["contact_flow"] = {"stage": None, "name": None, "method": None, "contact": None}
