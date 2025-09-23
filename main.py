@@ -60,6 +60,7 @@ TWILIO_VALIDATE_SIGNATURE = as_bool(os.getenv("TWILIO_VALIDATE_SIGNATURE"), Fals
 
 # ← NUEVO: evita NameError en el webhook
 META_DRY_RUN = as_bool(os.getenv("META_DRY_RUN"), False)
+META_DEFAULT_TENANT = os.getenv("META_DEFAULT_TENANT", "").strip()
 #stripe keys 
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
@@ -1110,9 +1111,48 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
 
         for entry in payload.get("entry", []):
             owner_id = str(entry.get("id", ""))  # page_id o ig_user_id
-            tenant_slug = await resolve_tenant_by_page_or_ig_id(owner_id) or "public"
-            if tenant_slug == "public":
-                log.warning("[META] owner_id %s no mapea a tenant (fallback 'public')", owner_id)
+
+            candidate_ids: list[str] = [owner_id]
+            # Para DMs, intentar también con el ID del destinatario/remitente (IG usa recipient como business ID)
+            for msg in entry.get("messaging", []) or []:
+                for key in ("recipient", "sender"):
+                    cid = str((msg.get(key) or {}).get("id", ""))
+                    if cid:
+                        candidate_ids.append(cid)
+
+            # Para cambios (comentarios), revisar page_id e instagram_business_account.id
+            for ch in entry.get("changes", []) or []:
+                value = (ch.get("value") or {}) if isinstance(ch.get("value"), dict) else {}
+                page_id_from_value = str(value.get("page_id", ""))
+                if page_id_from_value:
+                    candidate_ids.append(page_id_from_value)
+                ig_biz = value.get("instagram_business_account")
+                if isinstance(ig_biz, dict):
+                    ig_id = str(ig_biz.get("id", ""))
+                    if ig_id:
+                        candidate_ids.append(ig_id)
+                author = value.get("from")
+                if isinstance(author, dict):
+                    author_id = str(author.get("id", ""))
+                    if author_id:
+                        candidate_ids.append(author_id)
+
+            tenant_slug = ""
+            for cid in dict.fromkeys(filter(None, candidate_ids)):
+                tenant_slug = await resolve_tenant_by_page_or_ig_id(cid)
+                if tenant_slug:
+                    break
+
+            if not tenant_slug:
+                fallback_slug = META_DEFAULT_TENANT
+                tenant_slug = fallback_slug or "public"
+                log.warning(
+                    "[META] owner_id %s no mapea a tenant; fallback=%s; candidates=%s",
+                    owner_id,
+                    tenant_slug,
+                    ",".join(dict.fromkeys(filter(None, candidate_ids))).strip() or "-"
+                )
+
             t = await fetch_tenant(tenant_slug)
             page_id, page_token, ig_user_id = fb_tokens_from_tenant(t)
             # Fallback: si no hay page_id en settings/env, usar owner_id
