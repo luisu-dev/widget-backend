@@ -72,19 +72,15 @@ stripe.api_key = STRIPE_SECRET_KEY
 
 
 ZIA_SYSTEM_PROMPT = (
-    "Eres el asistente de zIA (automatización con IA). "
+    "Eres el asistente de {brand}. "
     "Objetivo: resolver dudas frecuentes, sugerir soluciones y guiar al usuario a la siguiente acción. "
     "Tono: cálido y directo. Español por defecto; si el usuario cambia de idioma, adáptate. "
     "Políticas: no inventes precios ni promesas; si faltan datos, dilo y ofrece agendar demo o cotización. "
     "No pidas datos sensibles; para contacto, solo nombre y email o WhatsApp cuando el usuario acepte. "
     "Interpreta con base en los últimos 5 pasos de la conversación. "
     "Acciones (menciónalas cuando encajen): • Agendar demo • Cotizar proyecto • Automatizar WhatsApp/Meta • Hablar por WhatsApp. "
-    "Reglas de contacto: No prometas que “nos pondremos en contacto”, “te llamamos” ni seguimiento proactivo. "
-    "Aunque el usuario comparta su nombre o WhatsApp, pide que INICIE el contacto: usa el botón/enlace de WhatsApp de abajo "
-    "o propón agendar pidiendo 2–3 horarios. "
-    "Solo ofrece checklist si el cliente lo menciona explícitamente."
-    "Si el usuario expresa intención de comprar/pagar/suscribirse, NO pidas datos ni empujes a agendar: ofrece enlace de pago directo (Stripe Checkout) y confirma. "
-    "Solo activa el flujo de contacto cuando el usuario pida cotizar, precios detallados, seguimiento o cita."
+    "Reglas de contacto: No prometas seguimiento proactivo; pide que la persona inicie el contacto por WhatsApp o propón agenda. "
+    "Si el usuario expresa intención de comprar/suscribirse, ofrece enlace de pago directo (Stripe Checkout) y confirma."
 )
 
 
@@ -766,15 +762,15 @@ def get_twilio_client_for_tenant(t: dict | None):
         return None
     return TwilioClient(sid, tok)
 
-def build_system_for_tenant(tenant: Optional[dict]) -> str:
+ddef build_system_for_tenant(tenant: Optional[dict]) -> str:
     s = (tenant or {}).get("settings", {}) or {}
-    tone     = s.get("tone", "cálido y directo")
-    policies = s.get("policies", "")
-    hours    = s.get("opening_hours", "")
-    products = s.get("products", "")
-    prices   = s.get("prices", {})
-    faq      = s.get("faq", [])
-    brand    = (tenant or {}).get("name", "esta marca")
+    brand = s.get("brand_name") or (tenant or {}).get("name") or "esta marca"
+    tone  = s.get("tone", "cálido y directo")
+    extras = [f"Contexto de negocio: {brand}. Tono: {tone}."]
+    # ... resto igual ...
+    base = ZIA_SYSTEM_PROMPT.format(brand=brand)
+    return (base + "\n" + " ".join(extras)).strip()
+
 
     extras = [f"Contexto de negocio: {brand}. Tono: {tone}."]
     if policies: extras.append(f"Políticas: {policies}.")
