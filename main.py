@@ -762,7 +762,7 @@ def get_twilio_client_for_tenant(t: dict | None):
         return None
     return TwilioClient(sid, tok)
 
-ddef build_system_for_tenant(tenant: Optional[dict]) -> str:
+def build_system_for_tenant(tenant: Optional[dict]) -> str:
     s = (tenant or {}).get("settings", {}) or {}
     brand = s.get("brand_name") or (tenant or {}).get("name") or "esta marca"
     tone  = s.get("tone", "cálido y directo")
