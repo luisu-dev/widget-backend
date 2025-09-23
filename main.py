@@ -1,4 +1,5 @@
 import os, uuid, time, asyncio, json, logging, re
+from collections import OrderedDict
 from typing import Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, Request, Header, Depends, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,7 +26,7 @@ from fastapi.responses import StreamingResponse
 
 # ── Setup ──────────────────────────────────────────────────────────────
 load_dotenv()
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING)
 log = logging.getLogger("zia")
 
 app = FastAPI(title="ZIA Backend", version="1.1")
@@ -38,6 +39,20 @@ def as_bool(val: Optional[str], default: bool = False) -> bool:
         return default
     return str(val).strip().lower() in ("1", "true", "yes", "y", "on")
 
+
+def env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    raw = raw.strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        log.warning(f"[config] {name} inválido='{raw}', usando {default}")
+        return default
+
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
     "http://localhost:5173,http://127.0.0.1:5173"
@@ -47,8 +62,8 @@ DATABASE_URL   = os.getenv("DATABASE_URL", "")
 DB_DRIVER      = (os.getenv("DB_DRIVER", "asyncpg") or "").strip().lower()  # 'asyncpg' | 'psycopg'
 USE_MOCK       = as_bool(os.getenv("USE_MOCK"), False)
 OPENAI_MODEL   = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-RATE_LIMIT     = int(os.getenv("RATE_LIMIT", "20"))
-RATE_WINDOW_SECONDS = int(os.getenv("RATE_WINDOW_SECONDS", "10"))
+RATE_LIMIT     = env_int("RATE_LIMIT", 20)
+RATE_WINDOW_SECONDS = env_int("RATE_WINDOW_SECONDS", 10)
 ADMIN_KEY      = os.getenv("ADMIN_KEY", "")
 PROXY_IP_HEADER = os.getenv("PROXY_IP_HEADER", "").lower()
 
@@ -61,6 +76,8 @@ TWILIO_VALIDATE_SIGNATURE = as_bool(os.getenv("TWILIO_VALIDATE_SIGNATURE"), Fals
 # ← NUEVO: evita NameError en el webhook
 META_DRY_RUN = as_bool(os.getenv("META_DRY_RUN"), False)
 META_DEFAULT_TENANT = os.getenv("META_DEFAULT_TENANT", "").strip()
+META_SEEN_TTL = env_int("META_SEEN_TTL_SECONDS", 300)
+META_SEEN_MAX = env_int("META_SEEN_MAX", 500)
 #stripe keys 
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
@@ -695,6 +712,33 @@ async def meta_send_text(page_token: str, recipient_id: str, text: str, platform
         return r.json()
 
 
+SEEN_META_EVENTS: "OrderedDict[str, dict]" = OrderedDict()
+
+
+def _seen_key(obj: str, owner: str, field: str, verb: str, cid: str) -> str:
+    return "|".join([obj or "", owner or "", field or "", verb or "", cid or ""])
+
+
+def meta_event_seen(key: str) -> bool:
+    now = time.time()
+    # Purga eventos caducos
+    drop: list[str] = []
+    for k, v in SEEN_META_EVENTS.items():
+        if now - v["at"] > META_SEEN_TTL:
+            drop.append(k)
+    for k in drop:
+        SEEN_META_EVENTS.pop(k, None)
+
+    if key in SEEN_META_EVENTS:
+        return True
+
+    while len(SEEN_META_EVENTS) >= META_SEEN_MAX > 0:
+        SEEN_META_EVENTS.popitem(last=False)
+
+    SEEN_META_EVENTS[key] = {"at": now}
+    return False
+
+
 async def fb_reply_comment(page_token: str, comment_id: str, message: str) -> dict:
     if not (page_token and comment_id and message):
         raise RuntimeError("Faltan datos para reply FB")
@@ -1097,14 +1141,19 @@ async def meta_webhook_verify(
 
 @app.post("/v1/meta/webhook")
 async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
+    rid = f"meta-{uuid.uuid4().hex[:8]}"
     try:
         obj = payload.get("object")
         if obj not in {"page", "instagram"}:
-            log.info(f"[META] object no soportado: {obj}")
+            log.debug(f"[{rid}] object no soportado: {obj}")
             return {"ok": True}
 
         for entry in payload.get("entry", []):
             owner_id = str(entry.get("id", ""))  # page_id o ig_user_id
+            log.info(
+                f"[{rid}] obj={obj} owner={owner_id} changes={len(entry.get('changes', []) or [])} "
+                f"msgs={len(entry.get('messaging', []) or [])}"
+            )
 
             candidate_ids: list[str] = [owner_id]
             # Para DMs, intentar también con el ID del destinatario/remitente (IG usa recipient como business ID)
@@ -1141,10 +1190,8 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                 fallback_slug = META_DEFAULT_TENANT
                 tenant_slug = fallback_slug or "public"
                 log.warning(
-                    "[META] owner_id %s no mapea a tenant; fallback=%s; candidates=%s",
-                    owner_id,
-                    tenant_slug,
-                    ",".join(dict.fromkeys(filter(None, candidate_ids))).strip() or "-"
+                    f"[{rid}] owner_id {owner_id} no mapea a tenant; fallback={tenant_slug}; "
+                    f"candidates={','.join(dict.fromkeys(filter(None, candidate_ids))).strip() or '-'}"
                 )
 
             t = await fetch_tenant(tenant_slug)
@@ -1171,12 +1218,8 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                     participant_id = sender_id
                 if not participant_id or participant_id in business_ids:
                     log.warning(
-                        "[META][DM] skip: no recipient user id for slug=%s owner_id=%s obj=%s sender=%s recipient=%s",
-                        tenant_slug,
-                        owner_id,
-                        obj,
-                        sender_id,
-                        recipient_id_event,
+                        f"[{rid}] DM skip: sin recipient id slug={tenant_slug} owner={owner_id} "
+                        f"obj={obj} sender={sender_id} recipient={recipient_id_event}"
                     )
                     continue
                 sid = ensure_session(f"fb:{tenant_slug}:{participant_id}")
@@ -1191,75 +1234,72 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                     resp = client_rt.chat.completions.create(model=OPENAI_MODEL, messages=messages)
                     answer = resp.choices[0].message.content or answer
                 except Exception as e:
-                    log.warning(f"meta fallback: {e}")
+                    log.warning(f"[{rid}] meta fallback LLM: {e}")
 
                 add_message(sid, "assistant", answer)
                 asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_out", {"to": sender_id, "text": answer[:2000]}))
                 # Enviar respuesta solo si tenemos token (desde DB)
                 if not page_token:
                     log.warning(
-                        "[META][DM] skip: falta page_token para slug=%s owner_id=%s obj=%s",
-                        tenant_slug,
-                        owner_id,
-                        obj,
+                        f"[{rid}] DM skip: falta page_token slug={tenant_slug} owner={owner_id} obj={obj}"
                     )
                 else:
                     try:
                         platform = "instagram" if obj == "instagram" else "facebook"
                         await meta_send_text(page_token, participant_id, answer, platform=platform)
                     except Exception as e:
-                        log.error(f"meta send error: {e}")
+                        log.error(f"[{rid}] meta send error: {e}")
 
             # Feed / Comments
             for ch in entry.get("changes", []):
                 field = ch.get("field")
                 value = ch.get("value", {}) or {}
-                log.info(
-                    "[META][CHANGE] field=%s obj=%s owner=%s value=%s",
-                    field,
+
+                dedupe_key = _seen_key(
                     obj,
                     owner_id,
-                    json.dumps(value)[:500]
+                    str(field or ""),
+                    str(value.get("verb", "")),
+                    str(value.get("comment_id") or value.get("id") or "")
                 )
-                if field == "feed" and value.get("item") == "comment" and value.get("verb") == "add":
-                    comment_id = str(value.get("comment_id", ""))
-                    author_id  = str(value.get("from", {}).get("id", ""))
-                    log.info(f"[META][FEED] comment_id={comment_id} author_id={author_id}")
-                    ...
+                if meta_event_seen(dedupe_key):
+                    log.debug(f"[{rid}] dedupe skip {dedupe_key}")
+                    continue
 
-
-
+                log.debug(
+                    f"[{rid}] change field={field} obj={obj} owner={owner_id} value={json.dumps(value)[:400]}"
+                )
                 # Facebook Page comments (feed)
                 if obj == "page" and field == "feed" and value.get("item") == "comment" and value.get("verb") == "add":
                     comment_id = str(value.get("comment_id", ""))
                     author_id = str(value.get("from", {}).get("id", ""))
                     text_in = (value.get("message") or "").strip()
-                    log.info(f"[META][FEED] comment_id={comment_id} author={author_id} text={text_in!r}")
+                    log.debug(f"[{rid}] feed comment={comment_id} author={author_id} text={text_in!r}")
 
                     if not comment_id:
-                        log.warning("[META][FEED] skip: falta comment_id")
+                        log.warning(f"[{rid}] feed skip: falta comment_id")
                         continue
                     if not page_token:
-                        log.warning("[META][FEED] skip: falta page_token en settings.fb_page_token (DB)")
+                        log.warning(f"[{rid}] feed skip: falta page_token en DB")
                         continue
                     if author_id and page_id and author_id == page_id:
-                        log.info("[META][FEED] skip: comentario de la propia página (loop guard)")
+                        log.info(f"[{rid}] feed skip: comentario propio (loop guard)")
                         continue
 
                     if META_DRY_RUN:
-                        log.info(f"[META][FEED] DRY_RUN: no se llama Graph para {comment_id}")
+                        log.debug(f"[{rid}] feed DRY_RUN omitido comment={comment_id}")
                     else:
                         try:
                             await fb_reply_comment(page_token, comment_id,
                                 "¡Gracias por tu comentario! Te mando más detalles por DM.")
                         except Exception as e:
-                            log.error(f"[META][FEED] fb_reply_comment error: {e}")
+                            log.error(f"[{rid}] fb_reply_comment error: {e}")
 
                         try:
                             await meta_private_reply_to_comment(page_id, page_token, comment_id,
                                 "Hola, seguimos por mensaje para darte soporte rápido. ¿Qué necesitas lograr?")
                         except Exception as e:
-                            log.error(f"[META][FEED] private reply error: {e}")
+                            log.error(f"[{rid}] private reply error: {e}")
 
                     sid = ensure_session(f"fb:{tenant_slug}:comment:{comment_id}")
                     asyncio.create_task(store_event(
@@ -1272,29 +1312,32 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                     ig_comment_id = str(value.get("id", "")) or str(value.get("comment_id", ""))
                     author_id = str(value.get("from", {}).get("id", ""))
                     text_in = (value.get("text") or "").strip()
-                    log.info(f"[META][IG] comment_id={ig_comment_id} author={author_id} text={text_in!r}")
+                    log.debug(f"[{rid}] IG comment={ig_comment_id} author={author_id} text={text_in!r}")
 
                     if not ig_comment_id:
-                        log.warning("[META][IG] skip: falta ig_comment_id")
+                        log.warning(f"[{rid}] IG skip: falta ig_comment_id")
                         continue
                     if not page_token:
-                        log.warning("[META][IG] skip: falta page_token en settings.fb_page_token (DB)")
+                        log.warning(f"[{rid}] IG skip: falta page_token en DB")
+                        continue
+                    if author_id and ig_user_id and author_id == ig_user_id:
+                        log.info(f"[{rid}] IG skip: comentario propio (loop guard)")
                         continue
 
                     if META_DRY_RUN:
-                        log.info(f"[META][IG] DRY_RUN: no se llama Graph para {ig_comment_id}")
+                        log.debug(f"[{rid}] IG DRY_RUN omitido comment={ig_comment_id}")
                     else:
                         try:
                             await ig_reply_comment(page_token, ig_comment_id,
                                 "¡Gracias por comentar! Te escribimos por DM para ayudarte.")
                         except Exception as e:
-                            log.error(f"[META][IG] ig_reply_comment error: {e}")
+                            log.error(f"[{rid}] ig_reply_comment error: {e}")
 
                         try:
                             await meta_private_reply_to_comment(page_id, page_token, ig_comment_id,
                                 "Hola, seguimos por mensaje para resolverlo contigo. ¿Puedes contarme un poco más?")
                         except Exception as e:
-                            log.error(f"[META][IG] private reply error: {e}")
+                            log.error(f"[{rid}] IG private reply error: {e}")
 
                     sid = ensure_session(f"ig:{tenant_slug}:comment:{ig_comment_id}")
                     asyncio.create_task(store_event(
@@ -1304,7 +1347,7 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
 
         return {"ok": True}
     except Exception as e:
-        log.error(f"/v1/meta/webhook error: {e}")
+        log.error(f"[{rid}] webhook error: {e}")
         return {"ok": False}
 
 
