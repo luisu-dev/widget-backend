@@ -590,19 +590,29 @@ def fb_tokens_from_tenant(t: dict | None) -> tuple[str, str, str]:
     Producción: ya no se usa fallback por variables de entorno para tokens/IDs.
     """
     s = (t or {}).get("settings", {}) or {}
-    page_id = s.get("fb_page_id", "")
-    page_token = s.get("fb_page_token", "")
-    ig_user_id = s.get("ig_user_id", "")
-    return str(page_id or ""), str(page_token or ""), str(ig_user_id or "")
+
+    def _clean(val: Any) -> str:
+        """Normalize token/id values coming from the DB."""
+        return str(val or "").strip()
+
+    page_id = _clean(s.get("fb_page_id"))
+    page_token = _clean(s.get("fb_page_token"))
+    ig_user_id = _clean(s.get("ig_user_id"))
+    return page_id, page_token, ig_user_id
 
 async def meta_send_text(page_token: str, recipient_id: str, text: str) -> dict:
     if not page_token:
         raise RuntimeError("Falta fb_page_token")
+    safe_text = (text or "").strip()
+    if not safe_text:
+        raise RuntimeError("Falta texto para enviar a Meta")
+    if len(safe_text) > 2000:
+        safe_text = safe_text[:1997].rstrip() + "..."
     url = "https://graph.facebook.com/v20.0/me/messages"
     payload = {
         "messaging_type": "RESPONSE",
         "recipient": {"id": recipient_id},
-        "message": {"text": text}
+        "message": {"text": safe_text}
     }
     def _graph_params(tok: str) -> dict:
         params = {"access_token": tok}
