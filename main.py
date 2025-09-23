@@ -1119,7 +1119,13 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
             for ch in entry.get("changes", []):
                 field = ch.get("field")
                 value = ch.get("value", {}) or {}
-                log.info(f"[META][CHANGE] field={field} value={json.dumps(value)[:500]}")
+                log.info(
+                    "[META][CHANGE] field=%s obj=%s owner=%s value=%s",
+                    field,
+                    obj,
+                    owner_id,
+                    json.dumps(value)[:500]
+                )
                 if field == "feed" and value.get("item") == "comment" and value.get("verb") == "add":
                     comment_id = str(value.get("comment_id", ""))
                     author_id  = str(value.get("from", {}).get("id", ""))
