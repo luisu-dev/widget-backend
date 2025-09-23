@@ -15,6 +15,7 @@ from twilio.rest import Client as TwilioClient
 from twilio.twiml.messaging_response import MessagingResponse
 from twilio.request_validator import RequestValidator
 import httpx
+import hmac, hashlib
 import stripe
 from io import BytesIO
 import qrcode
@@ -41,6 +42,7 @@ ALLOWED_ORIGINS = os.getenv(
 ).split(",")
 
 DATABASE_URL   = os.getenv("DATABASE_URL", "")
+DB_DRIVER      = (os.getenv("DB_DRIVER", "asyncpg") or "").strip().lower()  # 'asyncpg' | 'psycopg'
 USE_MOCK       = as_bool(os.getenv("USE_MOCK"), False)
 OPENAI_MODEL   = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 RATE_LIMIT     = int(os.getenv("RATE_LIMIT", "20"))
@@ -181,14 +183,23 @@ class SendWaCheckoutIn(BaseModel):
 
 
 # ── DB helpers ─────────────────────────────────────────────────────────
-def to_asyncpg(url: str) -> str:
+def to_sqlalchemy_url(url: str, driver: str = "asyncpg") -> str:
+    """Normaliza una URL de Postgres al esquema correcto para SQLAlchemy.
+
+    driver: 'asyncpg' (por defecto) o 'psycopg'.
+    """
     if not url:
         return ""
+    # Normaliza prefijo básico
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
+    # Elimina sufijos de driver previos si existen
     url = url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    url = url.replace("postgresql+psycopg://", "postgresql://", 1)
+
     p = urlparse(url)
     q = dict(parse_qsl(p.query, keep_blank_values=True))
+    # Normaliza parámetros SSL comunes
     if "sslmode" in q:
         val = (q.pop("sslmode") or "").lower()
         if val in ("disable", "allow", "prefer", "require", "verify-ca", "verify-full"):
@@ -202,7 +213,8 @@ def to_asyncpg(url: str) -> str:
     if "ssl" not in q:
         q["ssl"] = "require"
     new_query = urlencode(q)
-    scheme = "postgresql+asyncpg"
+    # Selecciona esquema según driver deseado
+    scheme = "postgresql+psycopg" if driver == "psycopg" else "postgresql+asyncpg"
     return urlunparse((scheme, p.netloc, p.path, p.params, new_query, p.fragment))
 
 async def update_tenant_settings(slug: str, patch: dict):
@@ -332,7 +344,7 @@ async def _create_checkout_for_any(
 
 
 
-ASYNC_DB_URL = to_asyncpg(DATABASE_URL)
+ASYNC_DB_URL = to_sqlalchemy_url(DATABASE_URL, DB_DRIVER)
 db_engine: Optional[AsyncEngine] = None
 
 @app.on_event("startup")
@@ -592,8 +604,15 @@ async def meta_send_text(page_token: str, recipient_id: str, text: str) -> dict:
         "recipient": {"id": recipient_id},
         "message": {"text": text}
     }
+    def _graph_params(tok: str) -> dict:
+        params = {"access_token": tok}
+        app_secret = os.getenv("META_APP_SECRET", "")
+        if app_secret:
+            proof = hmac.new(app_secret.encode(), msg=tok.encode(), digestmod=hashlib.sha256).hexdigest()
+            params["appsecret_proof"] = proof
+        return params
     async with httpx.AsyncClient(timeout=10.0) as cx:
-        r = await cx.post(url, params={"access_token": page_token}, json=payload)
+        r = await cx.post(url, params=_graph_params(page_token), json=payload)
         if r.status_code >= 400:
             # 👇 NUEVO: logea el cuerpo de Graph para saber la causa exacta
             log.error(f"[META][SEND][{r.status_code}] {r.text}")
@@ -605,8 +624,15 @@ async def fb_reply_comment(page_token: str, comment_id: str, message: str) -> di
     if not (page_token and comment_id and message):
         raise RuntimeError("Faltan datos para reply FB")
     url = f"https://graph.facebook.com/v20.0/{comment_id}/comments"
+    def _graph_params(tok: str) -> dict:
+        params = {"access_token": tok}
+        app_secret = os.getenv("META_APP_SECRET", "")
+        if app_secret:
+            proof = hmac.new(app_secret.encode(), msg=tok.encode(), digestmod=hashlib.sha256).hexdigest()
+            params["appsecret_proof"] = proof
+        return params
     async with httpx.AsyncClient(timeout=10.0) as cx:
-        r = await cx.post(url, params={"access_token": page_token}, data={"message": message})
+        r = await cx.post(url, params=_graph_params(page_token), data={"message": message})
         if r.status_code >= 400:
             log.error(f"[META][FEED] fb_reply_comment body: {r.text}")
             r.raise_for_status()
@@ -616,8 +642,15 @@ async def ig_reply_comment(page_token: str, ig_comment_id: str, message: str) ->
     if not (page_token and ig_comment_id and message):
         raise RuntimeError("Faltan datos para reply IG")
     url = f"https://graph.facebook.com/v20.0/{ig_comment_id}/replies"
+    def _graph_params(tok: str) -> dict:
+        params = {"access_token": tok}
+        app_secret = os.getenv("META_APP_SECRET", "")
+        if app_secret:
+            proof = hmac.new(app_secret.encode(), msg=tok.encode(), digestmod=hashlib.sha256).hexdigest()
+            params["appsecret_proof"] = proof
+        return params
     async with httpx.AsyncClient(timeout=10.0) as cx:
-        r = await cx.post(url, params={"access_token": page_token}, data={"message": message})
+        r = await cx.post(url, params=_graph_params(page_token), data={"message": message})
         if r.status_code >= 400:
             log.error(f"[META][IG] ig_reply_comment body: {r.text}")
             r.raise_for_status()
@@ -628,8 +661,15 @@ async def meta_private_reply_to_comment(page_id: str, page_token: str, comment_i
         raise RuntimeError("Faltan datos para private reply")
     url = f"https://graph.facebook.com/v20.0/{page_id}/messages"
     payload = {"recipient": {"comment_id": comment_id}, "message": {"text": text}}
+    def _graph_params(tok: str) -> dict:
+        params = {"access_token": tok}
+        app_secret = os.getenv("META_APP_SECRET", "")
+        if app_secret:
+            proof = hmac.new(app_secret.encode(), msg=tok.encode(), digestmod=hashlib.sha256).hexdigest()
+            params["appsecret_proof"] = proof
+        return params
     async with httpx.AsyncClient(timeout=10.0) as cx:
-        r = await cx.post(url, params={"access_token": page_token}, json=payload)
+        r = await cx.post(url, params=_graph_params(page_token), json=payload)
         r.raise_for_status()
         return r.json()
 
@@ -777,7 +817,7 @@ async def _create_checkout_for_item(t: dict | None, item: dict, qty: int = 1, mo
     if not price_id:
         raise HTTPException(400, "No hay price_id para el producto")
     try:
-        kkwargs = dict(
+        kwargs = dict(
             mode=mode,
             line_items=[{"price": price_id, "quantity": max(1, int(qty))}],
             success_url=f"{SITE_URL}/pago-exitoso?sid={{CHECKOUT_SESSION_ID}}",
@@ -826,6 +866,32 @@ def suggest_ui_for_text(user_text: str, tenant: Optional[dict]) -> dict:
 @app.get("/health")
 async def health():
     return {"ok": True, "mode": "mock" if USE_MOCK else "real"}
+
+# DB healthcheck (admin-only)
+@app.get("/db/health", dependencies=[Depends(require_admin)])
+async def db_health():
+    if not db_engine:
+        return {"ok": False, "configured": False, "message": "DATABASE_URL no configurado o DB no inicializada"}
+    try:
+        async with db_engine.connect() as conn:
+            # ping
+            pong = (await conn.execute(text("SELECT 1"))).scalar_one()
+            # check tables existence
+            row = (await conn.execute(text(
+                "SELECT "
+                "  to_regclass('public.tenants') IS NOT NULL AS tenants, "
+                "  to_regclass('public.leads')   IS NOT NULL AS leads, "
+                "  to_regclass('public.events')  IS NOT NULL AS events"
+            ))).first()
+        return {
+            "ok": True,
+            "configured": True,
+            "ping": (pong == 1),
+            "tables": {"tenants": bool(row.tenants), "leads": bool(row.leads), "events": bool(row.events)}
+        }
+    except Exception as e:
+        log.error(f"DB healthcheck failed: {e}")
+        return {"ok": False, "configured": True, "error": str(e)}
 
 @app.post("/v1/tenants", dependencies=[Depends(require_admin)])
 async def upsert_tenant(body: TenantIn):

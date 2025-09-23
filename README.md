@@ -185,3 +185,21 @@ curl -X POST "http://localhost:8000/v1/tenants" \
     2.  To enable payments for a tenant, use the `/v1/admin/stripe/connect/onboard` endpoint to generate an onboarding link for the tenant to connect their own Stripe account.
     3.  The application will store the tenant's Stripe account ID in their settings.
     4.  Set up a webhook in your Stripe dashboard and point it to `https://your-domain.com/v1/stripe/webhook`, listening for the required events.
+### Python 3.13 / macOS note (asyncpg build issues)
+
+If you're on Python 3.13 and macOS, `asyncpg` may fail to build wheels. Two options:
+
+- Recommended: use Python 3.12 (matches `runtime.txt`).
+- Or use psycopg v3 binary wheels instead of asyncpg:
+
+```bash
+# Install psycopg variant of requirements
+pip install -r requirements-psycopg.txt
+
+# Set DB driver in your environment (or .env)
+export DB_DRIVER=psycopg
+# DATABASE_URL can be standard postgres://...; the app will adapt it.
+```
+
+When `DB_DRIVER=psycopg`, the backend uses SQLAlchemy with `psycopg` (async)
+instead of `asyncpg`, avoiding compilation on Python 3.13.
