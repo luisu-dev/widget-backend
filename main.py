@@ -593,14 +593,17 @@ def fb_tokens_from_tenant(t: dict | None) -> tuple[str, str, str]:
 
     def _clean(val: Any) -> str:
         """Normalize token/id values coming from the DB."""
-        return str(val or "").strip()
+        raw = str(val or "").strip()
+        if (raw.startswith('"') and raw.endswith('"')) or (raw.startswith("'") and raw.endswith("'")):
+            raw = raw[1:-1].strip()
+        return raw
 
     page_id = _clean(s.get("fb_page_id"))
     page_token = _clean(s.get("fb_page_token"))
     ig_user_id = _clean(s.get("ig_user_id"))
     return page_id, page_token, ig_user_id
 
-async def meta_send_text(page_token: str, recipient_id: str, text: str) -> dict:
+async def meta_send_text(page_token: str, recipient_id: str, text: str, platform: str = "facebook") -> dict:
     if not page_token:
         raise RuntimeError("Falta fb_page_token")
     safe_text = (text or "").strip()
@@ -610,10 +613,12 @@ async def meta_send_text(page_token: str, recipient_id: str, text: str) -> dict:
         safe_text = safe_text[:1997].rstrip() + "..."
     url = "https://graph.facebook.com/v20.0/me/messages"
     payload = {
-        "messaging_type": "RESPONSE",
         "recipient": {"id": recipient_id},
         "message": {"text": safe_text}
     }
+    payload["messaging_type"] = "RESPONSE"
+    if platform == "instagram":
+        payload["messaging_product"] = "instagram"
     def _graph_params(tok: str) -> dict:
         params = {"access_token": tok}
         app_secret = os.getenv("META_APP_SECRET", "")
@@ -1045,6 +1050,8 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
         for entry in payload.get("entry", []):
             owner_id = str(entry.get("id", ""))  # page_id o ig_user_id
             tenant_slug = await resolve_tenant_by_page_or_ig_id(owner_id) or "public"
+            if tenant_slug == "public":
+                log.warning("[META] owner_id %s no mapea a tenant (fallback 'public')", owner_id)
             t = await fetch_tenant(tenant_slug)
             page_id, page_token, ig_user_id = fb_tokens_from_tenant(t)
             # Fallback: si no hay page_id en settings/env, usar owner_id
@@ -1054,11 +1061,30 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
             # Messenger / IG DMs (igual a como lo tenías)
             for m in entry.get("messaging", []):
                 sender_id = str(m.get("sender", {}).get("id", ""))
+                recipient_id_event = str(m.get("recipient", {}).get("id", ""))
                 msg = m.get("message", {})
-                text_in = (msg.get("text") or "").strip()
-                if not (sender_id and text_in):
+                if msg.get("is_echo"):
                     continue
-                sid = ensure_session(f"fb:{tenant_slug}:{sender_id}")
+                text_in = (msg.get("text") or "").strip()
+                if not text_in:
+                    continue
+                business_ids = {x for x in (page_id, ig_user_id) if x}
+                participant_id = sender_id or recipient_id_event
+                if participant_id in business_ids and recipient_id_event and recipient_id_event not in business_ids:
+                    participant_id = recipient_id_event
+                if participant_id in business_ids and sender_id and sender_id not in business_ids:
+                    participant_id = sender_id
+                if not participant_id or participant_id in business_ids:
+                    log.warning(
+                        "[META][DM] skip: no recipient user id for slug=%s owner_id=%s obj=%s sender=%s recipient=%s",
+                        tenant_slug,
+                        owner_id,
+                        obj,
+                        sender_id,
+                        recipient_id_event,
+                    )
+                    continue
+                sid = ensure_session(f"fb:{tenant_slug}:{participant_id}")
                 add_message(sid, "user", text_in)
                 asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_in", {"from": sender_id, "text": text_in}))
 
@@ -1076,10 +1102,16 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                 asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_out", {"to": sender_id, "text": answer[:2000]}))
                 # Enviar respuesta solo si tenemos token (desde DB)
                 if not page_token:
-                    log.warning("[META][DM] skip: falta page_token en settings.fb_page_token (DB)")
+                    log.warning(
+                        "[META][DM] skip: falta page_token para slug=%s owner_id=%s obj=%s",
+                        tenant_slug,
+                        owner_id,
+                        obj,
+                    )
                 else:
                     try:
-                        await meta_send_text(page_token, sender_id, answer)
+                        platform = "instagram" if obj == "instagram" else "facebook"
+                        await meta_send_text(page_token, participant_id, answer, platform=platform)
                     except Exception as e:
                         log.error(f"meta send error: {e}")
 
