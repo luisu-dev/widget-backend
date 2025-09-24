@@ -1,12 +1,13 @@
-import os, uuid, time, asyncio, json, logging, re
+import os, uuid, time, asyncio, json, logging, re, secrets, hashlib, base64
 from collections import OrderedDict
 from typing import Optional, Dict, Any
+from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, HTTPException, Request, Header, Depends, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import StreamingResponse, Response
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
 from openai import OpenAI, OpenAIError
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from sqlalchemy import text
@@ -16,6 +17,7 @@ from twilio.rest import Client as TwilioClient
 from twilio.twiml.messaging_response import MessagingResponse
 from twilio.request_validator import RequestValidator
 import httpx
+import jwt
 import hmac, hashlib
 import stripe
 from io import BytesIO
@@ -53,6 +55,61 @@ def env_int(name: str, default: int) -> int:
         log.warning(f"[config] {name} inválido='{raw}', usando {default}")
         return default
 
+
+def _pbkdf2(password: str, salt: bytes) -> str:
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000)
+    return base64.urlsafe_b64encode(dk).decode("utf-8")
+
+
+def hash_password(password: str, salt: Optional[str] = None) -> str:
+    if not password:
+        raise ValueError("password vacío")
+    if salt is None:
+        salt_bytes = secrets.token_bytes(16)
+        salt_str = base64.urlsafe_b64encode(salt_bytes).decode("utf-8")
+    else:
+        salt_str = salt
+        salt_bytes = base64.urlsafe_b64decode(salt.encode("utf-8"))
+    hashed = _pbkdf2(password, salt_bytes)
+    return f"{salt_str}:{hashed}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    if not stored or ":" not in stored:
+        return False
+    salt_str, hashed = stored.split(":", 1)
+    try:
+        salt_bytes = base64.urlsafe_b64decode(salt_str.encode("utf-8"))
+    except Exception:
+        return False
+    calc = _pbkdf2(password, salt_bytes)
+    return secrets.compare_digest(calc, hashed)
+
+
+def create_access_token(user_id: int, tenant_slug: str, ttl_minutes: Optional[int] = None) -> str:
+    if not AUTH_SECRET:
+        raise RuntimeError("AUTH_SECRET no configurado")
+    ttl = ttl_minutes if ttl_minutes is not None else AUTH_TOKEN_TTL_MINUTES
+    exp = datetime.now(timezone.utc) + timedelta(minutes=max(5, ttl))
+    payload = {
+        "sub": str(user_id),
+        "tenant": tenant_slug,
+        "exp": exp,
+    }
+    return jwt.encode(payload, AUTH_SECRET, algorithm="HS256")
+
+
+def decode_access_token(token: str) -> dict:
+    if not AUTH_SECRET:
+        raise RuntimeError("AUTH_SECRET no configurado")
+    try:
+        payload = jwt.decode(token, AUTH_SECRET, algorithms=["HS256"])
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expirado")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token inválido")
+
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
     "http://localhost:5173,http://127.0.0.1:5173"
@@ -66,6 +123,8 @@ RATE_LIMIT     = env_int("RATE_LIMIT", 20)
 RATE_WINDOW_SECONDS = env_int("RATE_WINDOW_SECONDS", 10)
 ADMIN_KEY      = os.getenv("ADMIN_KEY", "")
 PROXY_IP_HEADER = os.getenv("PROXY_IP_HEADER", "").lower()
+AUTH_SECRET    = os.getenv("AUTH_SECRET", "").strip()
+AUTH_TOKEN_TTL_MINUTES = env_int("AUTH_TOKEN_TTL", 60)
 
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN  = os.getenv("TWILIO_AUTH_TOKEN", "")
@@ -122,6 +181,21 @@ async def require_admin(x_api_key: str = Header(default="")):
     if not ADMIN_KEY or x_api_key != ADMIN_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
+
+async def require_user(request: Request) -> dict:
+    auth_header = request.headers.get("Authorization", "")
+    token = ""
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header[7:].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing authorization")
+    payload = decode_access_token(token)
+    user = await fetch_user_by_id(int(payload.get("sub", 0)))
+    if not user or user.get("tenant_slug") != payload.get("tenant"):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    request.state.user = user
+    return user
+
 # ── Network helpers ────────────────────────────────────────────────────
 def get_client_ip(request: Request) -> str:
     if PROXY_IP_HEADER and PROXY_IP_HEADER in request.headers:
@@ -160,6 +234,31 @@ def clean_phone_for_wa(phone: Optional[str]) -> Optional[str]:
         return None
     digits = "".join(ch for ch in phone if ch.isdigit())
     return digits or None
+
+
+def tenant_whatsapp_url(tenant: Optional[dict], prefill: Optional[str] = None) -> Optional[str]:
+    s = (tenant or {}).get("settings", {}) or {}
+    candidates = [
+        (tenant or {}).get("whatsapp"),
+        s.get("whatsapp_number"),
+        s.get("whatsapp"),
+    ]
+    for candidate in candidates:
+        num = clean_phone_for_wa(candidate)
+        if num:
+            if prefill:
+                return f"https://wa.me/{num}?text={quote_plus(prefill)}"
+            return f"https://wa.me/{num}"
+
+    link_candidates = [
+        s.get("whatsapp_link"),
+        s.get("whatsapp_url"),
+        s.get("whatsapp_href"),
+    ]
+    for link in link_candidates:
+        if isinstance(link, str) and link.strip():
+            return link.strip()
+    return None
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 def is_email(s: str) -> bool:
@@ -426,6 +525,36 @@ async def on_startup():
                 await conn.execute(text(
                     "CREATE INDEX IF NOT EXISTS idx_events_tenant ON events(tenant_slug, type, created_at DESC)"
                 ))
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        id SERIAL PRIMARY KEY,
+                        tenant_slug TEXT NOT NULL,
+                        email TEXT UNIQUE NOT NULL,
+                        password_hash TEXT NOT NULL,
+                        role TEXT DEFAULT 'tenant_admin',
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """))
+                await conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_slug)"
+                ))
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS messages (
+                        id BIGSERIAL PRIMARY KEY,
+                        tenant_slug TEXT NOT NULL,
+                        session_id TEXT,
+                        channel TEXT,
+                        direction TEXT CHECK (direction IN ('in','out')),
+                        author TEXT,
+                        content TEXT,
+                        payload JSONB DEFAULT '{}'::jsonb,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """))
+                await conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_messages_tenant ON messages(tenant_slug, created_at DESC)"
+                ))
 
             log.info("Postgres listo ✅")
 
@@ -452,6 +581,25 @@ async def store_event(tenant_slug: str, sid: str, etype: str, payload: dict | No
             text("""INSERT INTO events (tenant_slug, session_id, type, payload)
                     VALUES (:tenant, :sid, :type, CAST(:payload AS JSONB))"""),
             {"tenant": tenant_slug or "public", "sid": sid, "type": etype, "payload": json.dumps(payload or {})}
+        )
+
+
+async def log_message(tenant_slug: str, sid: str, channel: str, direction: str, content: str, author: Optional[str] = None, payload: Optional[dict] = None):
+    if not db_engine:
+        return
+    async with db_engine.begin() as conn:
+        await conn.execute(
+            text("""INSERT INTO messages (tenant_slug, session_id, channel, direction, author, content, payload)
+                    VALUES (:tenant, :sid, :channel, :direction, :author, :content, CAST(:payload AS JSONB))"""),
+            {
+                "tenant": tenant_slug or "public",
+                "sid": sid,
+                "channel": channel,
+                "direction": direction,
+                "author": author,
+                "content": content[:4000] if content else None,
+                "payload": json.dumps(payload or {}),
+            }
         )
 
 def _twilio_req_is_valid(request: Request, auth_token: str) -> bool:
@@ -575,6 +723,47 @@ class CheckoutQrIn(BaseModel):
     quantity: int = 1
     mode: Optional[str] = None
 
+
+class LoginIn(BaseModel):
+    email: str
+    password: str
+
+
+class AuthTokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class TenantSettingsUpdate(BaseModel):
+    whatsapp: Optional[str] = None
+    settings: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TenantSettingsOut(BaseModel):
+    slug: str
+    name: str
+    whatsapp: Optional[str]
+    settings: Dict[str, Any]
+
+
+class UserCreateIn(BaseModel):
+    tenant: str
+    email: EmailStr
+    password: str
+
+
+class MessageQuery(BaseModel):
+    id: int
+    tenant_slug: str
+    session_id: Optional[str]
+    channel: Optional[str]
+    direction: Optional[str]
+    author: Optional[str]
+    content: Optional[str]
+    payload: Dict[str, Any]
+    created_at: datetime
+
+
 def _mask(value: Optional[str], show: int = 4) -> Optional[str]:
     if not value:
         return None
@@ -652,6 +841,34 @@ async def resolve_tenant_by_page_or_ig_id(page_or_ig_id: str) -> str:
             {"x": str(page_or_ig_id)}
         )).first()
     return row[0] if row else ""
+
+
+async def fetch_user_by_email(email: str) -> Optional[dict]:
+    if not db_engine or not email:
+        return None
+    async with db_engine.connect() as conn:
+        row = (await conn.execute(
+            text("SELECT id, tenant_slug, email, password_hash, role FROM users WHERE email = :email"),
+            {"email": email.strip().lower()}
+        )).first()
+    return dict(row._mapping) if row else None
+
+
+async def fetch_user_by_id(user_id: int) -> Optional[dict]:
+    if not db_engine or not user_id:
+        return None
+    async with db_engine.connect() as conn:
+        row = (await conn.execute(
+            text("SELECT id, tenant_slug, email, password_hash, role FROM users WHERE id = :id"),
+            {"id": int(user_id)}
+        )).first()
+    return dict(row._mapping) if row else None
+
+
+def tenant_bot_enabled(tenant: Optional[dict]) -> bool:
+    settings = (tenant or {}).get("settings", {}) or {}
+    return bool(settings.get("bot_enabled", True))
+
 
 def fb_tokens_from_tenant(t: dict | None) -> tuple[str, str, str]:
     """Obtiene credenciales de Meta para el tenant exclusivamente desde DB.
@@ -1115,6 +1332,13 @@ async def chat(input: ChatIn, request: Request, tenant: str = Query(default=""))
     sid = ensure_session(input.sessionId)
     add_message(sid, "user", input.message)
     t = await fetch_tenant(tenant)
+    asyncio.create_task(store_event(tenant or "public", sid, "msg_in", {"text": (input.message or "")[:2000]}))
+    asyncio.create_task(log_message(tenant or "public", sid, "web", "in", input.message or "", author="user"))
+    if t and not tenant_bot_enabled(t):
+        off_msg = ((t.get("settings") or {}).get("bot_off_message") or "El asistente está en pausa. Escríbenos por WhatsApp o email y te respondemos.")
+        add_message(sid, "assistant", off_msg)
+        asyncio.create_task(log_message(tenant or "public", sid, "web", "out", off_msg, author="assistant"))
+        return ChatOut(sessionId=sid, answer=off_msg)
     catalog_items = await fetch_catalog_for_tenant(t)
     catalog_summary = summarize_catalog_for_prompt(catalog_items)
     system_prompt = build_system_for_tenant(t)
@@ -1123,6 +1347,8 @@ async def chat(input: ChatIn, request: Request, tenant: str = Query(default=""))
     messages = build_messages_with_history(sid, system_prompt)
     answer = generate_answer(messages)
     add_message(sid, "assistant", answer)
+    asyncio.create_task(store_event(tenant or "public", sid, "msg_out", {"text": answer[:2000]}))
+    asyncio.create_task(log_message(tenant or "public", sid, "web", "out", answer, author="assistant"))
     return ChatOut(sessionId=sid, answer=answer)
 
 # ── Eventos (analytics) ────────────────────────────────────────────────
@@ -1218,6 +1444,7 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
             # Fallback: si no hay page_id en settings/env, usar owner_id
             if not page_id and owner_id:
                 page_id = owner_id
+            bot_active = tenant_bot_enabled(t)
 
             # Messenger / IG DMs (igual a como lo tenías)
             for m in entry.get("messaging", []):
@@ -1253,12 +1480,17 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                 sid = ensure_session(f"fb:{tenant_slug}:{participant_id}")
                 add_message(sid, "user", text_in)
                 asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_in", {"from": sender_id, "text": text_in}))
+                channel_label = "instagram_dm" if obj == "instagram" else "facebook_dm"
+                asyncio.create_task(log_message(tenant_slug, sid, channel_label, "in", text_in, author=sender_id))
+
+                if not bot_active:
+                    log.debug(f"[{rid}] bot off, no auto-reply slug={tenant_slug}")
+                    continue
 
                 system_prompt = build_system_for_tenant(t)
                 messages = build_messages_with_history(sid, system_prompt)
                 answer = "Gracias por escribir. Te atiendo enseguida."
-                wa_num = clean_phone_for_wa((t or {}).get("whatsapp"))
-                wa_url = f"https://wa.me/{wa_num}" if wa_num else ""
+                wa_url = tenant_whatsapp_url(t)
                 text_dm = text_in.lower()
                 phone_in_msg = None
                 digits_in = norm_phone(text_in)
@@ -1304,6 +1536,7 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
 
                 add_message(sid, "assistant", answer)
                 asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_out", {"to": sender_id, "text": answer[:2000]}))
+                asyncio.create_task(log_message(tenant_slug, sid, channel_label, "out", answer, author="bot"))
                 # Enviar respuesta solo si tenemos token (desde DB)
                 if not page_token:
                     log.warning(
@@ -1352,6 +1585,10 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                         log.info(f"[{rid}] feed skip: comentario propio (loop guard)")
                         continue
 
+                    if not bot_active:
+                        log.debug(f"[{rid}] bot off, comentario sin respuesta slug={tenant_slug}")
+                        continue
+
                     public_reply = "Gracias por tu comentario. Te escribo por DM para más detalles."
                     if text_in:
                         brand_prompt = build_system_for_tenant(t)
@@ -1386,6 +1623,7 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                     else:
                         try:
                             await fb_reply_comment(page_token, comment_id, public_reply)
+                            asyncio.create_task(log_message(tenant_slug, sid, "facebook_comment", "out", public_reply, author="bot"))
                         except Exception as e:
                             log.error(f"[{rid}] fb_reply_comment error: {e}")
 
@@ -1400,6 +1638,7 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                         tenant_slug, sid, "page_comment_in",
                         {"comment_id": comment_id, "author_id": author_id, "text": text_in}
                     ))
+                    asyncio.create_task(log_message(tenant_slug, sid, "facebook_comment", "in", text_in, author=author_id))
 
                 # Instagram comments
                 if obj == "instagram" and field == "comments":
@@ -1416,6 +1655,10 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                         continue
                     if author_id and ig_user_id and author_id == ig_user_id:
                         log.info(f"[{rid}] IG skip: comentario propio (loop guard)")
+                        continue
+
+                    if not bot_active:
+                        log.debug(f"[{rid}] bot off IG comment slug={tenant_slug}")
                         continue
 
                     public_reply = "Gracias por tu comentario. Te escribo por DM para más detalles."
@@ -1452,6 +1695,7 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                     else:
                         try:
                             await ig_reply_comment(page_token, ig_comment_id, public_reply)
+                            asyncio.create_task(log_message(tenant_slug, sid, "instagram_comment", "out", public_reply, author="bot"))
                         except Exception as e:
                             log.error(f"[{rid}] ig_reply_comment error: {e}")
 
@@ -1466,6 +1710,7 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                         tenant_slug, sid, "instagram_comment_in",
                         {"comment_id": ig_comment_id, "author_id": author_id, "text": text_in}
                     ))
+                    asyncio.create_task(log_message(tenant_slug, sid, "instagram_comment", "in", text_in, author=author_id))
 
         return {"ok": True}
     except Exception as e:
@@ -1511,6 +1756,7 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
     sid = ensure_session(input.sessionId)
     add_message(sid, "user", input.message)
     asyncio.create_task(store_event(tenant or "public", sid, "msg_in", {"text": (input.message or "")[:2000]}))
+    asyncio.create_task(log_message(tenant or "public", sid, "web", "in", input.message or "", author="user"))
 
     t = await fetch_tenant(tenant)
     catalog_items = await fetch_catalog_for_tenant(t)
@@ -1534,6 +1780,14 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 if purchase_intent or any(k in text_lc for k in reset_keys) or text_lc.endswith("?"):
                     log.debug(f"[chat][flow] reset sid={sid}")
                     flow.update({"stage": None, "name": None, "method": None, "contact": None})
+
+            if t and not tenant_bot_enabled(t):
+                off_msg = ((t.get("settings") or {}).get("bot_off_message") or "El asistente está en pausa. Escríbenos por WhatsApp o envíanos un correo y te respondemos enseguida.")
+                add_message(sid, "assistant", off_msg)
+                asyncio.create_task(log_message(tenant or "public", sid, "web", "out", off_msg, author="assistant"))
+                yield sse_event(json.dumps({"content": off_msg}), event="delta")
+                yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
+                return
 
             # Atajo: checklist explícito
             if "checklist" in text_lc or text_lc.strip() in {"ver checklist"}:
@@ -1681,11 +1935,7 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
 
                 base = f"Listo, registré tus datos: {flow['name']} · {flow['method']}."
                 if flow["method"] == "whatsapp":
-                    wa_num = clean_phone_for_wa((t or {}).get("whatsapp"))
-                    wa_url = None
-                    if wa_num:
-                        default_text = quote_plus(f"Hola, soy {flow['name']} y vengo del asistente")
-                        wa_url = f"https://wa.me/{wa_num}?text={default_text}"
+                    wa_url = tenant_whatsapp_url(t, prefill=f"Hola, soy {flow['name']} y vengo del asistente")
                     msg_text = base + (f" Puedes escribirnos por WhatsApp aquí: 👉 {wa_url}" if wa_url else " Puedes escribirnos por WhatsApp en el botón de abajo.")
                     yield sse_event(json.dumps({"content": msg_text}), event="delta")
                     if wa_url:
@@ -1749,6 +1999,7 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                     yield sse_event(json.dumps({"content": ch}), event="delta")
                     await asyncio.sleep(0)
                 add_message(sid, "assistant", full)
+                asyncio.create_task(log_message(tenant or "public", sid, "web", "out", full, author="assistant"))
                 ui = suggest_ui_for_text(input.message, t)
                 yield sse_event(json.dumps(ui), event="ui")
                 yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
@@ -1781,10 +2032,12 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                     await asyncio.sleep(0)
                 if await request.is_disconnected():
                     add_message(sid, "assistant", final_text)
+                    asyncio.create_task(log_message(tenant or "public", sid, "web", "out", final_text, author="assistant"))
                     return
 
             add_message(sid, "assistant", final_text)
             asyncio.create_task(store_event(tenant or "public", sid, "msg_out", {"text": final_text[:2000]}))
+            asyncio.create_task(log_message(tenant or "public", sid, "web", "out", final_text, author="assistant"))
             ui = suggest_ui_for_text(input.message, t)
             yield sse_event(json.dumps(ui), event="ui")
             yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
@@ -1798,6 +2051,40 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
         media_type="text/event-stream",
         headers={"Cache-Control":"no-cache","Connection":"keep-alive","X-Accel-Buffering":"no"}
     )
+
+
+# ── Auth endpoints ─────────────────────────────────────────────────────
+@app.post("/auth/login", response_model=AuthTokenOut)
+async def auth_login(body: LoginIn):
+    user = await fetch_user_by_email(body.email)
+    if not user or not verify_password(body.password, user.get("password_hash", "")):
+        raise HTTPException(status_code=401, detail="Credenciales inválidas")
+    token = create_access_token(user["id"], user["tenant_slug"])
+    if db_engine:
+        try:
+            async with db_engine.begin() as conn:
+                await conn.execute(
+                    text("UPDATE users SET updated_at = NOW() WHERE id = :id"),
+                    {"id": user["id"]}
+                )
+        except Exception as e:
+            log.debug(f"auth login update failed: {e}")
+    return AuthTokenOut(access_token=token)
+
+
+@app.get("/auth/me")
+async def auth_me(current = Depends(require_user)):
+    tenant = await fetch_tenant(current["tenant_slug"])
+    return {
+        "user": {
+            "id": current["id"],
+            "email": current["email"],
+            "tenant": current["tenant_slug"],
+            "role": current.get("role"),
+        },
+        "tenant": tenant,
+    }
+
 
 # ── Admin endpoints ────────────────────────────────────────────────────
 @app.get("/v1/admin/leads", dependencies=[Depends(require_admin)])
@@ -1816,6 +2103,154 @@ async def admin_list_leads(limit: int = 50, offset: int = 0, tenant: str = Query
     async with db_engine.connect() as conn:
         rows = (await conn.execute(text(q), {"tenant": tenant, "limit": limit, "offset": offset})).mappings().all()
     return {"items": list(rows)}
+
+
+@app.post("/v1/admin/users", dependencies=[Depends(require_admin)])
+async def admin_create_user(body: UserCreateIn):
+    tenant_slug = body.tenant.strip()
+    if not valid_slug(tenant_slug):
+        raise HTTPException(400, "Invalid tenant slug")
+    tenant_obj = await fetch_tenant(tenant_slug)
+    if not tenant_obj:
+        raise HTTPException(404, "Tenant no encontrado")
+    password_hash = hash_password(body.password)
+    async with db_engine.begin() as conn:
+        await conn.execute(
+            text("""
+                INSERT INTO users (tenant_slug, email, password_hash)
+                VALUES (:tenant, :email, :hash)
+                ON CONFLICT (email) DO UPDATE SET
+                    tenant_slug = EXCLUDED.tenant_slug,
+                    password_hash = EXCLUDED.password_hash,
+                    updated_at = NOW()
+            """),
+            {"tenant": tenant_slug, "email": body.email.strip().lower(), "hash": password_hash}
+        )
+    return {"ok": True}
+
+
+# ── Tenant portal endpoints (auth required) ────────────────────────────
+@app.get("/v1/admin/tenant/settings", response_model=TenantSettingsOut)
+async def tenant_get_settings(current = Depends(require_user)):
+    tenant = await fetch_tenant(current["tenant_slug"])
+    if not tenant:
+        raise HTTPException(404, "Tenant no encontrado")
+    return TenantSettingsOut(
+        slug=tenant["slug"],
+        name=tenant["name"],
+        whatsapp=tenant.get("whatsapp"),
+        settings=tenant.get("settings") or {}
+    )
+
+
+@app.put("/v1/admin/tenant/settings", response_model=TenantSettingsOut)
+async def tenant_update_settings(body: TenantSettingsUpdate, current = Depends(require_user)):
+    tenant_slug = current["tenant_slug"]
+    tenant = await fetch_tenant(tenant_slug)
+    if not tenant:
+        raise HTTPException(404, "Tenant no encontrado")
+
+    if body.whatsapp is not None:
+        async with db_engine.begin() as conn:
+            await conn.execute(
+                text("UPDATE tenants SET whatsapp = :wa, updated_at = NOW() WHERE slug = :slug"),
+                {"wa": body.whatsapp.strip() if body.whatsapp else None, "slug": tenant_slug}
+            )
+
+    if body.settings:
+        await update_tenant_settings(tenant_slug, body.settings)
+
+    tenant_updated = await fetch_tenant(tenant_slug)
+    return TenantSettingsOut(
+        slug=tenant_updated["slug"],
+        name=tenant_updated["name"],
+        whatsapp=tenant_updated.get("whatsapp"),
+        settings=tenant_updated.get("settings") or {}
+    )
+
+
+@app.get("/v1/admin/messages")
+async def tenant_list_messages(
+    channel: str = Query(default=""),
+    limit: int = Query(default=50, ge=1, le=200),
+    before_id: Optional[int] = Query(default=None),
+    current = Depends(require_user)
+):
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+    clauses = ["tenant_slug = :tenant"]
+    params: Dict[str, Any] = {"tenant": current["tenant_slug"], "limit": limit}
+    if channel:
+        clauses.append("channel = :channel")
+        params["channel"] = channel
+    if before_id:
+        clauses.append("id < :before")
+        params["before"] = before_id
+    where = " AND ".join(clauses)
+    q = f"""
+        SELECT id, tenant_slug, session_id, channel, direction, author, content, payload, created_at
+        FROM messages
+        WHERE {where}
+        ORDER BY id DESC
+        LIMIT :limit
+    """
+    async with db_engine.connect() as conn:
+        rows = (await conn.execute(text(q), params)).mappings().all()
+    return {"items": [dict(row) for row in rows]}
+
+
+@app.get("/v1/admin/metrics/overview")
+async def tenant_metrics_overview(days: int = Query(default=7, ge=1, le=90), current = Depends(require_user)):
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+    tenant = current["tenant_slug"]
+    async with db_engine.connect() as conn:
+        msgs = (await conn.execute(text("""
+            SELECT 
+                count(*) FILTER (WHERE direction = 'in') AS inbound,
+                count(*) FILTER (WHERE direction = 'out') AS outbound,
+                count(DISTINCT session_id) AS conversations
+            FROM messages
+            WHERE tenant_slug = :tenant
+              AND created_at >= NOW() - (:days || ' days')::interval
+        """), {"tenant": tenant, "days": str(days)})).mappings().first() or {}
+
+        actions = (await conn.execute(text("""
+            SELECT type, count(*) AS c
+            FROM events
+            WHERE tenant_slug = :tenant
+              AND created_at >= NOW() - (:days || ' days')::interval
+              AND type IN ('lead_saved','wa_out','checkout_link_out','stripe_checkout_completed')
+            GROUP BY 1
+        """), {"tenant": tenant, "days": str(days)})).mappings().all()
+
+        lead_count = (await conn.execute(text("""
+            SELECT count(*) AS leads
+            FROM leads
+            WHERE tenant_slug = :tenant
+              AND created_at >= NOW() - (:days || ' days')::interval
+        """), {"tenant": tenant, "days": str(days)})).scalar_one()
+
+        approx_tokens = (await conn.execute(text("""
+            SELECT COALESCE(sum(GREATEST(char_length(content) / 4, 1)), 0)::int AS tokens
+            FROM messages
+            WHERE tenant_slug = :tenant
+              AND direction = 'out'
+              AND created_at >= NOW() - (:days || ' days')::interval
+        """), {"tenant": tenant, "days": str(days)})).scalar_one()
+
+    return {
+        "messages": {
+            "inbound": int(msgs.get("inbound", 0)),
+            "outbound": int(msgs.get("outbound", 0)),
+            "conversations": int(msgs.get("conversations", 0)),
+        },
+        "actions": {row["type"]: int(row["c"]) for row in actions},
+        "leads": int(lead_count or 0),
+        "approxTokens": int(approx_tokens or 0),
+        "rangeDays": days,
+    }
+
 
 @app.get("/v1/admin/metrics/daily", dependencies=[Depends(require_admin)])
 async def admin_metrics_daily(tenant: str = Query(default="")):
@@ -2032,8 +2467,18 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
     sid = ensure_session(sid_session)
     add_message(sid, "user", body_txt)
     asyncio.create_task(store_event(tenant or "public", sid, "wa_in", {"from": from_raw, "text": body_txt}))
+    asyncio.create_task(log_message(tenant or "public", sid, "whatsapp", "in", body_txt, author=from_raw))
 
     t = await fetch_tenant(tenant)
+
+    if t and not tenant_bot_enabled(t):
+        off_msg = ((t.get("settings") or {}).get("bot_off_message") or "El asistente está en pausa. Escríbenos directamente por WhatsApp al enlace habitual.")
+        add_message(sid, "assistant", off_msg)
+        asyncio.create_task(store_event(tenant or "public", sid, "wa_out", {"to": from_raw, "text": off_msg[:2000]}))
+        asyncio.create_task(log_message(tenant or "public", sid, "whatsapp", "out", off_msg, author="bot"))
+        twiml = MessagingResponse()
+        twiml.message(off_msg)
+        return Response(str(twiml), media_type="application/xml")
 
     # Fast-path: "quiero suscribirme al plan starter/meta"
     if any(k in text_lc for k in ["compr", "compra", "pagar", "pago", "checkout", "suscrib"]) and ("starter" in text_lc or "meta" in text_lc):
@@ -2047,6 +2492,7 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
             answer = f"Listo ✅ Aquí tienes tu enlace de suscripción al plan {plan.title()}: {session['url']}"
             add_message(sid, "assistant", answer)
             asyncio.create_task(store_event(tenant or "public", sid, "wa_out", {"to": from_raw, "text": answer[:2000]}))
+            asyncio.create_task(log_message(tenant or "public", sid, "whatsapp", "out", answer, author="bot"))
             twiml = MessagingResponse()
             twiml.message(answer)
             return Response(str(twiml), media_type="application/xml")
@@ -2060,6 +2506,7 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
     answer = generate_answer(messages)
     add_message(sid, "assistant", answer)
     asyncio.create_task(store_event(tenant or "public", sid, "wa_out", {"to": from_raw, "text": answer[:2000]}))
+    asyncio.create_task(log_message(tenant or "public", sid, "whatsapp", "out", answer, author="bot"))
 
     twiml = MessagingResponse()
     twiml.message(answer)

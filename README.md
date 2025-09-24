@@ -112,6 +112,14 @@ A typical request flow for a web chat is as follows:
 -   **Launch the demo chat widget:**
     Open the `index.html` file in your browser to interact with the chat widget.
 
+-   **(Nuevo) Dashboard administrativo:**
+    ```bash
+    cd dashboard
+    npm install
+    npm run dev
+    ```
+    En desarrollo el dashboard se sirve en `http://localhost:5174` y, gracias al proxy de Vite, consume la API del backend en `localhost:8000`. Configura las variables `AUTH_SECRET` y crea usuarios con `POST /v1/admin/users` para iniciar sesión.
+
 ## API Endpoints
 
 ### Chat
