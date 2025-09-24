@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react'
 
-const API_BASE = '' // same origin; configure proxy in dev
+const API_BASE = import.meta.env.VITE_API_BASE ?? ''; // same origin; configure proxy in dev
 
 function useAuth() {
   const [token, setToken] = useState(() => localStorage.getItem('zia_token') || '')
