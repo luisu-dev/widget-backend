@@ -1618,6 +1618,8 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                     if "Te escribo por DM para más detalles." not in public_reply:
                         public_reply = public_reply.rstrip() + " Te escribo por DM para más detalles."
 
+                    sid = ensure_session(f"fb:{tenant_slug}:comment:{comment_id}")
+
                     if META_DRY_RUN:
                         log.debug(f"[{rid}] feed DRY_RUN omitido comment={comment_id}")
                     else:
@@ -1633,7 +1635,6 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                         except Exception as e:
                             log.error(f"[{rid}] private reply error: {e}")
 
-                    sid = ensure_session(f"fb:{tenant_slug}:comment:{comment_id}")
                     asyncio.create_task(store_event(
                         tenant_slug, sid, "page_comment_in",
                         {"comment_id": comment_id, "author_id": author_id, "text": text_in}
@@ -1690,6 +1691,8 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                     if "Te escribo por DM para más detalles." not in public_reply:
                         public_reply = public_reply.rstrip() + " Te escribo por DM para más detalles."
 
+                    sid = ensure_session(f"ig:{tenant_slug}:comment:{ig_comment_id}")
+
                     if META_DRY_RUN:
                         log.debug(f"[{rid}] IG DRY_RUN omitido comment={ig_comment_id}")
                     else:
@@ -1705,7 +1708,6 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                         except Exception as e:
                             log.error(f"[{rid}] IG private reply error: {e}")
 
-                    sid = ensure_session(f"ig:{tenant_slug}:comment:{ig_comment_id}")
                     asyncio.create_task(store_event(
                         tenant_slug, sid, "instagram_comment_in",
                         {"comment_id": ig_comment_id, "author_id": author_id, "text": text_in}
