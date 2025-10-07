@@ -38,7 +38,7 @@ function Dashboard() {
   const [token, setToken] = useState(() => localStorage.getItem('zia_token') || '');
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error] = useState('');
   const [activeTab, setActiveTab] = useState('integrations');
 
   useEffect(() => {

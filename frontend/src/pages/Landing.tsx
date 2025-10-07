@@ -5,7 +5,7 @@ import type { MotionValue } from "framer-motion";
 
 import logoMini from "../images/logo_mini.png";
 import faviconUrl from "../images/favicon.ico";
-import { sendContact } from "./lib/contact";
+import { sendContact } from "../lib/contact";
 
 /* ========= Rendimiento (bajar costos en Android/equipos modestos) ========= */
 const isAndroid = /Android/i.test(navigator.userAgent);
