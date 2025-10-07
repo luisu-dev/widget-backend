@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/id_lu/**)",
+      "Bash(mv:*)",
+      "Bash(git clone:*)",
+      "Bash(cat:*)",
+      "Bash(npm install:*)",
+      "Bash(mkdir:*)",
+      "Bash(touch:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

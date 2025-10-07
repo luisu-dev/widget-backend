@@ -145,7 +145,15 @@ GRAPH = "https://graph.facebook.com/v20.0"
 
 stripe.api_key = STRIPE_SECRET_KEY
 
-
+# ── Constantes de la aplicación ───────────────────────────────────────────
+MAX_TEXT_LENGTH = 2000  # Longitud máxima de texto en respuestas
+MAX_MESSAGE_CONTENT_LENGTH = 4000  # Longitud máxima de contenido de mensaje en DB
+CATALOG_MAX_ITEMS = 14  # Máximo de productos en catálogo
+CATALOG_MAX_DESC_LENGTH = 120  # Máximo de caracteres en descripción de producto
+CHAT_MAX_HISTORY_PAIRS = 8  # Máximo de pares de mensajes en historial de chat
+OPENAI_RETRY_DELAY = 0.7  # Segundos de espera entre reintentos de OpenAI
+CATALOG_FETCH_TIMEOUT = 6  # Timeout en segundos para fetch de catálogo
+DB_CONNECT_TIMEOUT = 5  # Timeout en segundos para conexión a DB
 
 ZIA_SYSTEM_PROMPT = (
     "Eres el asistente de {brand}. "
@@ -174,6 +182,13 @@ try:
     app.mount("/widget", StaticFiles(directory="public/widget"), name="widget")
 except Exception as _e:
     # In some environments the folder may not exist; ignore at import time.
+    pass
+
+# Admin dashboard frontend (React/Vue/etc compilado)
+try:
+    app.mount("/admin", StaticFiles(directory="public/admin", html=True), name="admin")
+except Exception as _e:
+    # En desarrollo puede no existir todavía
     pass
 
 # ── Auth util ──────────────────────────────────────────────────────────
@@ -467,6 +482,24 @@ db_engine: Optional[AsyncEngine] = None
 async def on_startup():
     global db_engine
 
+    # Validar secretos críticos
+    required_secrets = {
+        "AUTH_SECRET": AUTH_SECRET,
+        "ADMIN_KEY": ADMIN_KEY,
+    }
+    missing = [k for k, v in required_secrets.items() if not v or not v.strip()]
+    if missing:
+        raise RuntimeError(f"❌ Secretos requeridos no configurados: {', '.join(missing)}")
+
+    # Validar secretos de servicios si están en uso
+    if STRIPE_SECRET_KEY and not STRIPE_WEBHOOK_SECRET:
+        log.warning("⚠️  STRIPE_SECRET_KEY configurado pero falta STRIPE_WEBHOOK_SECRET")
+
+    if (TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN) and not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN):
+        log.warning("⚠️  Credenciales de Twilio incompletas")
+
+    log.info("✅ Validación de secretos completada")
+
     # DB: si no hay URL, seguimos sin persistencia
     if not ASYNC_DB_URL:
         log.warning("DATABASE_URL no seteado: corriendo sin persistencia")
@@ -572,6 +605,10 @@ async def on_startup():
         except Exception as e:
             log.warning(f"Twilio no inicializado: {e}")
 
+    # Iniciar tarea de limpieza de sesiones en background
+    asyncio.create_task(cleanup_old_sessions())
+    log.info("🧹 Tarea de limpieza de sesiones iniciada")
+
 
 async def store_event(tenant_slug: str, sid: str, etype: str, payload: dict | None = None):
     if not db_engine:
@@ -597,19 +634,48 @@ async def log_message(tenant_slug: str, sid: str, channel: str, direction: str, 
                 "channel": channel,
                 "direction": direction,
                 "author": author,
-                "content": content[:4000] if content else None,
+                "content": content[:MAX_MESSAGE_CONTENT_LENGTH] if content else None,
                 "payload": json.dumps(payload or {}),
             }
         )
 
 def _twilio_req_is_valid(request: Request, auth_token: str) -> bool:
+    """Valida la firma de Twilio en webhooks para prevenir solicitudes falsificadas."""
     if not TWILIO_VALIDATE_SIGNATURE:
         return True
+
+    if not auth_token:
+        log.warning("TWILIO_VALIDATE_SIGNATURE activado pero auth_token vacío")
+        return False
+
     try:
         sig = request.headers.get("X-Twilio-Signature", "")
+        if not sig:
+            log.warning("Solicitud Twilio sin X-Twilio-Signature header")
+            return False
+
+        # Construir URL completa
         url = str(request.url)
-        return bool(sig)
-    except Exception:
+
+        # Obtener parámetros del form body
+        validator = RequestValidator(auth_token)
+
+        # Para validación, necesitamos los parámetros del POST como dict
+        # RequestValidator espera un dict de strings
+        params = {}
+        if request.method == "POST":
+            # Los parámetros ya están en request.form pero necesitamos convertirlos
+            # Twilio envía application/x-www-form-urlencoded
+            body = getattr(request.state, "_twilio_body", {})
+            params = {k: v for k, v in body.items()}
+
+        is_valid = validator.validate(url, params, sig)
+        if not is_valid:
+            log.warning(f"Firma Twilio inválida para URL: {url}")
+
+        return is_valid
+    except Exception as e:
+        log.error(f"Error validando firma Twilio: {e}")
         return False
 
 async def twilio_send_whatsapp(tenant_slug: str, to_e164: str, text: str) -> dict:
@@ -641,7 +707,23 @@ async def twilio_send_sms(tenant_slug: str, to_e164: str, text: str) -> dict:
     return {"sid": msg.sid}
 
 
-#helpers for meta tokens 
+#helpers for meta tokens
+def _graph_params(access_token: str) -> dict:
+    """
+    Genera parámetros para llamadas a la Graph API de Meta.
+    Incluye el access_token y opcionalmente appsecret_proof para mayor seguridad.
+    """
+    params = {"access_token": access_token}
+    app_secret = os.getenv("META_APP_SECRET", "")
+    if app_secret:
+        proof = hmac.new(
+            app_secret.encode("utf-8"),
+            msg=access_token.encode("utf-8"),
+            digestmod=hashlib.sha256
+        ).hexdigest()
+        params["appsecret_proof"] = proof
+    return params
+
 async def _http_get(url, params):
     async with httpx.AsyncClient(timeout=12) as cx:
         r = await cx.get(url, params=params)
@@ -776,7 +858,32 @@ def _mask(value: Optional[str], show: int = 4) -> Optional[str]:
 SESSIONS: Dict[str, dict] = {}
 MESSAGES: Dict[str, list[dict]] = {}
 
+# Constantes para cleanup de sesiones
+SESSION_MAX_AGE_HOURS = 24
+SESSION_CLEANUP_INTERVAL_SECONDS = 3600  # 1 hora
+
 now_ms = lambda: int(time.time() * 1000)
+
+async def cleanup_old_sessions():
+    """Limpia sesiones antiguas de la memoria para prevenir memory leaks."""
+    while True:
+        try:
+            await asyncio.sleep(SESSION_CLEANUP_INTERVAL_SECONDS)
+
+            cutoff_ms = now_ms() - (SESSION_MAX_AGE_HOURS * 3600 * 1000)
+            to_delete = [
+                sid for sid, session in SESSIONS.items()
+                if session.get("startedAt", 0) < cutoff_ms
+            ]
+
+            for sid in to_delete:
+                SESSIONS.pop(sid, None)
+                MESSAGES.pop(sid, None)
+
+            if to_delete:
+                log.info(f"🧹 Limpiadas {len(to_delete)} sesiones antiguas (>{SESSION_MAX_AGE_HOURS}h)")
+        except Exception as e:
+            log.error(f"Error en cleanup de sesiones: {e}")
 
 def new_session_id() -> str:
     return f"sess_{uuid.uuid4().hex}"
@@ -909,13 +1016,6 @@ async def meta_send_text(page_token: str, recipient_id: str, text: str, platform
         "message": {"text": safe_text}
     }
     payload["messaging_type"] = "RESPONSE"
-    def _graph_params(tok: str) -> dict:
-        params = {"access_token": tok}
-        app_secret = os.getenv("META_APP_SECRET", "")
-        if app_secret:
-            proof = hmac.new(app_secret.encode(), msg=tok.encode(), digestmod=hashlib.sha256).hexdigest()
-            params["appsecret_proof"] = proof
-        return params
     async with httpx.AsyncClient(timeout=10.0) as cx:
         r = await cx.post(url, params=_graph_params(page_token), json=payload)
         if r.status_code >= 400:
@@ -979,13 +1079,6 @@ async def fb_reply_comment(page_token: str, comment_id: str, message: str) -> di
     if not (page_token and comment_id and message):
         raise RuntimeError("Faltan datos para reply FB")
     url = f"https://graph.facebook.com/v20.0/{comment_id}/comments"
-    def _graph_params(tok: str) -> dict:
-        params = {"access_token": tok}
-        app_secret = os.getenv("META_APP_SECRET", "")
-        if app_secret:
-            proof = hmac.new(app_secret.encode(), msg=tok.encode(), digestmod=hashlib.sha256).hexdigest()
-            params["appsecret_proof"] = proof
-        return params
     async with httpx.AsyncClient(timeout=10.0) as cx:
         r = await cx.post(url, params=_graph_params(page_token), data={"message": message})
         if r.status_code >= 400:
@@ -997,13 +1090,6 @@ async def ig_reply_comment(page_token: str, ig_comment_id: str, message: str) ->
     if not (page_token and ig_comment_id and message):
         raise RuntimeError("Faltan datos para reply IG")
     url = f"https://graph.facebook.com/v20.0/{ig_comment_id}/replies"
-    def _graph_params(tok: str) -> dict:
-        params = {"access_token": tok}
-        app_secret = os.getenv("META_APP_SECRET", "")
-        if app_secret:
-            proof = hmac.new(app_secret.encode(), msg=tok.encode(), digestmod=hashlib.sha256).hexdigest()
-            params["appsecret_proof"] = proof
-        return params
     async with httpx.AsyncClient(timeout=10.0) as cx:
         r = await cx.post(url, params=_graph_params(page_token), data={"message": message})
         if r.status_code >= 400:
@@ -1016,13 +1102,6 @@ async def meta_private_reply_to_comment(page_id: str, page_token: str, comment_i
         raise RuntimeError("Faltan datos para private reply")
     url = f"https://graph.facebook.com/v20.0/{page_id}/messages"
     payload = {"recipient": {"comment_id": comment_id}, "message": {"text": text}}
-    def _graph_params(tok: str) -> dict:
-        params = {"access_token": tok}
-        app_secret = os.getenv("META_APP_SECRET", "")
-        if app_secret:
-            proof = hmac.new(app_secret.encode(), msg=tok.encode(), digestmod=hashlib.sha256).hexdigest()
-            params["appsecret_proof"] = proof
-        return params
     async with httpx.AsyncClient(timeout=10.0) as cx:
         r = await cx.post(url, params=_graph_params(page_token), json=payload)
         r.raise_for_status()
@@ -1043,19 +1122,29 @@ def get_twilio_client_for_tenant(t: dict | None):
     return TwilioClient(sid, tok)
 
 def build_system_for_tenant(tenant: Optional[dict]) -> str:
+    """Construye el prompt del sistema personalizado para un tenant."""
     s = (tenant or {}).get("settings", {}) or {}
     brand = s.get("brand_name") or (tenant or {}).get("name") or "esta marca"
-    tone  = s.get("tone", "cálido y directo")
-    extras = [f"Contexto de negocio: {brand}. Tono: {tone}."]
-    # ... resto igual ...
+    tone = s.get("tone", "cálido y directo")
+
+    # Extraer configuraciones del tenant
+    policies = s.get("policies", "")
+    hours = s.get("business_hours", "")
+    products = s.get("products_description", "")
+    prices = s.get("prices", {})
+    faq = s.get("faq", [])
+
+    # Construir prompt base
     base = ZIA_SYSTEM_PROMPT.format(brand=brand)
-    return (base + "\n" + " ".join(extras)).strip()
-
-
     extras = [f"Contexto de negocio: {brand}. Tono: {tone}."]
-    if policies: extras.append(f"Políticas: {policies}.")
-    if hours:    extras.append(f"Horarios: {hours}.")
-    if products: extras.append(f"Oferta/servicios: {products}.")
+
+    # Agregar información adicional si está disponible
+    if policies:
+        extras.append(f"Políticas: {policies}.")
+    if hours:
+        extras.append(f"Horarios: {hours}.")
+    if products:
+        extras.append(f"Oferta/servicios: {products}.")
     if prices and isinstance(prices, dict):
         price_txt = "; ".join(f"{k}: {v}" for k, v in prices.items())
         extras.append(f"Precios conocidos (orientativos): {price_txt}.")
@@ -1068,7 +1157,8 @@ def build_system_for_tenant(tenant: Optional[dict]) -> str:
             return str(item)
         faq_txt = " | ".join(fmt(x) for x in faq[:8])
         extras.append(f"FAQ internas (usa si aplica, concisas): {faq_txt}.")
-    return (ZIA_SYSTEM_PROMPT + "\n" + " ".join(extras)).strip()
+
+    return (base + "\n" + " ".join(extras)).strip()
 
 # ── Catálogo externo (por tenant) ─────────────────────────────────────
 CATALOG_CACHE: Dict[str, dict] = {}
@@ -1097,7 +1187,7 @@ async def fetch_catalog_for_tenant(t: dict | None) -> list[dict]:
     if isinstance(data, list):
         items = [x for x in data if isinstance(x, dict)]
     elif isinstance(data, dict):
-        for key in ("items", "products", "catalog", "data"):
+        for key in ("items", "products", "catalog", "data", "plans"):
             v = data.get(key)
             if isinstance(v, list):
                 items = [x for x in v if isinstance(x, dict)]
@@ -1106,12 +1196,47 @@ async def fetch_catalog_for_tenant(t: dict | None) -> list[dict]:
     # normalizar campos más comunes
     normd: list[dict] = []
     for it in items[:200]:
-        name = str(it.get("name") or it.get("title") or it.get("Nombre") or "").strip()
+        # Nombre: acepta title, name, Nombre
+        name = str(it.get("title") or it.get("name") or it.get("Nombre") or "").strip()
+
+        # Descripción: primero intenta description, luego construye desde features o price
         desc = str(it.get("description") or it.get("Descripcion") or it.get("Descripción") or "").strip()
-        pid  = str(it.get("product_id") or it.get("stripe_product_id") or it.get("stripe_id") or it.get("id") or "").strip()
-        prc  = str(it.get("price_id") or it.get("stripe_price_id") or it.get("default_price") or "").strip()
+        if not desc:
+            # Construir descripción desde features (primeras 3)
+            if "features" in it and isinstance(it.get("features"), list):
+                features_list = [str(f).strip() for f in it["features"][:3] if f]
+                desc = " • ".join(features_list)
+            # Si tampoco hay features, usar el campo price si existe
+            elif "price" in it:
+                desc = str(it.get("price", "")).strip()
+
+        # ID del producto: key, product_id, stripe_product_id, stripe_id, id
+        pid = str(it.get("key") or it.get("product_id") or it.get("stripe_product_id") or it.get("stripe_id") or it.get("id") or "").strip()
+
+        # ID del precio: priceId (camelCase), price_id (snake_case), stripe_price_id, default_price
+        prc = str(it.get("priceId") or it.get("price_id") or it.get("stripe_price_id") or it.get("default_price") or "").strip()
+
+        # Metadata
         meta = it.get("metadata") if isinstance(it.get("metadata"), dict) else {}
-        normd.append({"name": name, "description": desc, "product_id": pid, "price_id": prc, "metadata": meta, "raw": it})
+
+        # Preservar campos adicionales útiles del JSON original
+        extra_fields = {}
+        if "image" in it:
+            extra_fields["image"] = it["image"]
+        if "price" in it:
+            extra_fields["price_display"] = it["price"]
+        if "sections" in it:
+            extra_fields["sections"] = it["sections"]
+
+        normd.append({
+            "name": name,
+            "description": desc,
+            "product_id": pid,
+            "price_id": prc,
+            "metadata": meta,
+            **extra_fields,  # Agregar campos extra
+            "raw": it
+        })
 
     CATALOG_CACHE[slug] = {"at": now, "items": normd}
     return normd
@@ -1191,7 +1316,7 @@ async def _create_checkout_for_item(t: dict | None, item: dict, qty: int = 1, mo
         raise HTTPException(502, "No se pudo crear la sesión de pago")
     return {"id": session.id, "url": session.url}
 
-def build_messages_with_history(sid: str, system_prompt: str, max_pairs: int = 8) -> list[dict]:
+def build_messages_with_history(sid: str, system_prompt: str, max_pairs: int = CHAT_MAX_HISTORY_PAIRS) -> list[dict]:
     convo = MESSAGES.get(sid, [])
     recent = convo[-2*max_pairs:]
     history = [{"role": m["role"], "content": m["content"]} for m in recent]
@@ -1332,7 +1457,7 @@ async def chat(input: ChatIn, request: Request, tenant: str = Query(default=""))
     sid = ensure_session(input.sessionId)
     add_message(sid, "user", input.message)
     t = await fetch_tenant(tenant)
-    asyncio.create_task(store_event(tenant or "public", sid, "msg_in", {"text": (input.message or "")[:2000]}))
+    asyncio.create_task(store_event(tenant or "public", sid, "msg_in", {"text": (input.message or "")[:MAX_TEXT_LENGTH]}))
     asyncio.create_task(log_message(tenant or "public", sid, "web", "in", input.message or "", author="user"))
     if t and not tenant_bot_enabled(t):
         off_msg = ((t.get("settings") or {}).get("bot_off_message") or "El asistente está en pausa. Escríbenos por WhatsApp o email y te respondemos.")
@@ -1347,7 +1472,7 @@ async def chat(input: ChatIn, request: Request, tenant: str = Query(default=""))
     messages = build_messages_with_history(sid, system_prompt)
     answer = generate_answer(messages)
     add_message(sid, "assistant", answer)
-    asyncio.create_task(store_event(tenant or "public", sid, "msg_out", {"text": answer[:2000]}))
+    asyncio.create_task(store_event(tenant or "public", sid, "msg_out", {"text": answer[:MAX_TEXT_LENGTH]}))
     asyncio.create_task(log_message(tenant or "public", sid, "web", "out", answer, author="assistant"))
     return ChatOut(sessionId=sid, answer=answer)
 
@@ -1379,14 +1504,61 @@ async def meta_webhook_verify(
     hub_verify_token: str = Query(alias="hub.verify_token", default=""),
     hub_challenge: str = Query(alias="hub.challenge", default="")
 ):
+    """Verifica el webhook de Meta durante la configuración."""
     token = os.getenv("META_VERIFY_TOKEN", "")
-    if hub_mode == "subscribe" and hub_verify_token == token:
+
+    if not token:
+        log.error("META_VERIFY_TOKEN no configurado")
+        raise HTTPException(status_code=500, detail="Server misconfiguration")
+
+    if hub_mode == "subscribe" and hub_verify_token and hub_verify_token == token:
+        log.info("✅ Meta webhook verificado exitosamente")
         return Response(hub_challenge, media_type="text/plain")
+
+    log.warning(f"❌ Verificación de Meta fallida: mode={hub_mode}, token_match={hub_verify_token == token}")
     raise HTTPException(status_code=403, detail="Verification failed")
 
+def _validate_meta_signature(request: Request, body: bytes) -> bool:
+    """Valida la firma X-Hub-Signature-256 de Meta para webhooks."""
+    app_secret = os.getenv("META_APP_SECRET", "").strip()
+    if not app_secret:
+        log.warning("META_APP_SECRET no configurado, saltando validación de firma")
+        return True  # En desarrollo puede no estar configurado
+
+    signature = request.headers.get("X-Hub-Signature-256", "")
+    if not signature:
+        log.warning("Webhook de Meta sin X-Hub-Signature-256")
+        return False
+
+    try:
+        # La firma viene como "sha256=<hash>"
+        if not signature.startswith("sha256="):
+            return False
+
+        expected_hash = signature[7:]  # Remueve "sha256="
+        computed_hash = hmac.new(
+            app_secret.encode("utf-8"),
+            body,
+            hashlib.sha256
+        ).hexdigest()
+
+        is_valid = hmac.compare_digest(expected_hash, computed_hash)
+        if not is_valid:
+            log.warning("❌ Firma de Meta inválida")
+        return is_valid
+    except Exception as e:
+        log.error(f"Error validando firma de Meta: {e}")
+        return False
+
 @app.post("/v1/meta/webhook")
-async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
+async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(...)):
     rid = f"meta-{uuid.uuid4().hex[:8]}"
+
+    # Validar firma de Meta
+    body = await request.body()
+    if not _validate_meta_signature(request, body):
+        raise HTTPException(403, "Invalid signature")
+
     try:
         obj = payload.get("object")
         if obj not in {"page", "instagram"}:
@@ -1535,7 +1707,7 @@ async def meta_webhook_events(payload: Dict[str, Any] = Body(...)):
                             )
 
                 add_message(sid, "assistant", answer)
-                asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_out", {"to": sender_id, "text": answer[:2000]}))
+                asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_out", {"to": sender_id, "text": answer[:MAX_TEXT_LENGTH]}))
                 asyncio.create_task(log_message(tenant_slug, sid, channel_label, "out", answer, author="bot"))
                 # Enviar respuesta solo si tenemos token (desde DB)
                 if not page_token:
@@ -1757,7 +1929,7 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
 
     sid = ensure_session(input.sessionId)
     add_message(sid, "user", input.message)
-    asyncio.create_task(store_event(tenant or "public", sid, "msg_in", {"text": (input.message or "")[:2000]}))
+    asyncio.create_task(store_event(tenant or "public", sid, "msg_in", {"text": (input.message or "")[:MAX_TEXT_LENGTH]}))
     asyncio.create_task(log_message(tenant or "public", sid, "web", "in", input.message or "", author="user"))
 
     t = await fetch_tenant(tenant)
@@ -2038,7 +2210,7 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                     return
 
             add_message(sid, "assistant", final_text)
-            asyncio.create_task(store_event(tenant or "public", sid, "msg_out", {"text": final_text[:2000]}))
+            asyncio.create_task(store_event(tenant or "public", sid, "msg_out", {"text": final_text[:MAX_TEXT_LENGTH]}))
             asyncio.create_task(log_message(tenant or "public", sid, "web", "out", final_text, author="assistant"))
             ui = suggest_ui_for_text(input.message, t)
             yield sse_event(json.dumps(ui), event="ui")
@@ -2086,6 +2258,212 @@ async def auth_me(current = Depends(require_user)):
         },
         "tenant": tenant,
     }
+
+
+# ── Facebook OAuth endpoints ───────────────────────────────────────────
+@app.get("/auth/facebook/connect")
+async def facebook_oauth_connect(current = Depends(require_user)):
+    """Inicia el flujo OAuth de Facebook para conectar una página."""
+    app_id = os.getenv("META_APP_ID", "").strip()
+    redirect_uri = os.getenv("FACEBOOK_REDIRECT_URI", "").strip()
+
+    if not app_id:
+        raise HTTPException(500, "META_APP_ID no configurado")
+    if not redirect_uri:
+        raise HTTPException(500, "FACEBOOK_REDIRECT_URI no configurado")
+
+    # Generar state con tenant_slug para validación en callback
+    state = jwt.encode(
+        {
+            "tenant_slug": current["tenant_slug"],
+            "user_id": current["id"],
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=10)
+        },
+        AUTH_SECRET,
+        algorithm="HS256"
+    )
+
+    # Permisos necesarios para pages, Instagram, y mensajería
+    scope = "pages_show_list,pages_read_engagement,pages_manage_metadata,pages_messaging,instagram_basic,instagram_manage_messages,instagram_manage_comments"
+
+    auth_url = (
+        f"https://www.facebook.com/v20.0/dialog/oauth?"
+        f"client_id={app_id}&"
+        f"redirect_uri={quote_plus(redirect_uri)}&"
+        f"state={state}&"
+        f"scope={scope}"
+    )
+
+    return {"auth_url": auth_url}
+
+
+@app.get("/auth/facebook/callback")
+async def facebook_oauth_callback(
+    code: str = Query(...),
+    state: str = Query(...)
+):
+    """Maneja el callback de Facebook OAuth y guarda los tokens."""
+    # Validar state
+    try:
+        state_data = jwt.decode(state, AUTH_SECRET, algorithms=["HS256"])
+        tenant_slug = state_data["tenant_slug"]
+        user_id = state_data["user_id"]
+    except Exception as e:
+        log.error(f"Invalid OAuth state: {e}")
+        raise HTTPException(400, "Estado OAuth inválido o expirado")
+
+    app_id = os.getenv("META_APP_ID", "").strip()
+    app_secret = os.getenv("META_APP_SECRET", "").strip()
+    redirect_uri = os.getenv("FACEBOOK_REDIRECT_URI", "").strip()
+
+    if not app_id or not app_secret:
+        raise HTTPException(500, "META_APP_ID o META_APP_SECRET no configurados")
+
+    # Intercambiar code por access token
+    token_url = (
+        f"https://graph.facebook.com/v20.0/oauth/access_token?"
+        f"client_id={app_id}&"
+        f"redirect_uri={quote_plus(redirect_uri)}&"
+        f"client_secret={app_secret}&"
+        f"code={code}"
+    )
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(token_url)
+        if resp.status_code != 200:
+            log.error(f"Facebook token exchange failed: {resp.text}")
+            raise HTTPException(400, "Error obteniendo token de Facebook")
+
+        data = resp.json()
+        user_access_token = data.get("access_token")
+
+        if not user_access_token:
+            raise HTTPException(400, "No se recibió access token")
+
+        # Obtener long-lived token
+        long_lived_url = (
+            f"https://graph.facebook.com/v20.0/oauth/access_token?"
+            f"grant_type=fb_exchange_token&"
+            f"client_id={app_id}&"
+            f"client_secret={app_secret}&"
+            f"fb_exchange_token={user_access_token}"
+        )
+
+        resp2 = await client.get(long_lived_url)
+        if resp2.status_code == 200:
+            long_lived_data = resp2.json()
+            user_access_token = long_lived_data.get("access_token", user_access_token)
+
+        # Obtener páginas del usuario
+        pages_url = f"https://graph.facebook.com/v20.0/me/accounts?access_token={user_access_token}"
+        resp3 = await client.get(pages_url)
+
+        if resp3.status_code != 200:
+            log.error(f"Error getting pages: {resp3.text}")
+            raise HTTPException(400, "Error obteniendo páginas de Facebook")
+
+        pages_data = resp3.json()
+        pages = pages_data.get("data", [])
+
+        if not pages:
+            raise HTTPException(400, "No se encontraron páginas asociadas a esta cuenta")
+
+        # Guardar tokens en la base de datos
+        # Por simplicidad, guardamos la primera página. Puedes mejorar esto para elegir
+        page = pages[0]
+        page_id = page.get("id")
+        page_token = page.get("access_token")
+        page_name = page.get("name")
+
+        # Obtener Instagram Business Account asociado (si existe)
+        ig_account_id = None
+        ig_url = f"https://graph.facebook.com/v20.0/{page_id}?fields=instagram_business_account&access_token={page_token}"
+        resp4 = await client.get(ig_url)
+        if resp4.status_code == 200:
+            ig_data = resp4.json()
+            ig_account = ig_data.get("instagram_business_account")
+            if ig_account:
+                ig_account_id = ig_account.get("id")
+
+    # Guardar en la base de datos (en settings JSON, multi-tenant)
+    if db_engine:
+        async with db_engine.begin() as conn:
+            # Obtener settings actuales del tenant
+            result = await conn.execute(
+                text("SELECT settings FROM tenants WHERE slug = :slug"),
+                {"slug": tenant_slug}
+            )
+            row = result.first()
+            current_settings = row[0] if row and row[0] else {}
+
+            # Actualizar con nuevos tokens de Facebook
+            current_settings.update({
+                "fb_page_id": page_id,
+                "fb_page_token": page_token,
+                "fb_page_name": page_name,
+                "ig_user_id": ig_account_id,
+                "ig_user_ids": [ig_account_id] if ig_account_id else []
+            })
+
+            # Guardar settings actualizados
+            await conn.execute(
+                text("""
+                    UPDATE tenants
+                    SET settings = CAST(:settings AS JSONB),
+                        updated_at = NOW()
+                    WHERE slug = :slug
+                """),
+                {
+                    "settings": json.dumps(current_settings),
+                    "slug": tenant_slug
+                }
+            )
+
+    # Redirigir al dashboard con éxito
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+    return Response(
+        status_code=302,
+        headers={"Location": f"{frontend_url}/dashboard?facebook_connected=true"}
+    )
+
+
+@app.post("/auth/facebook/disconnect", dependencies=[Depends(require_admin)])
+async def facebook_oauth_disconnect(current = Depends(require_user)):
+    """Desconecta la cuenta de Facebook del tenant."""
+    tenant_slug = current["tenant_slug"]
+
+    if db_engine:
+        async with db_engine.begin() as conn:
+            # Obtener settings actuales
+            result = await conn.execute(
+                text("SELECT settings FROM tenants WHERE slug = :slug"),
+                {"slug": tenant_slug}
+            )
+            row = result.first()
+            current_settings = row[0] if row and row[0] else {}
+
+            # Remover credenciales de Facebook/Instagram (multi-tenant)
+            current_settings.pop("fb_page_id", None)
+            current_settings.pop("fb_page_token", None)
+            current_settings.pop("fb_page_name", None)
+            current_settings.pop("ig_user_id", None)
+            current_settings.pop("ig_user_ids", None)
+
+            # Guardar settings actualizados
+            await conn.execute(
+                text("""
+                    UPDATE tenants
+                    SET settings = CAST(:settings AS JSONB),
+                        updated_at = NOW()
+                    WHERE slug = :slug
+                """),
+                {
+                    "settings": json.dumps(current_settings),
+                    "slug": tenant_slug
+                }
+            )
+
+    return {"success": True, "message": "Facebook desconectado correctamente"}
 
 
 # ── Admin endpoints ────────────────────────────────────────────────────
@@ -2450,13 +2828,11 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
         raise HTTPException(400, "Invalid tenant")
 
     form = await request.form()
-    if TWILIO_VALIDATE_SIGNATURE:
-        validator = RequestValidator(TWILIO_AUTH_TOKEN)
-        sig = request.headers.get("X-Twilio-Signature", "")
-        params = {k: str(v) for k, v in form.items()}
-        url = str(request.url)
-        if not validator.validate(url, params, sig):
-            raise HTTPException(403, "Invalid Twilio signature")
+    # Guardar body para validación de firma
+    request.state._twilio_body = {k: str(v) for k, v in form.items()}
+
+    if not _twilio_req_is_valid(request, TWILIO_AUTH_TOKEN):
+        raise HTTPException(403, "Invalid Twilio signature")
 
     from_raw = str(form.get("From", ""))
     body_txt = str(form.get("Body", "")).strip()
@@ -2476,7 +2852,7 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
     if t and not tenant_bot_enabled(t):
         off_msg = ((t.get("settings") or {}).get("bot_off_message") or "El asistente está en pausa. Escríbenos directamente por WhatsApp al enlace habitual.")
         add_message(sid, "assistant", off_msg)
-        asyncio.create_task(store_event(tenant or "public", sid, "wa_out", {"to": from_raw, "text": off_msg[:2000]}))
+        asyncio.create_task(store_event(tenant or "public", sid, "wa_out", {"to": from_raw, "text": off_msg[:MAX_TEXT_LENGTH]}))
         asyncio.create_task(log_message(tenant or "public", sid, "whatsapp", "out", off_msg, author="bot"))
         twiml = MessagingResponse()
         twiml.message(off_msg)
@@ -2493,7 +2869,7 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
             session = await _create_checkout_for_any(t, price_id=price_id, qty=1, mode="subscription")
             answer = f"Listo ✅ Aquí tienes tu enlace de suscripción al plan {plan.title()}: {session['url']}"
             add_message(sid, "assistant", answer)
-            asyncio.create_task(store_event(tenant or "public", sid, "wa_out", {"to": from_raw, "text": answer[:2000]}))
+            asyncio.create_task(store_event(tenant or "public", sid, "wa_out", {"to": from_raw, "text": answer[:MAX_TEXT_LENGTH]}))
             asyncio.create_task(log_message(tenant or "public", sid, "whatsapp", "out", answer, author="bot"))
             twiml = MessagingResponse()
             twiml.message(answer)
@@ -2507,7 +2883,7 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
     messages = build_messages_with_history(sid, system_prompt)
     answer = generate_answer(messages)
     add_message(sid, "assistant", answer)
-    asyncio.create_task(store_event(tenant or "public", sid, "wa_out", {"to": from_raw, "text": answer[:2000]}))
+    asyncio.create_task(store_event(tenant or "public", sid, "wa_out", {"to": from_raw, "text": answer[:MAX_TEXT_LENGTH]}))
     asyncio.create_task(log_message(tenant or "public", sid, "whatsapp", "out", answer, author="bot"))
 
     twiml = MessagingResponse()
@@ -2588,11 +2964,25 @@ async def stripe_checkout_by_plan(body: dict, tenant: str = Query(...)):
 
 @app.post("/v1/stripe/webhook")
 async def stripe_webhook(request: Request):
+    """Webhook de Stripe para manejar eventos de pagos y suscripciones."""
+    if not STRIPE_WEBHOOK_SECRET:
+        log.error("STRIPE_WEBHOOK_SECRET no configurado")
+        raise HTTPException(500, "Server misconfiguration")
+
     raw = await request.body()
     sig = request.headers.get("stripe-signature", "")
+
+    if not sig:
+        log.warning("Webhook de Stripe sin stripe-signature header")
+        raise HTTPException(403, "Missing signature")
+
     try:
         event = stripe.Webhook.construct_event(raw, sig, STRIPE_WEBHOOK_SECRET)
+    except stripe.error.SignatureVerificationError as e:
+        log.warning(f"❌ Firma de Stripe inválida: {e}")
+        raise HTTPException(403, "Invalid signature")
     except Exception as e:
+        log.error(f"Error procesando webhook de Stripe: {e}")
         return Response(f"Webhook error: {e}", status_code=400)
 
     acct = event.get("account")  # acct_XXXX de la cuenta conectada

@@ -40,8 +40,15 @@ Thumbs.db
 .env.production
 !.env.example   # <- sí versionamos el template
 
-# ── Node/Vite (si tienes front en el mismo repo)
+# ── Node/Vite (frontend integrado)
 node_modules/
 npm-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+frontend/dist/
+frontend/.vite/
+frontend/.parcel-cache/
+
+# ── SSH keys temporales (eliminar estos manualmente si existen)
+eval*
+*.pub

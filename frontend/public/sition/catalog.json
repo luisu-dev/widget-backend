@@ -1,0 +1,26 @@
+{
+  "catalog": [
+    {
+      "id": "zia-starter",
+      "title": "ZIA Starter",
+      "mode": "subscription",
+      "price_cents": 150000,
+      "currency": "MXN",
+      "product_id": "prod_T24h0QxDxcTR2s",
+      "image": "/starter.png",
+      "description": "Plan base diseñado para pequeñas y medianas empresas. Incluye burbuja de chat personalizable, respuestas automáticas a preguntas frecuentes, recomendaciones de productos y soporte multilingüe.",
+      "tags": ["plan", "saas", "starter"]
+    },
+    {
+      "id": "zia-meta",
+      "title": "ZIA Meta",
+      "mode": "subscription",
+      "price_cents": 100000,
+      "currency": "MXN",
+      "stripe_price_id": "price_123",
+      "image": "/meta_pk.png",
+      "description": "Optimiza la atención en redes sociales: responde mensajes con IA en tiempo real y, en su próxima actualización, gestionará también comentarios en publicaciones.",
+      "tags": ["plan", "saas", "social"]
+    }
+  ]
+}

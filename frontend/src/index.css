@@ -1,0 +1,5 @@
+@import "tailwindcss";
+
+/* Evitamos scroll suave global en Android/equipos modestos */
+html { scroll-behavior: auto; }
+html.smooth-scroll { scroll-behavior: smooth; }

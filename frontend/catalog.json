@@ -1,0 +1,294 @@
+{
+  "plans": [
+    {
+      "key": "starter",
+      "title": "Plan Starter (chat web)",
+      "image": "/images/starter.png",
+      "priceId": "price_1S60Y29ubUUr929zmckQjIy8",
+      "features": [
+        "Widget de chat web embebible",
+        "FAQs con tono de marca",
+        "Leads calificados con 1 flujo preconfigurado",
+        "Redirecciones a WhatsApp o URLs"
+      ],
+      "price": "$1,500 MXN/mes (+IVA)",
+      "sections": [
+        {
+          "title": "Características destacadas",
+          "items": [
+            "Widget de chat web personalizable",
+            "FAQs ajustadas al tono de la marca",
+            "Flujos automatizados para calificar leads",
+            "Redirecciones inteligentes a WhatsApp o páginas clave"
+          ]
+        },
+        {
+          "title": "Detalles",
+          "body": "Plantillas de flujo sugeridas (elige una y la afinamos a tu operación):",
+          "items": [
+            "Calificar lead: capturamos datos de contacto, presupuesto y prioridad para tu equipo comercial",
+            "Cotización básica: recogemos alcance, integraciones y urgencia del proyecto",
+            "Soporte pre-venta: identificamos el motivo, producto de interés y datos de contacto",
+            "Límites de uso mensuales: 1M tokens de entrada + 1M tokens de salida",
+            "Métricas: aperturas, primera interacción, clics a WhatsApp y export de leads a CSV"
+          ]
+        },
+        {
+          "title": "Qué incluye",
+          "items": [
+            "Instalación del widget (snippet + guía)",
+            "1 flujo preconfigurado a elegir",
+            "Ajuste básico de FAQs y tono"
+          ]
+        },
+        {
+          "title": "Qué se entrega",
+          "items": [
+            "Snippet para insertar en tu sitio",
+            "Acceso a export de leads/eventos",
+            "Notificaciones por correo y WhatsApp"
+          ]
+        },
+        {
+          "title": "Requisitos",
+          "items": [
+            "Sitio web donde incrustar el widget",
+            "FAQs base y mensajes legales/políticas"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "addon-whatsapp",
+      "title": "Add-on WhatsApp (canal conversacional)",
+      "image": "/images/whatsaddon.png",
+      "priceId": "price_1S9MD59ubUUr929zlSL7ku4q",
+      "features": [
+        "Mis respuestas del chat web en WhatsApp",
+        "Leads calificados y links de pago",
+        "Detección de intención de compra"
+      ],
+      "price": "$500 MXN/mes (+IVA)",
+      "sections": [
+        {
+          "title": "Características destacadas",
+          "items": [
+            "Replica el cerebro del chat web en WhatsApp",
+            "FAQs + calificación de leads + envío de links de pago",
+            "Detecta intención de compra para nutrir al equipo comercial"
+          ]
+        },
+        {
+          "title": "Detalles",
+          "body": "Compatible con plantillas proactivas (según políticas de Meta/Twilio/BSP)."
+        },
+        {
+          "title": "Qué incluye",
+          "items": [
+            "Conexión al número del cliente (Meta Cloud API o Twilio)",
+            "Pruebas de intención y validación de flujos equivalentes al chat web"
+          ]
+        },
+        {
+          "title": "Qué se entrega",
+          "items": [
+            "Número o método de acceso habilitado",
+            "Flow operativo y checklist de pruebas"
+          ]
+        },
+        {
+          "title": "Requisitos",
+          "items": [
+            "Cuenta WhatsApp Business API aprobada",
+            "Plantillas preaprobadas por el cliente (si se usarán mensajes proactivos)",
+            "Costos del proveedor (Meta/Twilio/BSP) a cargo del cliente"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "addon-ecommerce",
+      "title": "Add-on E-commerce (Stripe + catálogo)",
+      "image": "/images/ecommerce.png",
+      "priceId": "price_1S9MFt9ubUUr929zuqfSjBD0",
+      "features": [
+        "Cobro directo a Stripe",
+        "Catálogo integrado al chat/WhatsApp",
+        "Automatización con IA para compras"
+      ],
+      "price": "$1,500 MXN setup único (+IVA)",
+      "sections": [
+        {
+          "title": "Características destacadas",
+          "items": [
+            "Cobros directos en tu Stripe (Connect Express)",
+            "Catálogo integrado en chat y WhatsApp",
+            "Automatización con IA para guiar la compra"
+          ]
+        },
+        {
+          "title": "Detalles",
+          "items": [
+            "Setup Stripe Connect Express (onboarding + conexión de cuenta)",
+            "Configuración de Checkout y pruebas en test/live",
+            "Carga/normalización de hasta 500 productos desde catalog_url (JSON)",
+            "Actualización de catálogos y soporte para price_id/product_id",
+            "Mantenimiento mensual opcional a definir"
+          ]
+        },
+        {
+          "title": "Qué se entrega",
+          "items": [
+            "Catálogo normalizado y visible en el widget",
+            "Stripe listo para cobrar vía chat"
+          ]
+        },
+        {
+          "title": "Requisitos",
+          "items": [
+            "Cuenta Stripe activa con acceso al dashboard",
+            "catalog_url público con productos y precios"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "modulo-meta",
+      "title": "Módulo Meta (próximamente)",
+      "image": "/images/meta.png",
+      "features": [
+        "Automatización de DM y comentarios",
+        "Respuestas y redirecciones alineadas a políticas",
+        "Registro de eventos por tenant"
+      ],
+      "sections": [
+        {
+          "title": "Características destacadas",
+          "items": [
+            "Atención automatizada en DM y comentarios de Facebook/Instagram",
+            "Respuestas públicas y privados con redirecciones a WhatsApp o URLs",
+            "Cumplimiento con políticas de Meta"
+          ]
+        },
+        {
+          "title": "Detalles",
+          "body": "Respuesta pública + mensaje privado cuando aplique, con registro de eventos por tenant."
+        },
+        {
+          "title": "Precio",
+          "body": "Se definirá al momento del lanzamiento."
+        },
+        {
+          "title": "Requisitos",
+          "items": [
+            "Páginas y cuentas de Instagram con permisos completos",
+            "Business Manager configurado"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "paquete-web",
+      "title": "Paquete Páginas web + Starter",
+      "image": "/images/web1.png",
+      "priceId": "price_1S9MIM9ubUUr929zYdJaFDxF",
+      "features": [
+        "Sitio web + Plan Starter integrado",
+        "Dominio y hosting por 1 año",
+        "Correo empresarial incluido"
+      ],
+      "price": "Pago inicial: $5,000 MXN | Mensual: $1,500 MXN (+IVA)",
+      "sections": [
+        {
+          "title": "Características destacadas",
+          "items": [
+            "Sitio web nuevo con Plan Starter listo",
+            "Dominio .com o .com.mx gratis por 1 año",
+            "Hosting incluido y correo empresarial (hasta 3 alias)"
+          ]
+        },
+        {
+          "title": "Detalles",
+          "items": [
+            "CMS Wix/WordPress autoadministrable o código administrado por nosotros",
+            "Hosting incluido durante el primer año",
+            "Inserción del widget Starter"
+          ]
+        },
+        {
+          "title": "Qué incluye",
+          "items": [
+            "Implementación del sitio",
+            "Alta de dominio y hosting",
+            "Mantenimiento mensual y actualizaciones ilimitadas"
+          ]
+        },
+        {
+          "title": "Qué se entrega",
+          "items": [
+            "Sitio publicado con accesos",
+            "Snippet del widget y guía"
+          ]
+        },
+        {
+          "title": "Requisitos",
+          "items": [
+            "Contenidos, imágenes y branding del cliente",
+            "Estructura deseada del sitio"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "paquete-ecommerce",
+      "title": "Paquete E-commerce web + Starter",
+      "image": "/images/web2.png",
+      "priceId": "price_1S9MLl9ubUUr929zildxgmBq",
+      "features": [
+        "Tienda en línea + Plan Starter",
+        "Dominio y hosting incluidos",
+        "Integración a plataforma elegida"
+      ],
+      "price": "Pago inicial: $6,000 MXN | Mensual: $2,000 MXN (+IVA)",
+      "sections": [
+        {
+          "title": "Características destacadas",
+          "items": [
+            "Sitio e-commerce con Plan Starter",
+            "Dominio .com o .com.mx gratis por 1 año",
+            "Correo empresarial y hosting incluidos"
+          ]
+        },
+        {
+          "title": "Detalles",
+          "items": [
+            "Implementación en Shopify (licencia del cliente), WooCommerce o Mercado Shops",
+            "Hosting incluido el primer año dependiendo de la plataforma",
+            "Integración básica con la plataforma elegida"
+          ]
+        },
+        {
+          "title": "Qué incluye",
+          "items": [
+            "Implementación de la tienda y widget Starter",
+            "Mantenimiento mensual y actualizaciones ilimitadas"
+          ]
+        },
+        {
+          "title": "Qué se entrega",
+          "items": [
+            "Tienda publicada con accesos",
+            "Snippets y documentación del widget"
+          ]
+        },
+        {
+          "title": "Requisitos",
+          "items": [
+            "Catálogo de productos, políticas y medios de pago",
+            "Stripe u otros medios configurados en la plataforma"
+          ]
+        }
+      ]
+    }
+  ]
+}
