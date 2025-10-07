@@ -3,8 +3,8 @@ import type { ReactNode, MouseEvent } from "react";
 import { motion, useScroll, useTransform, useSpring, useMotionValue } from "framer-motion";
 import type { MotionValue } from "framer-motion";
 
-import logoMini from "../images/logo_mini.png";
-import faviconUrl from "../images/favicon.ico";
+import logoMini from "../../images/logo_mini.png";
+import faviconUrl from "../../images/favicon.ico";
 import { sendContact } from "../lib/contact";
 
 /* ========= Rendimiento (bajar costos en Android/equipos modestos) ========= */
