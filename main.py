@@ -23,6 +23,7 @@ import stripe
 from io import BytesIO
 import qrcode
 from fastapi.responses import StreamingResponse
+import mimetypes
 
 
 
@@ -33,6 +34,12 @@ log = logging.getLogger("zia")
 
 app = FastAPI(title="ZIA Backend", version="1.1")
 client = OpenAI()  # usa OPENAI_API_KEY del entorno
+
+# Ensure correct MIME types for static assets on some platforms
+mimetypes.add_type("application/javascript", ".js")
+mimetypes.add_type("application/javascript", ".mjs")
+mimetypes.add_type("text/css", ".css")
+mimetypes.add_type("image/svg+xml", ".svg")
 
 # ── Config ─────────────────────────────────────────────────────────────
 # ── Config ─────────────────────────────────────────────────────────────
