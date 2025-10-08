@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: widget-backend-zia
+    runtime: python3
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+    headers:
+      - path: /widget/*.js
+        name: Content-Type
+        value: application/javascript
+      - path: /widget/*.mjs
+        name: Content-Type
+        value: application/javascript
+      - path: /widget/*.css
+        name: Content-Type
+        value: text/css
+      - path: /widget/*.svg
+        name: Content-Type
+        value: image/svg+xml

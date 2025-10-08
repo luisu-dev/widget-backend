@@ -3037,6 +3037,55 @@ async def stripe_checkout_by_item(body: CheckoutItemIn, tenant: str = Query(...)
     return session
 
 
+# Endpoint público para crear checkout session desde el frontend (acidia.app)
+@app.post("/api/create-checkout-session")
+async def create_checkout_session_public(body: dict):
+    """
+    Endpoint público para crear sesiones de Stripe desde el frontend de AcidIA.
+    Espera: { lineItems: [{ price: string, quantity: number }, ...] }
+    """
+    line_items = body.get("lineItems", [])
+    if not line_items or not isinstance(line_items, list):
+        raise HTTPException(400, "lineItems debe ser un array con al menos un item")
+
+    # Por defecto usar tenant "acidia" (configurable según tu setup)
+    tenant_slug = "acidia"
+    t = await fetch_tenant(tenant_slug)
+    if not t:
+        raise HTTPException(404, f"Tenant {tenant_slug} no encontrado")
+
+    acct = _tenant_stripe_acct(t)
+    if not acct:
+        raise HTTPException(400, "Tenant no tiene Stripe conectado")
+
+    # Preparar line_items para Stripe
+    stripe_line_items = []
+    for item in line_items:
+        price = item.get("price", "").strip()
+        quantity = max(1, int(item.get("quantity", 1)))
+        if not price:
+            continue
+        stripe_line_items.append({"price": price, "quantity": quantity})
+
+    if not stripe_line_items:
+        raise HTTPException(400, "No hay items válidos en lineItems")
+
+    # Crear sesión de checkout
+    try:
+        session = stripe.checkout.Session.create(
+            mode="subscription",
+            line_items=stripe_line_items,
+            success_url=f"{SITE_URL}/?checkout=success&session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{SITE_URL}/?checkout=cancelled",
+            metadata={"tenant": tenant_slug},
+            stripe_account=acct,
+        )
+        return {"id": session.id, "url": session.url}
+    except stripe.error.StripeError as e:
+        log.error(f"Stripe error: {e}")
+        raise HTTPException(400, f"Error creando sesión: {str(e)}")
+
+
 @app.get("/v1/catalog")
 async def get_catalog(tenant: str = Query(...)):
     if tenant and not valid_slug(tenant):

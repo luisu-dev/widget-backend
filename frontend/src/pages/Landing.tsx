@@ -21,6 +21,13 @@ function Nav({ active, visible, isDark, cart, onOpenCart }: { active: string; vi
     { id: "contacto", label: "Contacto" },
   ];
 
+  // Verificar si hay token de sesión
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  useEffect(() => {
+    const token = localStorage.getItem('zia_token');
+    setIsLoggedIn(!!token);
+  }, []);
+
   return (
     <motion.nav
       initial={false}
@@ -66,6 +73,12 @@ function Nav({ active, visible, isDark, cart, onOpenCart }: { active: string; vi
             🛒 Carrito ({cart.length})
           </button>
         )}
+        <a
+          href={isLoggedIn ? "/dashboard" : "/login"}
+          className="ml-2 rounded-xl bg-gradient-to-r from-[#04d9b5] to-cyan-400 px-4 py-2 text-sm font-medium text-black transition hover:brightness-110 whitespace-nowrap"
+        >
+          {isLoggedIn ? "Dashboard" : "Login"}
+        </a>
       </div>
     </motion.nav>
   );
