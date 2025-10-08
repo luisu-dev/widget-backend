@@ -184,12 +184,55 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Static assets for the embeddable widget
-try:
-    app.mount("/widget", StaticFiles(directory="public/widget"), name="widget")
-except Exception as _e:
-    # In some environments the folder may not exist; ignore at import time.
-    pass
+# Static assets for the embeddable widget - with custom MIME types
+@app.get("/widget/{file_path:path}")
+async def serve_widget_file(file_path: str):
+    """Serve widget static files with correct MIME types"""
+    from pathlib import Path
+
+    widget_dir = Path("public/widget")
+    file_full_path = widget_dir / file_path
+
+    # Security: prevent directory traversal
+    try:
+        file_full_path = file_full_path.resolve()
+        widget_dir = widget_dir.resolve()
+        if not str(file_full_path).startswith(str(widget_dir)):
+            raise HTTPException(403, "Access denied")
+    except:
+        raise HTTPException(403, "Access denied")
+
+    if not file_full_path.is_file():
+        raise HTTPException(404, "File not found")
+
+    # Determine MIME type
+    ext = file_full_path.suffix.lower()
+    mime_types_map = {
+        '.js': 'application/javascript',
+        '.mjs': 'application/javascript',
+        '.css': 'text/css',
+        '.svg': 'image/svg+xml',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.woff': 'font/woff',
+        '.woff2': 'font/woff2',
+    }
+    content_type = mime_types_map.get(ext, 'application/octet-stream')
+
+    # Read and serve file
+    with open(file_full_path, 'rb') as f:
+        content = f.read()
+
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={
+            'Cache-Control': 'public, max-age=31536000',
+            'X-Content-Type-Options': 'nosniff',
+        }
+    )
 
 # Admin dashboard frontend (React/Vue/etc compilado)
 try:
