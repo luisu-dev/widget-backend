@@ -29,8 +29,9 @@ import mimetypes
 
 # ── Setup ──────────────────────────────────────────────────────────────
 load_dotenv()
-logging.basicConfig(level=logging.WARNING)
+logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("zia")
+log.setLevel(logging.INFO)
 
 app = FastAPI(title="ZIA Backend", version="1.1")
 client = OpenAI()  # usa OPENAI_API_KEY del entorno
@@ -189,20 +190,36 @@ app.add_middleware(
 async def serve_widget_file(file_path: str):
     """Serve widget static files with correct MIME types"""
     from pathlib import Path
+    import os
 
-    widget_dir = Path("public/widget")
+    # Use absolute path relative to main.py location
+    base_dir = Path(__file__).parent
+    widget_dir = base_dir / "public" / "widget"
     file_full_path = widget_dir / file_path
 
     # Security: prevent directory traversal
     try:
         file_full_path = file_full_path.resolve()
         widget_dir = widget_dir.resolve()
+
+        # Debug logging
+        log.info(f"[widget] Requested: {file_path}")
+        log.info(f"[widget] Base dir: {base_dir}")
+        log.info(f"[widget] Widget dir: {widget_dir}")
+        log.info(f"[widget] Full path: {file_full_path}")
+        log.info(f"[widget] Exists: {file_full_path.is_file()}")
+
         if not str(file_full_path).startswith(str(widget_dir)):
+            log.warning(f"[widget] Directory traversal attempt: {file_path}")
             raise HTTPException(403, "Access denied")
-    except:
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"[widget] Path resolution error: {e}")
         raise HTTPException(403, "Access denied")
 
     if not file_full_path.is_file():
+        log.warning(f"[widget] File not found: {file_full_path}")
         raise HTTPException(404, "File not found")
 
     # Determine MIME type

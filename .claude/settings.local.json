@@ -11,7 +11,9 @@
       "Bash(git commit:*)",
       "Bash(git push:*)",
       "Bash(git add:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(npx vercel:*)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []
