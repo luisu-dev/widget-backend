@@ -242,13 +242,17 @@ async def serve_widget_file(file_path: str):
     with open(file_full_path, 'rb') as f:
         content = f.read()
 
+    # Ensure correct Content-Type header
+    response_headers = {
+        'Cache-Control': 'public, max-age=31536000',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Type': content_type,  # Explicitly set Content-Type
+    }
+
     return Response(
         content=content,
         media_type=content_type,
-        headers={
-            'Cache-Control': 'public, max-age=31536000',
-            'X-Content-Type-Options': 'nosniff',
-        }
+        headers=response_headers
     )
 
 # Admin dashboard frontend (React/Vue/etc compilado)
