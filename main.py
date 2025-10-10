@@ -122,6 +122,7 @@ ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
     "http://localhost:5173,http://127.0.0.1:5173"
 ).split(",")
+ALLOWED_ORIGIN_REGEX = (os.getenv("ALLOWED_ORIGIN_REGEX", "") or "").strip()
 
 DATABASE_URL   = os.getenv("DATABASE_URL", "")
 DB_DRIVER      = (os.getenv("DB_DRIVER", "asyncpg") or "").strip().lower()  # 'asyncpg' | 'psycopg'
@@ -180,6 +181,7 @@ ZIA_SYSTEM_PROMPT = (
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in ALLOWED_ORIGINS if o.strip()],
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX or None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

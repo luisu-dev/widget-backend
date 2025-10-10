@@ -6,7 +6,11 @@
 
     var TENANT   = ds.tenant || window.TENANT || 'demo';
     var NAME     = ds.name   || window.TENANT_NAME || 'Asistente';
-    var API      = ds.api    || window.CHAT_API || 'https://widget-backend-zia.onrender.com/v1/chat/stream';
+    var API      = (function(){
+      if (ds.api) return ds.api;
+      if (window.CHAT_API) return window.CHAT_API;
+      try { var u = new URL(s.src, location.href); return u.origin + '/v1/chat/stream'; } catch(_) { return '/v1/chat/stream'; }
+    })();
     var ASSETS   = ds.assets || (function(){ try{ var u=new URL(s.src, location.href); return u.origin + '/widget'; }catch(_){ return '/widget'; } })();
     // Orb animado: por defecto encendido (lava lamp optimizado)
     var ORB_MODE = (ds.orb || 'on').toLowerCase();
