@@ -6,7 +6,7 @@ function __ziaInit(){
   window.__zia_widget_inited = true;
 
   // ------- API con tenant (solo frontend) -------
-  const RAW_API = window.CHAT_API || "https://widget-backend-zia.onrender.com/v1/chat/stream";
+  const RAW_API = window.CHAT_API || "https://widget-backend-1-pip5.onrender.com/v1/chat/stream";
   const TENANT  = window.TENANT   || "demo";
   const API     = `${RAW_API}?tenant=${encodeURIComponent(TENANT)}`;
   const BOOTSTRAP = (RAW_API || "").replace(/\/v1\/chat\/stream$/, "")

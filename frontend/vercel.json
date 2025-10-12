@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://widget-backend-zia.onrender.com/api/$1"
+      "destination": "https://widget-backend-1-pip5.onrender.com/api/$1"
     },
     {
       "source": "/(.*)",

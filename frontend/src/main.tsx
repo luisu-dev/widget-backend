@@ -74,18 +74,18 @@ const scheduleWidgetLoad = () => {
   const loadScript = () => {
     ensureOverrides();
     const existing = document.querySelector<HTMLScriptElement>(
-      "script[data-tenant='lu-core'][src*='widget-backend-zia.onrender.com']"
+      "script[data-tenant='lu-core'][src*='widget-backend-1-pip5.onrender.com']"
     );
     if (existing) return;
 
     const script = document.createElement("script");
-    script.src = "https://widget-backend-zia.onrender.com/widget/loader.js";
+    script.src = "https://widget-backend-1-pip5.onrender.com/widget/loader.js";
     script.async = true;
     script.defer = true;
     script.dataset.tenant = "lu-core";
     script.dataset.name = "Lu Core";
-    script.dataset.api = "https://widget-backend-zia.onrender.com/v1/chat/stream";
-    script.dataset.assets = "https://widget-backend-zia.onrender.com/widget";
+    script.dataset.api = "https://widget-backend-1-pip5.onrender.com/v1/chat/stream";
+    script.dataset.assets = "https://widget-backend-1-pip5.onrender.com/widget";
     script.addEventListener("load", () => {
       window.setTimeout(applyWidgetStyles, 50);
     });
