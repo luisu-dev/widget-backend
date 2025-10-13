@@ -163,16 +163,26 @@ export default function FacebookConnect({ token, tenant }: FacebookConnectProps)
             </ul>
           </div>
 
-          <div className="pt-4">
-            <button
-              onClick={handleDisconnect}
-              disabled={disconnecting}
-              className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 text-red-200 rounded-lg transition disabled:opacity-50"
-            >
-              {disconnecting ? 'Desconectando...' : 'Desconectar Facebook'}
-            </button>
-            <p className="mt-2 text-sm text-gray-500">
-              Esto desconectará tanto Facebook como Instagram de tu cuenta.
+          <div className="pt-4 space-y-3">
+            <div className="flex gap-3">
+              <button
+                onClick={handleConnect}
+                disabled={connecting}
+                className="flex-1 px-4 py-2 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/50 text-blue-200 rounded-lg transition disabled:opacity-50"
+              >
+                {connecting ? 'Conectando...' : 'Cambiar página'}
+              </button>
+              <button
+                onClick={handleDisconnect}
+                disabled={disconnecting}
+                className="flex-1 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 text-red-200 rounded-lg transition disabled:opacity-50"
+              >
+                {disconnecting ? 'Desconectando...' : 'Desconectar'}
+              </button>
+            </div>
+            <p className="text-sm text-gray-400">
+              <strong>Cambiar página:</strong> Conecta una página diferente sin perder tu configuración.<br/>
+              <strong>Desconectar:</strong> Elimina completamente la conexión con Facebook e Instagram.
             </p>
           </div>
         </div>
