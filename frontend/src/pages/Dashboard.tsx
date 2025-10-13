@@ -44,6 +44,8 @@ function Dashboard() {
   const [metrics, setMetrics] = useState<any>(null);
   const [botEnabled, setBotEnabled] = useState(true);
   const [savingBotState, setSavingBotState] = useState(false);
+  const [selectedSession, setSelectedSession] = useState<string | null>(null);
+  const [conversationMessages, setConversationMessages] = useState<any[]>([]);
 
   useEffect(() => {
     if (!token) {
@@ -94,7 +96,7 @@ function Dashboard() {
 
   const fetchMessages = async () => {
     try {
-      const res = await fetch(`${API_BASE}/v1/admin/messages?limit=50`, {
+      const res = await fetch(`${API_BASE}/v1/admin/messages?limit=200`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) throw new Error('Error al cargar mensajes');
@@ -103,6 +105,42 @@ function Dashboard() {
     } catch (err) {
       console.error('Error fetching messages:', err);
       setError('Error al cargar mensajes');
+    }
+  };
+
+  // Group messages by session
+  const groupedConversations = () => {
+    const groups: { [key: string]: any[] } = {};
+    messages.forEach(msg => {
+      if (!groups[msg.session_id]) {
+        groups[msg.session_id] = [];
+      }
+      groups[msg.session_id].push(msg);
+    });
+
+    // Sort each group by created_at and get latest message time
+    return Object.entries(groups)
+      .map(([sessionId, msgs]) => {
+        const sorted = msgs.sort((a, b) =>
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        );
+        return {
+          sessionId,
+          messages: sorted,
+          lastMessage: sorted[sorted.length - 1],
+          messageCount: sorted.length
+        };
+      })
+      .sort((a, b) =>
+        new Date(b.lastMessage.created_at).getTime() - new Date(a.lastMessage.created_at).getTime()
+      );
+  };
+
+  const openConversation = (sessionId: string) => {
+    setSelectedSession(sessionId);
+    const conv = groupedConversations().find(c => c.sessionId === sessionId);
+    if (conv) {
+      setConversationMessages(conv.messages);
     }
   };
 
@@ -242,52 +280,105 @@ function Dashboard() {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-2xl font-bold text-white mb-2">Conversaciones</h2>
-                <p className="text-gray-400">Mensajes recibidos de tus clientes</p>
+                <p className="text-gray-400">
+                  {selectedSession ? 'Mensajes de la conversación' : `${groupedConversations().length} conversaciones activas`}
+                </p>
               </div>
-              <button
-                onClick={fetchMessages}
-                className="px-4 py-2 rounded-lg border border-white/20 text-white hover:bg-white/10 transition"
-              >
-                Actualizar
-              </button>
+              <div className="flex space-x-2">
+                {selectedSession && (
+                  <button
+                    onClick={() => {
+                      setSelectedSession(null);
+                      setConversationMessages([]);
+                    }}
+                    className="px-4 py-2 rounded-lg border border-white/20 text-white hover:bg-white/10 transition"
+                  >
+                    ← Volver
+                  </button>
+                )}
+                <button
+                  onClick={fetchMessages}
+                  className="px-4 py-2 rounded-lg border border-white/20 text-white hover:bg-white/10 transition"
+                >
+                  Actualizar
+                </button>
+              </div>
             </div>
 
-            <div className="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl overflow-hidden">
-              {messages.length === 0 ? (
-                <div className="p-8 text-center text-gray-400">
-                  No hay mensajes aún
-                </div>
-              ) : (
-                <div className="divide-y divide-white/10">
-                  {messages.map((msg) => (
-                    <div key={msg.id} className="p-4 hover:bg-white/5 transition">
-                      <div className="flex items-start justify-between mb-2">
+            {/* Conversation List */}
+            {!selectedSession && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {groupedConversations().length === 0 ? (
+                  <div className="col-span-full bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl p-8 text-center text-gray-400">
+                    No hay conversaciones aún
+                  </div>
+                ) : (
+                  groupedConversations().map((conv) => (
+                    <div
+                      key={conv.sessionId}
+                      onClick={() => openConversation(conv.sessionId)}
+                      className="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl p-4 hover:bg-white/10 transition cursor-pointer"
+                    >
+                      <div className="flex items-start justify-between mb-3">
                         <div className="flex items-center space-x-2">
-                          <span className={`px-2 py-1 rounded text-xs font-medium ${
-                            msg.direction === 'in'
-                              ? 'bg-blue-500/20 text-blue-300'
-                              : 'bg-green-500/20 text-green-300'
-                          }`}>
-                            {msg.direction === 'in' ? 'Recibido' : 'Enviado'}
-                          </span>
                           <span className="px-2 py-1 rounded text-xs font-medium bg-purple-500/20 text-purple-300">
-                            {msg.channel}
+                            {conv.lastMessage.channel}
+                          </span>
+                          <span className="text-xs text-gray-400">
+                            {conv.messageCount} mensajes
                           </span>
                         </div>
-                        <span className="text-xs text-gray-400">
-                          {new Date(msg.created_at).toLocaleString('es-MX')}
-                        </span>
                       </div>
-                      <div className="text-sm text-gray-400 mb-1">
-                        Sesión: <span className="text-white font-mono text-xs">{msg.session_id}</span>
-                        {msg.author && <span className="ml-2">• {msg.author}</span>}
+                      <div className="text-sm text-gray-400 mb-2 truncate">
+                        ID: {conv.sessionId.substring(0, 12)}...
                       </div>
-                      <p className="text-white">{msg.content}</p>
+                      <p className="text-white text-sm line-clamp-2 mb-2">
+                        {conv.lastMessage.content}
+                      </p>
+                      <div className="text-xs text-gray-400">
+                        {new Date(conv.lastMessage.created_at).toLocaleString('es-MX')}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {/* Conversation Detail */}
+            {selectedSession && (
+              <div className="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl overflow-hidden">
+                <div className="p-4 border-b border-white/10">
+                  <div className="text-sm text-gray-400">Sesión:</div>
+                  <div className="text-white font-mono text-sm">{selectedSession}</div>
+                </div>
+                <div className="p-4 space-y-4 max-h-[600px] overflow-y-auto">
+                  {conversationMessages.map((msg) => (
+                    <div
+                      key={msg.id}
+                      className={`flex ${msg.direction === 'in' ? 'justify-start' : 'justify-end'}`}
+                    >
+                      <div
+                        className={`max-w-[70%] rounded-2xl px-4 py-3 ${
+                          msg.direction === 'in'
+                            ? 'bg-blue-500/20 text-blue-100'
+                            : 'bg-[#04d9b5]/20 text-white'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-2 mb-1">
+                          <span className="text-xs font-medium opacity-70">
+                            {msg.direction === 'in' ? msg.author || 'Cliente' : 'Bot'}
+                          </span>
+                          <span className="text-xs opacity-50">
+                            {new Date(msg.created_at).toLocaleTimeString('es-MX')}
+                          </span>
+                        </div>
+                        <p className="text-sm">{msg.content}</p>
+                      </div>
                     </div>
                   ))}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -310,30 +401,38 @@ function Dashboard() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl p-6">
                   <div className="text-gray-400 text-sm mb-2">Conversaciones</div>
-                  <div className="text-3xl font-bold text-white">{metrics.conversations || 0}</div>
+                  <div className="text-3xl font-bold text-white">
+                    {metrics.messages?.conversations || 0}
+                  </div>
                 </div>
                 <div className="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl p-6">
                   <div className="text-gray-400 text-sm mb-2">Mensajes Recibidos</div>
-                  <div className="text-3xl font-bold text-white">{metrics.inbound || 0}</div>
+                  <div className="text-3xl font-bold text-white">
+                    {metrics.messages?.inbound || 0}
+                  </div>
                 </div>
                 <div className="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl p-6">
                   <div className="text-gray-400 text-sm mb-2">Mensajes Enviados</div>
-                  <div className="text-3xl font-bold text-white">{metrics.outbound || 0}</div>
+                  <div className="text-3xl font-bold text-white">
+                    {metrics.messages?.outbound || 0}
+                  </div>
                 </div>
                 <div className="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl p-6">
                   <div className="text-gray-400 text-sm mb-2">Tokens Aprox.</div>
-                  <div className="text-3xl font-bold text-white">{metrics.tokens?.toLocaleString() || 0}</div>
+                  <div className="text-3xl font-bold text-white">
+                    {metrics.approxTokens?.toLocaleString() || 0}
+                  </div>
                 </div>
                 <div className="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl p-6">
                   <div className="text-gray-400 text-sm mb-2">Leads Capturados</div>
                   <div className="text-3xl font-bold text-white">{metrics.leads || 0}</div>
                 </div>
-                {metrics.actions && metrics.actions.map((action: any) => (
-                  <div key={action.type} className="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl p-6">
+                {metrics.actions && Object.entries(metrics.actions).map(([type, count]: [string, any]) => (
+                  <div key={type} className="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl p-6">
                     <div className="text-gray-400 text-sm mb-2 capitalize">
-                      {action.type.replace(/_/g, ' ')}
+                      {type.replace(/_/g, ' ')}
                     </div>
-                    <div className="text-3xl font-bold text-white">{action.c || 0}</div>
+                    <div className="text-3xl font-bold text-white">{count || 0}</div>
                   </div>
                 ))}
               </div>
