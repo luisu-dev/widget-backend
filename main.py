@@ -3120,10 +3120,6 @@ async def create_checkout_session_public(body: dict):
     if not t:
         raise HTTPException(404, f"Tenant {tenant_slug} no encontrado")
 
-    acct = _tenant_stripe_acct(t)
-    if not acct:
-        raise HTTPException(400, "Tenant no tiene Stripe conectado")
-
     # Preparar line_items para Stripe
     stripe_line_items = []
     for item in line_items:
@@ -3137,15 +3133,25 @@ async def create_checkout_session_public(body: dict):
         raise HTTPException(400, "No hay items válidos en lineItems")
 
     # Crear sesión de checkout
+    # Para acidia, usamos la cuenta de Stripe principal (sin Connect)
     try:
-        session = stripe.checkout.Session.create(
-            mode="subscription",
-            line_items=stripe_line_items,
-            success_url=f"{SITE_URL}/?checkout=success&session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=f"{SITE_URL}/?checkout=cancelled",
-            metadata={"tenant": tenant_slug},
-            stripe_account=acct,
-        )
+        # Check if tenant has stripe_account configured (for Connect)
+        acct = _tenant_stripe_acct(t)
+
+        # Build session params
+        session_params = {
+            "mode": "subscription",
+            "line_items": stripe_line_items,
+            "success_url": f"{SITE_URL}/?checkout=success&session_id={{CHECKOUT_SESSION_ID}}",
+            "cancel_url": f"{SITE_URL}/?checkout=cancelled",
+            "metadata": {"tenant": tenant_slug},
+        }
+
+        # Only add stripe_account if configured (for Connect)
+        if acct:
+            session_params["stripe_account"] = acct
+
+        session = stripe.checkout.Session.create(**session_params)
         return {"id": session.id, "url": session.url}
     except stripe.error.StripeError as e:
         log.error(f"Stripe error: {e}")
