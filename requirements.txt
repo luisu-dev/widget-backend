@@ -14,3 +14,4 @@ stripe==6.*
 qrcode[pil]==7.*
 python-multipart==0.0.9
 PyJWT==2.9.*
+resend==2.*

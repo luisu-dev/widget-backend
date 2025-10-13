@@ -1,6 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Landing from './pages/Landing'
 import Login from './pages/Login'
+import Register from './pages/Register'
+import Welcome from './pages/Welcome'
 import Dashboard from './pages/Dashboard'
 import PrivacyPage from './Privacy'
 import TermsPage from './Terms'
@@ -12,6 +14,10 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+        <Route path="/registro" element={<Register />} />
+        <Route path="/bienvenida" element={<Welcome />} />
+        <Route path="/welcome" element={<Welcome />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/terms" element={<TermsPage />} />

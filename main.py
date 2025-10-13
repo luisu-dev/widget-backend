@@ -24,6 +24,7 @@ from io import BytesIO
 import qrcode
 from fastapi.responses import StreamingResponse
 import mimetypes
+import resend
 
 
 
@@ -140,6 +141,11 @@ TWILIO_AUTH_TOKEN  = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "")
 TWILIO_SMS_FROM       = os.getenv("TWILIO_SMS_FROM", "")
 TWILIO_VALIDATE_SIGNATURE = as_bool(os.getenv("TWILIO_VALIDATE_SIGNATURE"), False)
+
+# Resend (Email Service)
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
+if RESEND_API_KEY:
+    resend.api_key = RESEND_API_KEY
 
 # ← NUEVO: evita NameError en el webhook
 META_DRY_RUN = as_bool(os.getenv("META_DRY_RUN"), False)
@@ -905,6 +911,26 @@ class UserCreateIn(BaseModel):
     tenant: str
     email: EmailStr
     password: str
+
+
+class PreRegistrationIn(BaseModel):
+    # Datos de contacto
+    full_name: str
+    phone: str
+    email: EmailStr
+    # Datos de negocio
+    business_name: str
+    business_slug: Optional[str] = None  # Auto-generado si no se proporciona
+    whatsapp_number: Optional[str] = None
+    website: Optional[str] = None
+    # Plan seleccionado
+    plan: str  # 'starter' o 'meta'
+
+
+class PreRegistrationOut(BaseModel):
+    registration_id: str
+    business_slug: str
+    checkout_url: str
 
 
 class MessageQuery(BaseModel):
@@ -1790,7 +1816,8 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                 else:
                     try:
                         platform = "instagram" if obj == "instagram" else "facebook"
-                        await meta_send_text(page_token, participant_id, answer, platform=platform)
+                        # Usa envío con auto-refresh del page_token si expira
+                        await meta_send_text_with_refresh(tenant_slug, participant_id, answer, platform=platform)
                     except Exception as e:
                         log.error(f"[{rid}] meta send error: {e}")
 
@@ -3035,6 +3062,408 @@ async def stripe_checkout_by_plan(body: dict, tenant: str = Query(...)):
     return {"id": session.id, "url": session.url}
 
 
+def generate_slug_from_name(business_name: str) -> str:
+    """Genera un slug único a partir del nombre del negocio"""
+    import re
+    # Convertir a minúsculas y reemplazar espacios/caracteres especiales por guiones
+    slug = business_name.lower()
+    slug = re.sub(r'[^a-z0-9]+', '-', slug)
+    slug = slug.strip('-')
+    # Limitar a 50 caracteres
+    slug = slug[:50]
+    return slug
+
+
+async def send_email_notification(to_email: str, subject: str, body: str):
+    """Envía un email de notificación usando Resend"""
+    if not RESEND_API_KEY:
+        log.warning(f"[EMAIL] Resend no configurado. Email no enviado a: {to_email}")
+        log.info(f"[EMAIL] Subject: {subject}")
+        log.info(f"[EMAIL] Body:\n{body}")
+        return
+
+    try:
+        params = {
+            "from": "Acid IA <noreply@acidia.app>",
+            "to": [to_email],
+            "subject": subject,
+            "html": body.replace("\n", "<br>"),
+        }
+
+        response = resend.Emails.send(params)
+        log.info(f"[EMAIL] Enviado exitosamente a {to_email} - ID: {response.get('id')}")
+    except Exception as e:
+        log.error(f"[EMAIL] Error enviando a {to_email}: {e}")
+        # Log el contenido por si falla
+        log.info(f"[EMAIL] Subject: {subject}")
+        log.info(f"[EMAIL] Body:\n{body}")
+
+
+async def process_new_tenant_from_payment(
+    registration_id: str,
+    business_slug: str,
+    plan: str,
+    stripe_session_id: str,
+    stripe_customer_id: str,
+    stripe_subscription_id: str
+):
+    """
+    Procesa un nuevo tenant después de que se complete el pago.
+    Crea el tenant, el usuario admin, y envía emails de notificación.
+    """
+    try:
+        if not db_engine:
+            log.error("Database not configured")
+            return
+
+        async with db_engine.begin() as conn:
+            # 1. Obtener datos del pre-registro
+            result = await conn.execute(
+                text("""
+                    SELECT full_name, phone, email, business_name, business_slug,
+                           whatsapp_number, website, plan
+                    FROM pre_registrations
+                    WHERE id = :id AND status = 'pending'
+                """),
+                {"id": registration_id}
+            )
+            prereg = result.fetchone()
+
+            if not prereg:
+                log.error(f"Pre-registro no encontrado: {registration_id}")
+                return
+
+            full_name, phone, email, business_name, business_slug, whatsapp, website, plan = prereg
+
+            # 2. Crear el tenant
+            await conn.execute(
+                text("""
+                    INSERT INTO tenants (slug, name, whatsapp, settings)
+                    VALUES (:slug, :name, :whatsapp, :settings)
+                    ON CONFLICT (slug) DO NOTHING
+                """),
+                {
+                    "slug": business_slug,
+                    "name": business_name,
+                    "whatsapp": whatsapp,
+                    "settings": json.dumps({
+                        "brand_name": business_name,
+                        "plan": plan,
+                        "stripe_customer_id": stripe_customer_id,
+                        "stripe_subscription_id": stripe_subscription_id,
+                        "contact_name": full_name,
+                        "contact_phone": phone,
+                        "website": website or ""
+                    })
+                }
+            )
+
+            # 3. Crear el usuario administrador
+            # Generar password temporal
+            temp_password = secrets.token_urlsafe(12)
+            password_hash = hash_password(temp_password)
+
+            result = await conn.execute(
+                text("""
+                    INSERT INTO users (tenant_slug, email, password_hash, role)
+                    VALUES (:tenant_slug, :email, :password_hash, :role)
+                    ON CONFLICT (email) DO NOTHING
+                    RETURNING id
+                """),
+                {
+                    "tenant_slug": business_slug,
+                    "email": email,
+                    "password_hash": password_hash,
+                    "role": "tenant_admin"
+                }
+            )
+            user_row = result.fetchone()
+            user_id = user_row[0] if user_row else None
+
+            # 4. Actualizar pre-registro como completado
+            await conn.execute(
+                text("""
+                    UPDATE pre_registrations
+                    SET status = 'completed',
+                        completed_at = NOW(),
+                        stripe_customer_id = :customer_id,
+                        stripe_subscription_id = :subscription_id,
+                        updated_at = NOW()
+                    WHERE id = :id
+                """),
+                {
+                    "id": registration_id,
+                    "customer_id": stripe_customer_id,
+                    "subscription_id": stripe_subscription_id
+                }
+            )
+
+        # 5. Enviar emails de notificación
+        # Email al cliente
+        customer_email_body = f"""
+¡Bienvenido a ZIA!
+
+Hola {full_name},
+
+Tu cuenta ha sido creada exitosamente. Aquí están tus credenciales de acceso:
+
+URL: https://acidia.app/login
+Email: {email}
+Password temporal: {temp_password}
+Tenant/Negocio: {business_slug}
+
+Por favor, cambia tu contraseña después del primer inicio de sesión.
+
+Próximos pasos:
+1. Inicia sesión en https://acidia.app/login
+2. Ve a la sección "Integraciones"
+3. Conecta tu página de Facebook/Instagram
+4. Configura tu WhatsApp en la configuración
+5. Personaliza el prompt base de tu asistente IA
+
+Plan contratado: {plan.capitalize()}
+
+¡Gracias por confiar en ZIA!
+
+Saludos,
+El equipo de ZIA
+"""
+
+        await send_email_notification(
+            to_email=email,
+            subject="¡Bienvenido a ZIA! - Credenciales de acceso",
+            body=customer_email_body
+        )
+
+        # Email a nosotros (administradores)
+        admin_email = "info@acidia.app"  # Cambiar por tu email
+        admin_email_body = f"""
+Nuevo cliente registrado en ZIA
+
+Detalles del cliente:
+- Nombre: {full_name}
+- Email: {email}
+- Teléfono: {phone}
+- Negocio: {business_name}
+- Slug: {business_slug}
+- WhatsApp: {whatsapp or 'No proporcionado'}
+- Website: {website or 'No proporcionado'}
+- Plan: {plan.capitalize()}
+
+Stripe:
+- Session ID: {stripe_session_id}
+- Customer ID: {stripe_customer_id}
+- Subscription ID: {stripe_subscription_id}
+
+El tenant y usuario han sido creados automáticamente.
+User ID: {user_id}
+"""
+
+        await send_email_notification(
+            to_email=admin_email,
+            subject=f"Nuevo cliente: {business_name} ({plan})",
+            body=admin_email_body
+        )
+
+        log.info(f"✅ Tenant creado exitosamente: {business_slug}")
+
+    except Exception as e:
+        log.error(f"Error procesando nuevo tenant: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+@app.post("/v1/pre-registration", response_model=PreRegistrationOut)
+async def create_pre_registration(body: PreRegistrationIn):
+    """
+    Crea un pre-registro antes de que el usuario pague.
+    Esto permite capturar información del negocio y crear el tenant automáticamente
+    cuando se complete el pago.
+    """
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    # Generar slug si no se proporcionó
+    business_slug = body.business_slug or generate_slug_from_name(body.business_name)
+
+    # Validar que el plan sea válido
+    if body.plan not in {"starter", "meta"}:
+        raise HTTPException(400, "Plan inválido. Debe ser 'starter' o 'meta'")
+
+    # Verificar que el slug no esté ya en uso
+    async with db_engine.begin() as conn:
+        # Verificar en tenants existentes
+        result = await conn.execute(
+            text("SELECT slug FROM tenants WHERE slug = :slug"),
+            {"slug": business_slug}
+        )
+        if result.fetchone():
+            # Agregar un sufijo numérico
+            base_slug = business_slug
+            counter = 1
+            while True:
+                business_slug = f"{base_slug}-{counter}"
+                result = await conn.execute(
+                    text("SELECT slug FROM tenants WHERE slug = :slug"),
+                    {"slug": business_slug}
+                )
+                if not result.fetchone():
+                    break
+                counter += 1
+
+        # Verificar en pre-registros pendientes
+        result = await conn.execute(
+            text("SELECT business_slug FROM pre_registrations WHERE business_slug = :slug AND status = 'pending'"),
+            {"slug": business_slug}
+        )
+        if result.fetchone():
+            raise HTTPException(400, f"El slug '{business_slug}' ya está reservado")
+
+        # Crear el pre-registro
+        registration_id = str(uuid.uuid4())
+        await conn.execute(
+            text("""
+                INSERT INTO pre_registrations
+                (id, full_name, phone, email, business_name, business_slug,
+                 whatsapp_number, website, plan, status)
+                VALUES
+                (:id, :full_name, :phone, :email, :business_name, :business_slug,
+                 :whatsapp_number, :website, :plan, 'pending')
+            """),
+            {
+                "id": registration_id,
+                "full_name": body.full_name,
+                "phone": body.phone,
+                "email": body.email,
+                "business_name": body.business_name,
+                "business_slug": business_slug,
+                "whatsapp_number": body.whatsapp_number,
+                "website": body.website,
+                "plan": body.plan
+            }
+        )
+
+    # Crear sesión de checkout de Stripe para el tenant 'acidia' (o el que procese pagos)
+    # Nota: Aquí usamos el tenant 'acidia' que tiene Stripe Connect configurado
+    t = await fetch_tenant("acidia")
+    if not t:
+        raise HTTPException(500, "Tenant de procesamiento de pagos no configurado")
+
+    acct = _tenant_stripe_acct(t)
+    if not acct:
+        raise HTTPException(500, "Stripe Connect no configurado")
+
+    # Asegurar que existan los precios
+    prices = _tenant_stripe_prices(t)
+    if body.plan not in prices:
+        prices = await ensure_prices_for_tenant(t)
+
+    price_id = prices[body.plan]
+
+    # Crear sesión de Stripe con metadata del pre-registro
+    session = stripe.checkout.Session.create(
+        mode="subscription",
+        line_items=[{"price": price_id, "quantity": 1}],
+        success_url=f"{SITE_URL}/bienvenida?session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"{SITE_URL}/registro?cancelled=true",
+        customer_email=body.email,
+        metadata={
+            "registration_id": registration_id,
+            "business_slug": business_slug,
+            "plan": body.plan,
+            "is_new_tenant": "true"
+        },
+        stripe_account=acct,
+    )
+
+    # Actualizar el pre-registro con el session_id de Stripe
+    async with db_engine.begin() as conn:
+        await conn.execute(
+            text("""
+                UPDATE pre_registrations
+                SET stripe_session_id = :session_id, updated_at = NOW()
+                WHERE id = :id
+            """),
+            {"session_id": session.id, "id": registration_id}
+        )
+
+    log.info(f"Pre-registro creado: {registration_id} para {business_slug}")
+
+    return PreRegistrationOut(
+        registration_id=registration_id,
+        business_slug=business_slug,
+        checkout_url=session.url
+    )
+
+
+@app.post("/v1/admin/create-user-manual")
+async def create_user_manual(body: UserCreateIn, current = Depends(require_admin)):
+    """
+    Crea un tenant y usuario manualmente (para ventas fuera de la plataforma).
+    Solo accesible por administradores.
+    """
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    tenant_slug = body.tenant.strip().lower()
+    email = body.email.strip().lower()
+    password = body.password
+
+    # Validar que el tenant no exista
+    tenant_exists = await fetch_tenant(tenant_slug)
+    if tenant_exists:
+        raise HTTPException(400, f"El tenant '{tenant_slug}' ya existe")
+
+    # Validar que el email no exista
+    async with db_engine.begin() as conn:
+        result = await conn.execute(
+            text("SELECT id FROM users WHERE email = :email"),
+            {"email": email}
+        )
+        if result.fetchone():
+            raise HTTPException(400, f"El email '{email}' ya está registrado")
+
+        # Crear el tenant
+        await conn.execute(
+            text("""
+                INSERT INTO tenants (slug, name, settings)
+                VALUES (:slug, :name, :settings)
+            """),
+            {
+                "slug": tenant_slug,
+                "name": tenant_slug.title(),
+                "settings": json.dumps({"manual_creation": True})
+            }
+        )
+
+        # Crear el usuario
+        password_hash = hash_password(password)
+        result = await conn.execute(
+            text("""
+                INSERT INTO users (tenant_slug, email, password_hash, role)
+                VALUES (:tenant_slug, :email, :password_hash, :role)
+                RETURNING id
+            """),
+            {
+                "tenant_slug": tenant_slug,
+                "email": email,
+                "password_hash": password_hash,
+                "role": "tenant_admin"
+            }
+        )
+        user_id = result.fetchone()[0]
+
+    log.info(f"Usuario manual creado: {email} para tenant {tenant_slug} por admin {current['email']}")
+
+    return {
+        "success": True,
+        "tenant_slug": tenant_slug,
+        "user_id": user_id,
+        "email": email,
+        "message": "Usuario y tenant creados exitosamente. El usuario puede ahora conectar sus integraciones."
+    }
+
+
 @app.post("/v1/stripe/webhook")
 async def stripe_webhook(request: Request):
     """Webhook de Stripe para manejar eventos de pagos y suscripciones."""
@@ -3068,8 +3497,29 @@ async def stripe_webhook(request: Request):
         sub_id = data.get("subscription")
         cust_id = data.get("customer")
         sid = data.get("id")
-        asyncio.create_task(store_event(tenant_slug, sid or "stripe", "stripe_checkout_completed",
-                                        {"subscription": sub_id, "customer": cust_id}))
+        metadata = data.get("metadata", {})
+
+        # Verificar si es un nuevo tenant (viene de pre-registro)
+        if metadata.get("is_new_tenant") == "true":
+            registration_id = metadata.get("registration_id")
+            business_slug = metadata.get("business_slug")
+            plan = metadata.get("plan")
+
+            log.info(f"Procesando nuevo tenant desde checkout: {business_slug} (reg: {registration_id})")
+
+            # Procesar el nuevo tenant de forma asíncrona
+            asyncio.create_task(process_new_tenant_from_payment(
+                registration_id=registration_id,
+                business_slug=business_slug,
+                plan=plan,
+                stripe_session_id=sid,
+                stripe_customer_id=cust_id,
+                stripe_subscription_id=sub_id
+            ))
+        else:
+            # Checkout normal (no es un nuevo tenant)
+            asyncio.create_task(store_event(tenant_slug, sid or "stripe", "stripe_checkout_completed",
+                                            {"subscription": sub_id, "customer": cust_id}))
 
     elif etype == "invoice.paid":
         asyncio.create_task(store_event(tenant_slug, "stripe", "stripe_invoice_paid",
