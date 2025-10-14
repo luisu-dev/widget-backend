@@ -1632,6 +1632,7 @@ def _validate_meta_signature(request: Request, body: bytes) -> bool:
     try:
         # La firma viene como "sha256=<hash>"
         if not signature.startswith("sha256="):
+            log.warning(f"Firma no empieza con sha256=, recibido: {signature[:20]}")
             return False
 
         expected_hash = signature[7:]  # Remueve "sha256="
@@ -1643,7 +1644,11 @@ def _validate_meta_signature(request: Request, body: bytes) -> bool:
 
         is_valid = hmac.compare_digest(expected_hash, computed_hash)
         if not is_valid:
-            log.warning("❌ Firma de Meta inválida")
+            log.warning(f"❌ Firma de Meta inválida - App Secret (primeros 8): {app_secret[:8]}...")
+            log.warning(f"   Expected hash (primeros 10): {expected_hash[:10]}...")
+            log.warning(f"   Computed hash (primeros 10): {computed_hash[:10]}...")
+        else:
+            log.info("✅ Firma de Meta válida")
         return is_valid
     except Exception as e:
         log.error(f"Error validando firma de Meta: {e}")
