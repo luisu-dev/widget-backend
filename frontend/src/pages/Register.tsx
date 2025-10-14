@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -15,6 +15,7 @@ interface RegisterForm {
 
 export default function Register() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [form, setForm] = useState<RegisterForm>({
@@ -26,6 +27,14 @@ export default function Register() {
     website: '',
     plan: 'starter'
   })
+
+  // Pre-seleccionar plan desde URL
+  useEffect(() => {
+    const planFromUrl = searchParams.get('plan')
+    if (planFromUrl === 'starter' || planFromUrl === 'meta') {
+      setForm(prev => ({ ...prev, plan: planFromUrl }))
+    }
+  }, [searchParams])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

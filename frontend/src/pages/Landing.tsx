@@ -234,13 +234,12 @@ function PlanCard({ plan, isDark, onShowDetails, onScrollToContact, onAddToCart 
             Agregar al carrito
           </button>
         )}
-        <button
-          onClick={onScrollToContact}
-          className="rounded-xl bg-[#04d9b5] px-4 py-2 text-sm font-medium text-black transition hover:brightness-110"
-          type="button"
+        <a
+          href={`/registro?plan=${plan.key}`}
+          className="rounded-xl bg-[#04d9b5] px-4 py-2 text-sm font-medium text-black transition hover:brightness-110 inline-block text-center"
         >
           Contratar
-        </button>
+        </a>
       </div>
     </div>
   );
@@ -742,13 +741,12 @@ export default function App() {
               ))}
             </div>
             <div className="mt-6 flex flex-wrap gap-2">
-              <button
-                onClick={closeAndContact}
-                className="rounded-xl bg-[#04d9b5] px-4 py-2 text-sm font-semibold text-black transition hover:brightness-110"
-                type="button"
+              <a
+                href={`/registro?plan=${activePlan.key}`}
+                className="rounded-xl bg-[#04d9b5] px-4 py-2 text-sm font-semibold text-black transition hover:brightness-110 inline-block text-center"
               >
                 Contratar
-              </button>
+              </a>
               {activePlan.priceId && (
                 <button
                   onClick={() => addToCart(activePlan.priceId!)}
