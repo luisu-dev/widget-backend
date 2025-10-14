@@ -1618,11 +1618,16 @@ async def meta_webhook_verify(
     raise HTTPException(status_code=403, detail="Verification failed")
 
 def _validate_meta_signature(request: Request, body: bytes) -> bool:
-    """Valida la firma X-Hub-Signature-256 de Meta para webhooks."""
-    app_secret = os.getenv("META_APP_SECRET", "").strip()
-    if not app_secret:
-        log.warning("META_APP_SECRET no configurado, saltando validación de firma")
-        return True  # En desarrollo puede no estar configurado
+    """Valida la firma X-Hub-Signature-256 de Meta para webhooks.
+    Prueba con ambos secretos: Facebook y Instagram."""
+
+    # Obtener ambos secretos
+    fb_secret = os.getenv("META_APP_SECRET", "").strip()
+    ig_secret = os.getenv("META_INSTAGRAM_APP_SECRET", "").strip()
+
+    if not fb_secret and not ig_secret:
+        log.warning("Ningún secreto configurado, saltando validación de firma")
+        return True
 
     signature = request.headers.get("X-Hub-Signature-256", "")
     if not signature:
@@ -1636,20 +1641,43 @@ def _validate_meta_signature(request: Request, body: bytes) -> bool:
             return False
 
         expected_hash = signature[7:]  # Remueve "sha256="
-        computed_hash = hmac.new(
-            app_secret.encode("utf-8"),
-            body,
-            hashlib.sha256
-        ).hexdigest()
 
-        is_valid = hmac.compare_digest(expected_hash, computed_hash)
-        if not is_valid:
-            log.warning(f"❌ Firma de Meta inválida - App Secret (primeros 8): {app_secret[:8]}...")
-            log.warning(f"   Expected hash (primeros 10): {expected_hash[:10]}...")
-            log.warning(f"   Computed hash (primeros 10): {computed_hash[:10]}...")
-        else:
-            log.info("✅ Firma de Meta válida")
-        return is_valid
+        # Intentar con el secreto de Facebook
+        if fb_secret:
+            computed_hash_fb = hmac.new(
+                fb_secret.encode("utf-8"),
+                body,
+                hashlib.sha256
+            ).hexdigest()
+
+            if hmac.compare_digest(expected_hash, computed_hash_fb):
+                log.info("✅ Firma válida (Facebook App Secret)")
+                return True
+
+        # Intentar con el secreto de Instagram
+        if ig_secret:
+            computed_hash_ig = hmac.new(
+                ig_secret.encode("utf-8"),
+                body,
+                hashlib.sha256
+            ).hexdigest()
+
+            if hmac.compare_digest(expected_hash, computed_hash_ig):
+                log.info("✅ Firma válida (Instagram App Secret)")
+                return True
+
+        # Si ninguno funcionó, loguear detalles
+        log.warning(f"❌ Firma de Meta inválida con ambos secretos")
+        log.warning(f"   Expected hash: {expected_hash[:10]}...")
+        if fb_secret:
+            computed_hash_fb = hmac.new(fb_secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+            log.warning(f"   FB computed: {computed_hash_fb[:10]}...")
+        if ig_secret:
+            computed_hash_ig = hmac.new(ig_secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+            log.warning(f"   IG computed: {computed_hash_ig[:10]}...")
+
+        return False
+
     except Exception as e:
         log.error(f"Error validando firma de Meta: {e}")
         return False
@@ -1658,13 +1686,10 @@ def _validate_meta_signature(request: Request, body: bytes) -> bool:
 async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(...)):
     rid = f"meta-{uuid.uuid4().hex[:8]}"
 
-    # Validar firma de Meta
+    # Validar firma de Meta (intenta con Facebook e Instagram App Secrets)
     body = await request.body()
-    is_valid = _validate_meta_signature(request, body)
-    if not is_valid:
-        # TEMPORAL: Log pero no bloquear (para debugging)
-        log.warning(f"[{rid}] Signature validation failed, but continuing for debugging")
-        # raise HTTPException(403, "Invalid signature")  # Comentado temporalmente
+    if not _validate_meta_signature(request, body):
+        raise HTTPException(403, "Invalid signature")
 
     try:
         obj = payload.get("object")
