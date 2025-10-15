@@ -2437,13 +2437,16 @@ async def facebook_oauth_callback(
     state: str = Query(...)
 ):
     """Maneja el callback de Facebook OAuth y guarda los tokens."""
+    log.info(f"🔵 Facebook OAuth callback iniciado")
+
     # Validar state
     try:
         state_data = jwt.decode(state, AUTH_SECRET, algorithms=["HS256"])
         tenant_slug = state_data["tenant_slug"]
         user_id = state_data["user_id"]
+        log.info(f"✅ State validado para tenant: {tenant_slug}, user_id: {user_id}")
     except Exception as e:
-        log.error(f"Invalid OAuth state: {e}")
+        log.error(f"❌ Invalid OAuth state: {e}")
         raise HTTPException(400, "Estado OAuth inválido o expirado")
 
     app_id = os.getenv("META_APP_ID", "").strip()
@@ -2463,18 +2466,23 @@ async def facebook_oauth_callback(
     )
 
     async with httpx.AsyncClient() as client:
+        log.info(f"🔄 Intercambiando code por access token...")
         resp = await client.get(token_url)
         if resp.status_code != 200:
-            log.error(f"Facebook token exchange failed: {resp.text}")
+            log.error(f"❌ Facebook token exchange failed: {resp.text}")
             raise HTTPException(400, "Error obteniendo token de Facebook")
 
         data = resp.json()
         user_access_token = data.get("access_token")
 
         if not user_access_token:
+            log.error(f"❌ No se recibió access token en la respuesta")
             raise HTTPException(400, "No se recibió access token")
 
+        log.info(f"✅ Access token obtenido (primeros 10 chars): {user_access_token[:10]}...")
+
         # Obtener long-lived token
+        log.info(f"🔄 Obteniendo long-lived token...")
         long_lived_url = (
             f"https://graph.facebook.com/v20.0/oauth/access_token?"
             f"grant_type=fb_exchange_token&"
@@ -2487,19 +2495,28 @@ async def facebook_oauth_callback(
         if resp2.status_code == 200:
             long_lived_data = resp2.json()
             user_access_token = long_lived_data.get("access_token", user_access_token)
+            log.info(f"✅ Long-lived token obtenido")
+        else:
+            log.warning(f"⚠️ No se pudo obtener long-lived token, usando token corto")
 
         # Obtener páginas del usuario
+        log.info(f"🔄 Obteniendo páginas de Facebook...")
         pages_url = f"https://graph.facebook.com/v20.0/me/accounts?access_token={user_access_token}"
         resp3 = await client.get(pages_url)
 
         if resp3.status_code != 200:
-            log.error(f"Error getting pages: {resp3.text}")
+            log.error(f"❌ Error getting pages: {resp3.text}")
             raise HTTPException(400, "Error obteniendo páginas de Facebook")
 
         pages_data = resp3.json()
         pages = pages_data.get("data", [])
 
+        log.info(f"📋 Se encontraron {len(pages)} página(s) de Facebook")
+        for idx, page in enumerate(pages):
+            log.info(f"  Página {idx + 1}: {page.get('name')} (ID: {page.get('id')})")
+
         if not pages:
+            log.error(f"❌ No se encontraron páginas asociadas a esta cuenta")
             raise HTTPException(400, "No se encontraron páginas asociadas a esta cuenta")
 
         # Guardar tokens en la base de datos
@@ -2509,7 +2526,11 @@ async def facebook_oauth_callback(
         page_token = page.get("access_token")
         page_name = page.get("name")
 
+        log.info(f"📌 Página seleccionada: {page_name} (ID: {page_id})")
+        log.info(f"   Page token (primeros 10 chars): {page_token[:10] if page_token else 'None'}...")
+
         # Obtener Instagram Business Account asociado (si existe)
+        log.info(f"🔄 Buscando Instagram Business Account asociado...")
         ig_account_id = None
         ig_url = f"https://graph.facebook.com/v20.0/{page_id}?fields=instagram_business_account&access_token={page_token}"
         resp4 = await client.get(ig_url)
@@ -2518,8 +2539,29 @@ async def facebook_oauth_callback(
             ig_account = ig_data.get("instagram_business_account")
             if ig_account:
                 ig_account_id = ig_account.get("id")
+                log.info(f"✅ Instagram Business Account encontrado: {ig_account_id}")
+            else:
+                log.warning(f"⚠️ No se encontró Instagram Business Account asociado a esta página")
+        else:
+            log.warning(f"⚠️ Error al obtener Instagram account: {resp4.text}")
+
+    # Validar que los tokens sean funcionales antes de guardar
+    log.info(f"🔍 Validando que el page token funcione...")
+    try:
+        validate_url = f"https://graph.facebook.com/v20.0/{page_id}?access_token={page_token}"
+        async with httpx.AsyncClient() as validate_client:
+            validate_resp = await validate_client.get(validate_url)
+            if validate_resp.status_code == 200:
+                log.info(f"✅ Page token validado correctamente")
+            else:
+                log.error(f"❌ Page token inválido: {validate_resp.text}")
+                raise HTTPException(400, "El token de la página no es válido")
+    except Exception as e:
+        log.error(f"❌ Error al validar token: {e}")
+        raise HTTPException(400, "Error al validar token de Facebook")
 
     # Guardar en la base de datos (en settings JSON, multi-tenant)
+    log.info(f"💾 Guardando configuración en la base de datos...")
     if db_engine:
         async with db_engine.begin() as conn:
             # Obtener settings actuales del tenant
@@ -2530,17 +2572,27 @@ async def facebook_oauth_callback(
             row = result.first()
             current_settings = row[0] if row and row[0] else {}
 
+            log.info(f"📖 Settings actuales del tenant: {json.dumps({k: v for k, v in current_settings.items() if not k.endswith('_token')}, indent=2)}")
+
             # Actualizar con nuevos tokens de Facebook
-            current_settings.update({
+            new_settings = {
                 "fb_page_id": page_id,
                 "fb_page_token": page_token,
                 "fb_page_name": page_name,
                 "ig_user_id": ig_account_id,
                 "ig_user_ids": [ig_account_id] if ig_account_id else []
-            })
+            }
+
+            current_settings.update(new_settings)
+
+            log.info(f"📝 Nuevos valores a guardar:")
+            log.info(f"   - fb_page_id: {page_id}")
+            log.info(f"   - fb_page_name: {page_name}")
+            log.info(f"   - fb_page_token: {page_token[:10] if page_token else 'None'}...***")
+            log.info(f"   - ig_user_id: {ig_account_id}")
 
             # Guardar settings actualizados
-            await conn.execute(
+            update_result = await conn.execute(
                 text("""
                     UPDATE tenants
                     SET settings = CAST(:settings AS JSONB),
@@ -2553,8 +2605,28 @@ async def facebook_oauth_callback(
                 }
             )
 
+            log.info(f"✅ Configuración guardada exitosamente. Rows affected: {update_result.rowcount}")
+
+            # Verificar que se guardó correctamente
+            verify_result = await conn.execute(
+                text("SELECT settings FROM tenants WHERE slug = :slug"),
+                {"slug": tenant_slug}
+            )
+            verify_row = verify_result.first()
+            if verify_row:
+                saved_settings = verify_row[0]
+                log.info(f"🔍 Verificación - Settings guardados:")
+                log.info(f"   - fb_page_id: {saved_settings.get('fb_page_id')}")
+                log.info(f"   - fb_page_name: {saved_settings.get('fb_page_name')}")
+                log.info(f"   - ig_user_id: {saved_settings.get('ig_user_id')}")
+            else:
+                log.error(f"❌ No se pudo verificar el guardado - tenant no encontrado")
+    else:
+        log.error(f"❌ db_engine no disponible, no se pudo guardar la configuración")
+
     # Redirigir al dashboard con éxito
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+    log.info(f"🎉 Facebook OAuth completado exitosamente. Redirigiendo a {frontend_url}/dashboard")
     return Response(
         status_code=302,
         headers={"Location": f"{frontend_url}/dashboard?facebook_connected=true"}

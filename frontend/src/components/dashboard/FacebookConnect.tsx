@@ -27,9 +27,13 @@ export default function FacebookConnect({ token, tenant }: FacebookConnectProps)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.get('facebook_connected') === 'true') {
-      setSuccess('¡Facebook conectado exitosamente!')
+      setSuccess('¡Facebook conectado exitosamente! Recargando información...')
       window.history.replaceState({}, '', window.location.pathname)
-      setTimeout(() => setSuccess(''), 5000)
+
+      // Recargar la página para obtener los datos actualizados del tenant
+      setTimeout(() => {
+        window.location.reload()
+      }, 1500)
     }
   }, [])
 
