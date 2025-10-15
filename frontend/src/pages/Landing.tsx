@@ -164,11 +164,6 @@ type PlanCardData = {
   sections: PlanDetailSection[];
 };
 
-interface ContactFormData {
-  fullName: string;
-  phone: string;
-  email: string;
-}
 
 const CLIENT_REQUIREMENTS = [
   "Starter: sitio web donde insertar el widget y FAQs base",
@@ -406,8 +401,6 @@ export default function App() {
   const [activePlan, setActivePlan] = useState<PlanCardData | null>(null);
   const [cart, setCart] = useState<string[]>([]);
   const [showCart, setShowCart] = useState(false);
-  const [showContactForm, setShowContactForm] = useState(false);
-  const [pendingCheckout, setPendingCheckout] = useState<{type: 'plan' | 'cart', planKey?: string} | null>(null);
 
   const addToCart = (priceId: string) => {
     if (!priceId) return;
