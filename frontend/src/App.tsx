@@ -4,6 +4,7 @@ import Login from './pages/Login'
 import Register from './pages/Register'
 import Welcome from './pages/Welcome'
 import Dashboard from './pages/Dashboard'
+import AdminPanel from './pages/AdminPanel'
 import PrivacyPage from './Privacy'
 import TermsPage from './Terms'
 import DataDeletionPage from './DataDeletion'
@@ -19,6 +20,7 @@ export default function App() {
         <Route path="/bienvenida" element={<Welcome />} />
         <Route path="/welcome" element={<Welcome />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/admin" element={<AdminPanel />} />
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/terms" element={<TermsPage />} />
         <Route path="/data-deletion" element={<DataDeletionPage />} />

@@ -250,6 +250,15 @@ function Dashboard() {
                 {tab.label}
               </button>
             ))}
+            {/* Panel de Admin - solo para acid-ia */}
+            {profile.tenant.slug === 'acid-ia' && (
+              <button
+                onClick={() => navigate('/admin')}
+                className="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 text-white font-medium hover:from-purple-700 hover:to-pink-700 transition"
+              >
+                🔧 Admin Panel
+              </button>
+            )}
           </nav>
         </div>
       </div>

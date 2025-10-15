@@ -164,6 +164,12 @@ type PlanCardData = {
   sections: PlanDetailSection[];
 };
 
+interface ContactFormData {
+  fullName: string;
+  phone: string;
+  email: string;
+}
+
 const CLIENT_REQUIREMENTS = [
   "Starter: sitio web donde insertar el widget y FAQs base",
   "WhatsApp: cuenta WhatsApp Business API aprobada y proveedor (Meta Cloud API o Twilio) a cargo del cliente",
@@ -184,11 +190,10 @@ const GENERAL_CONDITIONS = [
   "Cada cliente es responsable de políticas, textos legales y uso legítimo de sus datos",
 ];
 
-function PlanCard({ plan, isDark, onShowDetails, onScrollToContact, onAddToCart }: {
+function PlanCard({ plan, isDark, onShowDetails, onAddToCart }: {
   plan: PlanCardData;
   isDark: boolean;
   onShowDetails: (plan: PlanCardData) => void;
-  onScrollToContact: () => void;
   onAddToCart: (priceId: string) => void;
 }) {
   return (
@@ -249,7 +254,6 @@ function PlanCarousel({
   plans,
   isDark,
   onShowDetails,
-  onScrollToContact,
   onAddToCart,
   label,
   showArrow = false,
@@ -257,7 +261,6 @@ function PlanCarousel({
   plans: PlanCardData[];
   isDark: boolean;
   onShowDetails: (plan: PlanCardData) => void;
-  onScrollToContact: () => void;
   onAddToCart: (priceId: string) => void;
   label: string;
   showArrow?: boolean;
@@ -279,7 +282,6 @@ function PlanCarousel({
                 plan={plan}
                 isDark={isDark}
                 onShowDetails={onShowDetails}
-                onScrollToContact={onScrollToContact}
                 onAddToCart={onAddToCart}
               />
             </div>
@@ -404,6 +406,8 @@ export default function App() {
   const [activePlan, setActivePlan] = useState<PlanCardData | null>(null);
   const [cart, setCart] = useState<string[]>([]);
   const [showCart, setShowCart] = useState(false);
+  const [showContactForm, setShowContactForm] = useState(false);
+  const [pendingCheckout, setPendingCheckout] = useState<{type: 'plan' | 'cart', planKey?: string} | null>(null);
 
   const addToCart = (priceId: string) => {
     if (!priceId) return;
@@ -992,7 +996,6 @@ export default function App() {
           plans={primaryPlans}
           isDark={isDark}
           onShowDetails={(p) => setActivePlan(p)}
-          onScrollToContact={scrollToContact}
           onAddToCart={addToCart}
           label="Módulos y add-ons"
           showArrow
@@ -1002,7 +1005,6 @@ export default function App() {
           plans={webPlans}
           isDark={isDark}
           onShowDetails={(p) => setActivePlan(p)}
-          onScrollToContact={scrollToContact}
           onAddToCart={addToCart}
           label="Paquetes web"
         />

@@ -146,6 +146,7 @@ TWILIO_VALIDATE_SIGNATURE = as_bool(os.getenv("TWILIO_VALIDATE_SIGNATURE"), Fals
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
 if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "info@acidia.app").strip()
 
 # ← NUEVO: evita NameError en el webhook
 META_DRY_RUN = as_bool(os.getenv("META_DRY_RUN"), False)
@@ -3430,11 +3431,16 @@ async def create_pre_registration(body: PreRegistrationIn):
 
 
 @app.post("/v1/admin/create-user-manual")
-async def create_user_manual(body: UserCreateIn, current = Depends(require_admin)):
+async def create_user_manual(body: UserCreateIn, request: Request):
     """
     Crea un tenant y usuario manualmente (para ventas fuera de la plataforma).
-    Solo accesible por administradores.
+    Solo accesible por administradores (tenant acid-ia).
     """
+    # Verificar autenticación y permisos de admin
+    current = await require_user(request)
+    if current.get("tenant_slug") != "acid-ia":
+        raise HTTPException(403, "Forbidden: Solo administradores de Acid IA pueden crear usuarios manualmente")
+
     if not db_engine:
         raise HTTPException(503, "Database not configured")
 
@@ -3486,7 +3492,50 @@ async def create_user_manual(body: UserCreateIn, current = Depends(require_admin
         )
         user_id = result.fetchone()[0]
 
-    log.info(f"Usuario manual creado: {email} para tenant {tenant_slug} por admin {current['email']}")
+    log.info(f"Usuario manual creado: {email} para tenant {tenant_slug} por admin {current.get('email')}")
+
+    # Enviar emails de notificación
+    login_url = f"{SITE_URL}/login"
+    
+    # Email al nuevo usuario con sus credenciales
+    user_email_body = f"""
+    <h2>Bienvenido a Acid IA</h2>
+    <p>Tu cuenta ha sido creada exitosamente. Aquí están tus credenciales de acceso:</p>
+    <p><strong>Email:</strong> {email}</p>
+    <p><strong>Contraseña:</strong> {password}</p>
+    <p><strong>Tenant:</strong> {tenant_slug}</p>
+    <br>
+    <p>Puedes iniciar sesión en: <a href="{login_url}">{login_url}</a></p>
+    <br>
+    <p>Te recomendamos cambiar tu contraseña después de iniciar sesión por primera vez.</p>
+    <p>Saludos,<br>El equipo de Acid IA</p>
+    """
+    
+    await send_email_notification(
+        to_email=email,
+        subject="Bienvenido a Acid IA - Tus credenciales de acceso",
+        body=user_email_body
+    )
+    
+    # Email al admin notificando la creación
+    admin_email_body = f"""
+    <h2>Nuevo usuario creado manualmente</h2>
+    <p>Se ha creado un nuevo usuario en el sistema:</p>
+    <p><strong>Email:</strong> {email}</p>
+    <p><strong>Tenant:</strong> {tenant_slug}</p>
+    <p><strong>User ID:</strong> {user_id}</p>
+    <p><strong>Creado por:</strong> {current.get('email')}</p>
+    <p><strong>Fecha:</strong> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+    <br>
+    <p>El usuario ha recibido sus credenciales por email.</p>
+    """
+    
+    await send_email_notification(
+        to_email=ADMIN_EMAIL,
+        subject=f"Nuevo usuario creado: {email}",
+        body=admin_email_body
+    )
+
 
     return {
         "success": True,

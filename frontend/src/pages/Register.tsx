@@ -10,7 +10,7 @@ interface RegisterForm {
   businessName: string
   whatsappNumber: string
   website: string
-  plan: 'starter' | 'meta'
+  plan: 'starter' | 'addon-whatsapp' | 'addon-ecommerce' | 'web-basic' | 'web-premium' | 'web-ecommerce'
 }
 
 export default function Register() {
@@ -31,8 +31,9 @@ export default function Register() {
   // Pre-seleccionar plan desde URL
   useEffect(() => {
     const planFromUrl = searchParams.get('plan')
-    if (planFromUrl === 'starter' || planFromUrl === 'meta') {
-      setForm(prev => ({ ...prev, plan: planFromUrl }))
+    const validPlans = ['starter', 'addon-whatsapp', 'addon-ecommerce', 'web-basic', 'web-premium', 'web-ecommerce']
+    if (planFromUrl && validPlans.includes(planFromUrl)) {
+      setForm(prev => ({ ...prev, plan: planFromUrl as any }))
     }
   }, [searchParams])
 
@@ -223,19 +224,21 @@ export default function Register() {
                   />
                   <div className="text-center">
                     <h3 className="text-xl font-bold text-white mb-2">Plan Starter</h3>
-                    <p className="text-3xl font-bold text-cyan-400 mb-4">$999 MXN/mes</p>
+                    <p className="text-sm text-purple-300 mb-1">(Chat Web)</p>
+                    <p className="text-3xl font-bold text-cyan-400 mb-4">$1,500 MXN/mes</p>
+                    <p className="text-xs text-purple-300 mb-4">+IVA</p>
                     <ul className="text-sm text-purple-200 space-y-2 text-left">
-                      <li>✓ Respuestas automáticas ilimitadas</li>
-                      <li>✓ Integración Facebook + Instagram</li>
-                      <li>✓ Dashboard de métricas</li>
-                      <li>✓ Soporte por email</li>
+                      <li>✓ Widget de chat web embebible</li>
+                      <li>✓ FAQs con tono de marca</li>
+                      <li>✓ Leads calificados</li>
+                      <li>✓ Redirecciones a WhatsApp o URLs</li>
                     </ul>
                   </div>
                 </label>
 
                 <label
                   className={`relative cursor-pointer rounded-xl p-6 border-2 transition-all ${
-                    form.plan === 'meta'
+                    form.plan === 'addon-whatsapp'
                       ? 'border-cyan-400 bg-cyan-400/10'
                       : 'border-purple-300/30 bg-white/5 hover:bg-white/10'
                   }`}
@@ -243,19 +246,21 @@ export default function Register() {
                   <input
                     type="radio"
                     name="plan"
-                    value="meta"
-                    checked={form.plan === 'meta'}
+                    value="addon-whatsapp"
+                    checked={form.plan === 'addon-whatsapp'}
                     onChange={handleChange}
                     className="sr-only"
                   />
                   <div className="text-center">
-                    <h3 className="text-xl font-bold text-white mb-2">Plan Meta</h3>
-                    <p className="text-3xl font-bold text-cyan-400 mb-4">$1,999 MXN/mes</p>
+                    <h3 className="text-xl font-bold text-white mb-2">Add-on WhatsApp</h3>
+                    <p className="text-sm text-purple-300 mb-1">(Canal Conversacional)</p>
+                    <p className="text-3xl font-bold text-cyan-400 mb-4">$500 MXN/mes</p>
+                    <p className="text-xs text-purple-300 mb-4">+IVA</p>
                     <ul className="text-sm text-purple-200 space-y-2 text-left">
-                      <li>✓ Todo lo del Plan Starter</li>
-                      <li>✓ WhatsApp Business integrado</li>
-                      <li>✓ Pagos por Stripe</li>
-                      <li>✓ Soporte prioritario</li>
+                      <li>✓ Respuestas del chat web en WhatsApp</li>
+                      <li>✓ Leads calificados y links de pago</li>
+                      <li>✓ Detección de intención de compra</li>
+                      <li>✓ Se suma al Plan Starter</li>
                     </ul>
                   </div>
                 </label>
