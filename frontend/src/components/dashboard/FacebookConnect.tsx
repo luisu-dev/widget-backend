@@ -16,9 +16,10 @@ interface Tenant {
 interface FacebookConnectProps {
   token: string
   tenant: Tenant
+  onConnectionChange?: () => void
 }
 
-export default function FacebookConnect({ token, tenant }: FacebookConnectProps) {
+export default function FacebookConnect({ token, tenant, onConnectionChange }: FacebookConnectProps) {
   const [connecting, setConnecting] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
   const [error, setError] = useState('')
@@ -27,15 +28,21 @@ export default function FacebookConnect({ token, tenant }: FacebookConnectProps)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.get('facebook_connected') === 'true') {
-      setSuccess('¡Facebook conectado exitosamente! Recargando información...')
+      setSuccess('¡Facebook conectado exitosamente! Actualizando información...')
       window.history.replaceState({}, '', window.location.pathname)
 
-      // Recargar la página para obtener los datos actualizados del tenant
+      // Notificar al componente padre para que actualice los datos
       setTimeout(() => {
-        window.location.reload()
-      }, 1500)
+        if (onConnectionChange) {
+          onConnectionChange()
+          setSuccess('¡Facebook conectado exitosamente!')
+        } else {
+          // Fallback: recargar la página si no hay callback
+          window.location.reload()
+        }
+      }, 1000)
     }
-  }, [])
+  }, [onConnectionChange])
 
   const handleConnect = async () => {
     setConnecting(true)
@@ -69,7 +76,13 @@ export default function FacebookConnect({ token, tenant }: FacebookConnectProps)
       if (!res.ok) throw new Error('Error al desconectar Facebook')
 
       setSuccess('Facebook desconectado correctamente')
-      setTimeout(() => window.location.reload(), 1500)
+      setTimeout(() => {
+        if (onConnectionChange) {
+          onConnectionChange()
+        } else {
+          window.location.reload()
+        }
+      }, 1500)
     } catch (err: any) {
       console.error(err)
       setError(err.message)

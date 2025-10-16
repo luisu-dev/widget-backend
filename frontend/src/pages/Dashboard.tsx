@@ -47,28 +47,29 @@ function Dashboard() {
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
   const [conversationMessages, setConversationMessages] = useState<any[]>([]);
 
+  const fetchProfile = async (showLoading = true) => {
+    if (showLoading) setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Sesión inválida');
+      const data = await res.json();
+      setProfile(data);
+    } catch (err) {
+      console.error(err);
+      localStorage.removeItem('zia_token');
+      navigate('/login');
+    } finally {
+      if (showLoading) setLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!token) {
       navigate('/login');
       return;
     }
-
-    const fetchProfile = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/auth/me`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (!res.ok) throw new Error('Sesión inválida');
-        const data = await res.json();
-        setProfile(data);
-      } catch (err) {
-        console.error(err);
-        localStorage.removeItem('zia_token');
-        navigate('/login');
-      } finally {
-        setLoading(false);
-      }
-    };
 
     fetchProfile();
   }, [token, navigate]);
@@ -280,7 +281,11 @@ function Dashboard() {
               </p>
             </div>
 
-            <FacebookConnect token={token} tenant={profile.tenant} />
+            <FacebookConnect
+              token={token}
+              tenant={profile.tenant}
+              onConnectionChange={() => fetchProfile(false)}
+            />
           </div>
         )}
 
