@@ -1224,13 +1224,14 @@ def get_twilio_client_for_tenant(t: dict | None):
 def build_system_for_tenant(tenant: Optional[dict]) -> str:
     """Construye el prompt del sistema personalizado para un tenant."""
     s = (tenant or {}).get("settings", {}) or {}
-    brand = s.get("brand_name") or (tenant or {}).get("name") or "esta marca"
+    # Soportar tanto brand_name como brand
+    brand = s.get("brand_name") or s.get("brand") or (tenant or {}).get("name") or "esta marca"
     tone = s.get("tone", "cálido y directo")
 
-    # Extraer configuraciones del tenant
+    # Extraer configuraciones del tenant (soportar múltiples nombres de campos)
     policies = s.get("policies", "")
-    hours = s.get("business_hours", "")
-    products = s.get("products_description", "")
+    hours = s.get("business_hours") or s.get("hours", "")
+    products = s.get("products_description") or s.get("products", "")
     prices = s.get("prices", {})
     faq = s.get("faq", [])
 
