@@ -2395,6 +2395,10 @@ async def auth_me(current = Depends(require_user)):
 
 
 # ── Facebook OAuth endpoints ───────────────────────────────────────────
+@app.options("/auth/facebook/connect")
+async def options_facebook_connect():
+    return Response(status_code=204)
+
 @app.get("/auth/facebook/connect")
 async def facebook_oauth_connect(current = Depends(require_user)):
     """Inicia el flujo OAuth de Facebook para conectar una página."""
@@ -2668,6 +2672,10 @@ async def facebook_oauth_callback(
         headers={"Location": f"{frontend_url}/dashboard?facebook_connected=true"}
     )
 
+
+@app.options("/auth/facebook/disconnect")
+async def options_facebook_disconnect():
+    return Response(status_code=204)
 
 @app.post("/auth/facebook/disconnect", dependencies=[Depends(require_admin)])
 async def facebook_oauth_disconnect(current = Depends(require_user)):
