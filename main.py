@@ -2677,7 +2677,7 @@ async def facebook_oauth_callback(
 async def options_facebook_disconnect():
     return Response(status_code=204)
 
-@app.post("/auth/facebook/disconnect", dependencies=[Depends(require_admin)])
+@app.post("/auth/facebook/disconnect")
 async def facebook_oauth_disconnect(current = Depends(require_user)):
     """Desconecta la cuenta de Facebook del tenant."""
     tenant_slug = current["tenant_slug"]
