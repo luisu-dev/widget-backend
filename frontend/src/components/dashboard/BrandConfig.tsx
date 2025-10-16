@@ -56,7 +56,7 @@ export default function BrandConfig({ token, tenant, onUpdate }: BrandConfigProp
 
     try {
       const res = await fetch(`${API_BASE}/v1/admin/tenant/settings`, {
-        method: 'PATCH',
+        method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`

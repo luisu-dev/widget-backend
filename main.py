@@ -2773,6 +2773,10 @@ async def tenant_get_settings(current = Depends(require_user)):
     )
 
 
+@app.options("/v1/admin/tenant/settings")
+async def options_tenant_settings():
+    return Response(status_code=204)
+
 @app.put("/v1/admin/tenant/settings", response_model=TenantSettingsOut)
 async def tenant_update_settings(body: TenantSettingsUpdate, current = Depends(require_user)):
     tenant_slug = current["tenant_slug"]
