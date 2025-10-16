@@ -2624,6 +2624,42 @@ async def facebook_oauth_callback(
     else:
         log.error(f"❌ db_engine no disponible, no se pudo guardar la configuración")
 
+    # Suscribir la página al webhook automáticamente
+    log.info(f"🔔 Suscribiendo página al webhook...")
+    try:
+        subscribe_url = f"https://graph.facebook.com/v20.0/{page_id}/subscribed_apps"
+        subscribe_params = {
+            'access_token': page_token,
+            'subscribed_fields': 'messages,messaging_postbacks,message_deliveries,message_reads,messaging_optins,messaging_referrals'
+        }
+
+        async with httpx.AsyncClient() as subscribe_client:
+            subscribe_resp = await subscribe_client.post(subscribe_url, params=subscribe_params)
+
+            if subscribe_resp.status_code == 200:
+                subscribe_result = subscribe_resp.json()
+                if subscribe_result.get('success'):
+                    log.info(f"✅ Página suscrita al webhook exitosamente")
+
+                    # Verificar suscripciones
+                    verify_subs_url = f"https://graph.facebook.com/v20.0/{page_id}/subscribed_apps?access_token={page_token}"
+                    verify_subs_resp = await subscribe_client.get(verify_subs_url)
+
+                    if verify_subs_resp.status_code == 200:
+                        subs_data = verify_subs_resp.json()
+                        subscriptions = subs_data.get('data', [])
+                        if subscriptions:
+                            for sub in subscriptions:
+                                fields = sub.get('subscribed_fields', [])
+                                log.info(f"   📋 Campos suscritos: {', '.join(fields)}")
+                else:
+                    log.warning(f"⚠️ No se pudo suscribir la página al webhook: {subscribe_result}")
+            else:
+                log.warning(f"⚠️ Error al suscribir página al webhook: {subscribe_resp.status_code} - {subscribe_resp.text}")
+    except Exception as e:
+        log.warning(f"⚠️ Error al suscribir página al webhook: {e}")
+        # No fallar el flujo completo si la suscripción falla
+
     # Redirigir al dashboard con éxito
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
     log.info(f"🎉 Facebook OAuth completado exitosamente. Redirigiendo a {frontend_url}/dashboard")
