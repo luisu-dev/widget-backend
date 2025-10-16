@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import FacebookConnect from '../components/dashboard/FacebookConnect';
+import BrandConfig from '../components/dashboard/BrandConfig';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
@@ -464,6 +465,13 @@ function Dashboard() {
               <h2 className="text-2xl font-bold text-white mb-2">Configuración</h2>
               <p className="text-gray-400">Ajusta la configuración de tu tenant.</p>
             </div>
+
+            {/* Brand Configuration */}
+            <BrandConfig
+              token={token}
+              tenant={profile.tenant}
+              onUpdate={() => fetchProfile(false)}
+            />
 
             {/* Killswitch */}
             <div className="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl p-6">
