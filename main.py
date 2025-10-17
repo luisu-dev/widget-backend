@@ -2524,146 +2524,120 @@ async def facebook_oauth_callback(
             log.error(f"❌ No se encontraron páginas asociadas a esta cuenta")
             raise HTTPException(400, "No se encontraron páginas asociadas a esta cuenta")
 
-        # Guardar tokens en la base de datos
-        # Por simplicidad, guardamos la primera página. Puedes mejorar esto para elegir
-        page = pages[0]
-        page_id = page.get("id")
-        page_token = page.get("access_token")
-        page_name = page.get("name")
+        # Guardar TODAS las páginas en la tabla facebook_pages
+        log.info(f"💾 Guardando {len(pages)} página(s) en la base de datos...")
 
-        log.info(f"📌 Página seleccionada: {page_name} (ID: {page_id})")
-        log.info(f"   Page token (primeros 10 chars): {page_token[:10] if page_token else 'None'}...")
-
-        # Obtener Instagram Business Account asociado (si existe)
-        log.info(f"🔄 Buscando Instagram Business Account asociado...")
-        ig_account_id = None
-        ig_url = f"https://graph.facebook.com/v20.0/{page_id}?fields=instagram_business_account&access_token={page_token}"
-        resp4 = await client.get(ig_url)
-        if resp4.status_code == 200:
-            ig_data = resp4.json()
-            ig_account = ig_data.get("instagram_business_account")
-            if ig_account:
-                ig_account_id = ig_account.get("id")
-                log.info(f"✅ Instagram Business Account encontrado: {ig_account_id}")
-            else:
-                log.warning(f"⚠️ No se encontró Instagram Business Account asociado a esta página")
-        else:
-            log.warning(f"⚠️ Error al obtener Instagram account: {resp4.text}")
-
-    # Validar que los tokens sean funcionales antes de guardar
-    log.info(f"🔍 Validando que el page token funcione...")
-    try:
-        validate_url = f"https://graph.facebook.com/v20.0/{page_id}?access_token={page_token}"
-        async with httpx.AsyncClient() as validate_client:
-            validate_resp = await validate_client.get(validate_url)
-            if validate_resp.status_code == 200:
-                log.info(f"✅ Page token validado correctamente")
-            else:
-                log.error(f"❌ Page token inválido: {validate_resp.text}")
-                raise HTTPException(400, "El token de la página no es válido")
-    except Exception as e:
-        log.error(f"❌ Error al validar token: {e}")
-        raise HTTPException(400, "Error al validar token de Facebook")
-
-    # Guardar en la base de datos (en settings JSON, multi-tenant)
-    log.info(f"💾 Guardando configuración en la base de datos...")
     if db_engine:
         async with db_engine.begin() as conn:
-            # Obtener settings actuales del tenant
-            result = await conn.execute(
-                text("SELECT settings FROM tenants WHERE slug = :slug"),
-                {"slug": tenant_slug}
-            )
-            row = result.first()
-            current_settings = row[0] if row and row[0] else {}
+            pages_saved = 0
+            pages_updated = 0
 
-            log.info(f"📖 Settings actuales del tenant: {json.dumps({k: v for k, v in current_settings.items() if not k.endswith('_token')}, indent=2)}")
+            for idx, page in enumerate(pages, 1):
+                page_id = page.get("id")
+                page_token = page.get("access_token")
+                page_name = page.get("name")
 
-            # Actualizar con nuevos tokens de Facebook
-            new_settings = {
-                "fb_page_id": page_id,
-                "fb_page_token": page_token,
-                "fb_page_name": page_name,
-                "ig_user_id": ig_account_id,
-                "ig_user_ids": [ig_account_id] if ig_account_id else []
-            }
+                log.info(f"\n📄 [{idx}/{len(pages)}] Procesando: {page_name} (ID: {page_id})")
 
-            current_settings.update(new_settings)
+                # Obtener Instagram Business Account asociado (si existe)
+                ig_account_id = None
+                try:
+                    ig_url = f"https://graph.facebook.com/v20.0/{page_id}?fields=instagram_business_account&access_token={page_token}"
+                    resp_ig = await client.get(ig_url)
+                    if resp_ig.status_code == 200:
+                        ig_data = resp_ig.json()
+                        ig_account = ig_data.get("instagram_business_account")
+                        if ig_account:
+                            ig_account_id = ig_account.get("id")
+                            log.info(f"   ✅ Instagram Business Account: {ig_account_id}")
+                        else:
+                            log.info(f"   ℹ️  Sin Instagram Business Account")
+                    else:
+                        log.warning(f"   ⚠️  Error obteniendo Instagram: {resp_ig.status_code}")
+                except Exception as e:
+                    log.warning(f"   ⚠️  Error buscando Instagram: {e}")
 
-            log.info(f"📝 Nuevos valores a guardar:")
-            log.info(f"   - fb_page_id: {page_id}")
-            log.info(f"   - fb_page_name: {page_name}")
-            log.info(f"   - fb_page_token: {page_token[:10] if page_token else 'None'}...***")
-            log.info(f"   - ig_user_id: {ig_account_id}")
+                # Verificar si esta página ya existe
+                check_result = await conn.execute(
+                    text("""
+                        SELECT id, is_active FROM facebook_pages
+                        WHERE tenant_slug = :tenant AND page_id = :page_id
+                    """),
+                    {"tenant": tenant_slug, "page_id": page_id}
+                )
+                existing = check_result.first()
 
-            # Guardar settings actualizados
-            update_result = await conn.execute(
-                text("""
-                    UPDATE tenants
-                    SET settings = CAST(:settings AS JSONB),
-                        updated_at = NOW()
-                    WHERE slug = :slug
-                """),
-                {
-                    "settings": json.dumps(current_settings),
-                    "slug": tenant_slug
-                }
-            )
+                if existing:
+                    # Actualizar página existente
+                    await conn.execute(
+                        text("""
+                            UPDATE facebook_pages
+                            SET page_name = :name,
+                                page_token = :token,
+                                ig_user_id = :ig_id,
+                                updated_at = NOW()
+                            WHERE tenant_slug = :tenant AND page_id = :page_id
+                        """),
+                        {
+                            "tenant": tenant_slug,
+                            "page_id": page_id,
+                            "name": page_name,
+                            "token": page_token,
+                            "ig_id": ig_account_id
+                        }
+                    )
+                    log.info(f"   🔄 Página actualizada (is_active={existing[1]})")
+                    pages_updated += 1
+                else:
+                    # Insertar nueva página
+                    # La primera página se marca como activa por defecto
+                    is_active = (idx == 1)
 
-            log.info(f"✅ Configuración guardada exitosamente. Rows affected: {update_result.rowcount}")
+                    await conn.execute(
+                        text("""
+                            INSERT INTO facebook_pages
+                            (tenant_slug, page_id, page_name, page_token, ig_user_id, is_active)
+                            VALUES (:tenant, :page_id, :name, :token, :ig_id, :is_active)
+                        """),
+                        {
+                            "tenant": tenant_slug,
+                            "page_id": page_id,
+                            "name": page_name,
+                            "token": page_token,
+                            "ig_id": ig_account_id,
+                            "is_active": is_active
+                        }
+                    )
+                    log.info(f"   ✅ Página guardada (is_active={is_active})")
+                    pages_saved += 1
 
-            # Verificar que se guardó correctamente
-            verify_result = await conn.execute(
-                text("SELECT settings FROM tenants WHERE slug = :slug"),
-                {"slug": tenant_slug}
-            )
-            verify_row = verify_result.first()
-            if verify_row:
-                saved_settings = verify_row[0]
-                log.info(f"🔍 Verificación - Settings guardados:")
-                log.info(f"   - fb_page_id: {saved_settings.get('fb_page_id')}")
-                log.info(f"   - fb_page_name: {saved_settings.get('fb_page_name')}")
-                log.info(f"   - ig_user_id: {saved_settings.get('ig_user_id')}")
-            else:
-                log.error(f"❌ No se pudo verificar el guardado - tenant no encontrado")
+                # Suscribir la página al webhook
+                try:
+                    subscribe_url = f"https://graph.facebook.com/v20.0/{page_id}/subscribed_apps"
+                    subscribe_params = {
+                        'access_token': page_token,
+                        'subscribed_fields': 'feed,messages,messaging_postbacks,message_deliveries,message_reads,messaging_optins,messaging_referrals'
+                    }
+
+                    subscribe_resp = await client.post(subscribe_url, params=subscribe_params)
+
+                    if subscribe_resp.status_code == 200:
+                        subscribe_result = subscribe_resp.json()
+                        if subscribe_result.get('success'):
+                            log.info(f"   ✅ Suscrita al webhook")
+                        else:
+                            log.warning(f"   ⚠️  Suscripción falló: {subscribe_result}")
+                    else:
+                        log.warning(f"   ⚠️  Error al suscribir: {subscribe_resp.status_code}")
+                except Exception as e:
+                    log.warning(f"   ⚠️  Error suscribiendo webhook: {e}")
+
+            log.info(f"\n✅ Resumen:")
+            log.info(f"   - Páginas nuevas: {pages_saved}")
+            log.info(f"   - Páginas actualizadas: {pages_updated}")
+            log.info(f"   - Total: {len(pages)}")
     else:
         log.error(f"❌ db_engine no disponible, no se pudo guardar la configuración")
-
-    # Suscribir la página al webhook automáticamente
-    log.info(f"🔔 Suscribiendo página al webhook...")
-    try:
-        subscribe_url = f"https://graph.facebook.com/v20.0/{page_id}/subscribed_apps"
-        subscribe_params = {
-            'access_token': page_token,
-            'subscribed_fields': 'feed,messages,messaging_postbacks,message_deliveries,message_reads,messaging_optins,messaging_referrals'
-        }
-
-        async with httpx.AsyncClient() as subscribe_client:
-            subscribe_resp = await subscribe_client.post(subscribe_url, params=subscribe_params)
-
-            if subscribe_resp.status_code == 200:
-                subscribe_result = subscribe_resp.json()
-                if subscribe_result.get('success'):
-                    log.info(f"✅ Página suscrita al webhook exitosamente")
-
-                    # Verificar suscripciones
-                    verify_subs_url = f"https://graph.facebook.com/v20.0/{page_id}/subscribed_apps?access_token={page_token}"
-                    verify_subs_resp = await subscribe_client.get(verify_subs_url)
-
-                    if verify_subs_resp.status_code == 200:
-                        subs_data = verify_subs_resp.json()
-                        subscriptions = subs_data.get('data', [])
-                        if subscriptions:
-                            for sub in subscriptions:
-                                fields = sub.get('subscribed_fields', [])
-                                log.info(f"   📋 Campos suscritos: {', '.join(fields)}")
-                else:
-                    log.warning(f"⚠️ No se pudo suscribir la página al webhook: {subscribe_result}")
-            else:
-                log.warning(f"⚠️ Error al suscribir página al webhook: {subscribe_resp.status_code} - {subscribe_resp.text}")
-    except Exception as e:
-        log.warning(f"⚠️ Error al suscribir página al webhook: {e}")
-        # No fallar el flujo completo si la suscripción falla
 
     # Redirigir al dashboard con éxito
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
