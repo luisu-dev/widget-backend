@@ -2509,6 +2509,10 @@ async def facebook_oauth_callback(
         pages_url = f"https://graph.facebook.com/v20.0/me/accounts?access_token={user_access_token}"
         resp3 = await client.get(pages_url)
 
+        log.info(f"📊 Respuesta de /me/accounts:")
+        log.info(f"   Status: {resp3.status_code}")
+        log.info(f"   Response: {resp3.text}")
+
         if resp3.status_code != 200:
             log.error(f"❌ Error getting pages: {resp3.text}")
             raise HTTPException(400, "Error obteniendo páginas de Facebook")
@@ -2522,6 +2526,16 @@ async def facebook_oauth_callback(
 
         if not pages:
             log.error(f"❌ No se encontraron páginas asociadas a esta cuenta")
+            log.error(f"📊 Datos completos de la respuesta: {pages_data}")
+
+            # Verificar permisos del token
+            log.info(f"🔍 Verificando permisos del token...")
+            debug_url = f"https://graph.facebook.com/debug_token?input_token={user_access_token}&access_token={app_id}|{app_secret}"
+            debug_resp = await client.get(debug_url)
+            if debug_resp.status_code == 200:
+                debug_data = debug_resp.json()
+                log.info(f"📊 Permisos del token: {debug_data.get('data', {}).get('scopes', [])}")
+
             raise HTTPException(400, "No se encontraron páginas asociadas a esta cuenta")
 
         # Guardar TODAS las páginas en la tabla facebook_pages
