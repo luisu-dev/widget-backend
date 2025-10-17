@@ -2635,7 +2635,7 @@ async def facebook_oauth_callback(
         subscribe_url = f"https://graph.facebook.com/v20.0/{page_id}/subscribed_apps"
         subscribe_params = {
             'access_token': page_token,
-            'subscribed_fields': 'messages,messaging_postbacks,message_deliveries,message_reads,messaging_optins,messaging_referrals'
+            'subscribed_fields': 'feed,messages,messaging_postbacks,message_deliveries,message_reads,messaging_optins,messaging_referrals'
         }
 
         async with httpx.AsyncClient() as subscribe_client:
