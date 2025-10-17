@@ -2486,6 +2486,24 @@ async def facebook_oauth_callback(
 
         log.info(f"✅ Access token obtenido (primeros 10 chars): {user_access_token[:10]}...")
 
+        # Verificar información del usuario ANTES de intercambiar token
+        log.info(f"🔍 Verificando información del usuario...")
+        me_url = f"https://graph.facebook.com/v20.0/me?access_token={user_access_token}"
+        me_resp = await client.get(me_url)
+        if me_resp.status_code == 200:
+            me_data = me_resp.json()
+            log.info(f"   User ID: {me_data.get('id')}")
+            log.info(f"   Nombre: {me_data.get('name', 'N/A')}")
+        else:
+            log.warning(f"   No se pudo obtener info del usuario: {me_resp.status_code}")
+
+        # Primero obtener páginas con el token CORTO (antes de intercambiar)
+        log.info(f"🔄 Obteniendo páginas con token corto...")
+        pages_url_short = f"https://graph.facebook.com/v20.0/me/accounts?access_token={user_access_token}"
+        resp_short = await client.get(pages_url_short)
+        log.info(f"   Token corto - Status: {resp_short.status_code}")
+        log.info(f"   Token corto - Response: {resp_short.text}")
+
         # Obtener long-lived token
         log.info(f"🔄 Obteniendo long-lived token...")
         long_lived_url = (
@@ -2499,12 +2517,15 @@ async def facebook_oauth_callback(
         resp2 = await client.get(long_lived_url)
         if resp2.status_code == 200:
             long_lived_data = resp2.json()
+            old_token = user_access_token
             user_access_token = long_lived_data.get("access_token", user_access_token)
             log.info(f"✅ Long-lived token obtenido")
+            log.info(f"   Token cambió: {old_token[:10]}... -> {user_access_token[:10]}...")
         else:
             log.warning(f"⚠️ No se pudo obtener long-lived token, usando token corto")
+            log.warning(f"   Response: {resp2.text}")
 
-        # Obtener páginas del usuario
+        # Obtener páginas del usuario (con token long-lived si se obtuvo)
         log.info(f"🔄 Obteniendo páginas de Facebook...")
         pages_url = f"https://graph.facebook.com/v20.0/me/accounts?access_token={user_access_token}"
         resp3 = await client.get(pages_url)
@@ -2534,7 +2555,18 @@ async def facebook_oauth_callback(
             debug_resp = await client.get(debug_url)
             if debug_resp.status_code == 200:
                 debug_data = debug_resp.json()
-                log.info(f"📊 Permisos del token: {debug_data.get('data', {}).get('scopes', [])}")
+                token_data = debug_data.get('data', {})
+                log.info(f"📊 Permisos del token: {token_data.get('scopes', [])}")
+                log.info(f"📊 Granular scopes: {token_data.get('granular_scopes', [])}")
+                log.info(f"📊 App ID: {token_data.get('app_id')}")
+                log.info(f"📊 User ID: {token_data.get('user_id')}")
+
+            # Intentar con fields específicos
+            log.info(f"🔍 Intentando con fields explícitos...")
+            pages_with_fields = f"https://graph.facebook.com/v20.0/me/accounts?fields=id,name,access_token,category&access_token={user_access_token}"
+            resp_fields = await client.get(pages_with_fields)
+            log.info(f"   Con fields - Status: {resp_fields.status_code}")
+            log.info(f"   Con fields - Response: {resp_fields.text}")
 
             raise HTTPException(400, "No se encontraron páginas asociadas a esta cuenta")
 
