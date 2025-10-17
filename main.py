@@ -2423,7 +2423,7 @@ async def facebook_oauth_connect(current = Depends(require_user)):
     )
 
     # Permisos necesarios para pages, Instagram, y mensajería
-    scope = "pages_show_list,pages_read_engagement,pages_manage_metadata,pages_messaging,instagram_basic,instagram_manage_messages,instagram_manage_comments"
+    scope = "pages_show_list,pages_read_engagement,pages_manage_metadata,pages_manage_engagement,pages_messaging,instagram_basic,instagram_manage_messages,instagram_manage_comments"
 
     auth_url = (
         f"https://www.facebook.com/v20.0/dialog/oauth?"
