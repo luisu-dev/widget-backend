@@ -1077,8 +1077,38 @@ def tenant_bot_enabled(tenant: Optional[dict]) -> bool:
     return bool(settings.get("bot_enabled", True))
 
 
+async def get_active_facebook_page(tenant_slug: str) -> Optional[dict]:
+    """Obtiene la página de Facebook activa para el tenant desde facebook_pages."""
+    if not db_engine or not tenant_slug:
+        return None
+
+    async with db_engine.connect() as conn:
+        result = await conn.execute(
+            text("""
+                SELECT page_id, page_token, ig_user_id, page_name
+                FROM facebook_pages
+                WHERE tenant_slug = :tenant AND is_active = TRUE
+                LIMIT 1
+            """),
+            {"tenant": tenant_slug}
+        )
+        row = result.first()
+
+    if not row:
+        return None
+
+    return {
+        "page_id": row[0],
+        "page_token": row[1],
+        "ig_user_id": row[2],
+        "page_name": row[3]
+    }
+
 def fb_tokens_from_tenant(t: dict | None) -> tuple[str, str, str]:
     """Obtiene credenciales de Meta para el tenant exclusivamente desde DB.
+
+    DEPRECATED: Esta función lee de settings (modelo antiguo).
+    Usar get_active_facebook_page() en su lugar para el modelo multi-tenant.
 
     Producción: ya no se usa fallback por variables de entorno para tokens/IDs.
     """
@@ -1746,10 +1776,20 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                 )
 
             t = await fetch_tenant(tenant_slug)
-            page_id, page_token, ig_user_id = fb_tokens_from_tenant(t)
-            # Fallback: si no hay page_id en settings/env, usar owner_id
-            if not page_id and owner_id:
-                page_id = owner_id
+
+            # Obtener página activa desde facebook_pages (modelo multi-tenant)
+            active_page = await get_active_facebook_page(tenant_slug)
+            if active_page:
+                page_id = active_page["page_id"]
+                page_token = active_page["page_token"]
+                ig_user_id = active_page["ig_user_id"] or ""
+            else:
+                # Fallback: leer desde settings (modelo antiguo)
+                page_id, page_token, ig_user_id = fb_tokens_from_tenant(t)
+                # Fallback: si no hay page_id en settings/env, usar owner_id
+                if not page_id and owner_id:
+                    page_id = owner_id
+
             bot_active = tenant_bot_enabled(t)
 
             # Messenger / IG DMs (igual a como lo tenías)
@@ -2037,8 +2077,15 @@ async def rotate_page_token(tenant: str = Query(...)):
         raise HTTPException(400, str(e))
     
 async def meta_send_text_with_refresh(tenant_slug: str, recipient_id: str, text: str, platform: str):
-    t = await fetch_tenant(tenant_slug)
-    _, page_token, _ = fb_tokens_from_tenant(t)
+    # Obtener página activa (multi-tenant)
+    active_page = await get_active_facebook_page(tenant_slug)
+    if active_page:
+        page_token = active_page["page_token"]
+    else:
+        # Fallback: leer desde settings (modelo antiguo)
+        t = await fetch_tenant(tenant_slug)
+        _, page_token, _ = fb_tokens_from_tenant(t)
+
     try:
         return await meta_send_text(page_token, recipient_id, text, platform=platform)
     except httpx.HTTPStatusError as e:
@@ -2047,9 +2094,13 @@ async def meta_send_text_with_refresh(tenant_slug: str, recipient_id: str, text:
         if not should_refresh:
             raise
         await refresh_page_token_for_tenant(tenant_slug)
-        # reintento
-        t2 = await fetch_tenant(tenant_slug)
-        _, page_token2, _ = fb_tokens_from_tenant(t2)
+        # reintento - obtener token actualizado
+        active_page2 = await get_active_facebook_page(tenant_slug)
+        if active_page2:
+            page_token2 = active_page2["page_token"]
+        else:
+            t2 = await fetch_tenant(tenant_slug)
+            _, page_token2, _ = fb_tokens_from_tenant(t2)
         return await meta_send_text(page_token2, recipient_id, text, platform=platform)
 
 
@@ -2737,6 +2788,84 @@ async def facebook_oauth_disconnect(current = Depends(require_user)):
     return {"success": True, "message": "Facebook desconectado correctamente"}
 
 
+@app.get("/auth/facebook/pages")
+async def facebook_list_pages(current = Depends(require_user)):
+    """Lista todas las páginas de Facebook del tenant."""
+    tenant_slug = current["tenant_slug"]
+
+    if not db_engine:
+        return {"pages": []}
+
+    async with db_engine.connect() as conn:
+        result = await conn.execute(
+            text("""
+                SELECT id, page_id, page_name, ig_user_id, is_active, created_at, updated_at
+                FROM facebook_pages
+                WHERE tenant_slug = :tenant
+                ORDER BY created_at ASC
+            """),
+            {"tenant": tenant_slug}
+        )
+        rows = result.fetchall()
+
+    pages = []
+    for row in rows:
+        pages.append({
+            "id": row[0],
+            "page_id": row[1],
+            "page_name": row[2],
+            "ig_user_id": row[3],
+            "is_active": row[4],
+            "created_at": row[5].isoformat() if row[5] else None,
+            "updated_at": row[6].isoformat() if row[6] else None,
+        })
+
+    return {"pages": pages}
+
+
+@app.post("/auth/facebook/pages/{page_id}/activate")
+async def facebook_activate_page(page_id: str, current = Depends(require_user)):
+    """Activa una página específica y desactiva las demás para el tenant."""
+    tenant_slug = current["tenant_slug"]
+
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    async with db_engine.begin() as conn:
+        # Verificar que la página pertenece al tenant
+        result = await conn.execute(
+            text("""
+                SELECT id FROM facebook_pages
+                WHERE tenant_slug = :tenant AND page_id = :page_id
+            """),
+            {"tenant": tenant_slug, "page_id": page_id}
+        )
+        if not result.first():
+            raise HTTPException(404, "Página no encontrada")
+
+        # Desactivar todas las páginas del tenant
+        await conn.execute(
+            text("""
+                UPDATE facebook_pages
+                SET is_active = FALSE, updated_at = NOW()
+                WHERE tenant_slug = :tenant
+            """),
+            {"tenant": tenant_slug}
+        )
+
+        # Activar la página seleccionada
+        await conn.execute(
+            text("""
+                UPDATE facebook_pages
+                SET is_active = TRUE, updated_at = NOW()
+                WHERE tenant_slug = :tenant AND page_id = :page_id
+            """),
+            {"tenant": tenant_slug, "page_id": page_id}
+        )
+
+    return {"success": True, "message": f"Página {page_id} activada"}
+
+
 # ── Admin endpoints ────────────────────────────────────────────────────
 @app.get("/v1/admin/leads", dependencies=[Depends(require_admin)])
 async def admin_list_leads(limit: int = 50, offset: int = 0, tenant: str = Query(default="")):
@@ -3047,9 +3176,18 @@ async def admin_meta_test_reply(body: MetaTestReplyIn):
     if not t:
         raise HTTPException(404, f"Tenant '{tenant_slug}' no encontrado")
 
-    page_id, page_token, ig_user_id = fb_tokens_from_tenant(t)
+    # Obtener página activa (multi-tenant)
+    active_page = await get_active_facebook_page(tenant_slug)
+    if active_page:
+        page_id = active_page["page_id"]
+        page_token = active_page["page_token"]
+        ig_user_id = active_page["ig_user_id"] or ""
+    else:
+        # Fallback: leer desde settings (modelo antiguo)
+        page_id, page_token, ig_user_id = fb_tokens_from_tenant(t)
+
     if not page_token:
-        raise HTTPException(400, "Falta settings.fb_page_token para el tenant")
+        raise HTTPException(400, "Falta page_token para el tenant (no hay página activa)")
 
     platform = (body.platform or "").strip().lower()
     comment_id = (body.commentId or "").strip()
