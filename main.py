@@ -1029,9 +1029,30 @@ async def fetch_tenant(slug: str) -> Optional[dict]:
     return dict(row._mapping) if row else None
 
 async def resolve_tenant_by_page_or_ig_id(page_or_ig_id: str) -> str:
+    """Resuelve el tenant_slug desde una page_id o ig_user_id.
+
+    Primero busca en facebook_pages (modelo multi-tenant).
+    Si no encuentra, hace fallback a tenants.settings (modelo antiguo).
+    """
     if not db_engine or not page_or_ig_id:
         return ""
+
     async with db_engine.connect() as conn:
+        # Primero: buscar en facebook_pages (modelo nuevo multi-tenant)
+        row = (await conn.execute(
+            text("""
+                SELECT tenant_slug
+                FROM facebook_pages
+                WHERE page_id = :x OR ig_user_id = :x
+                LIMIT 1
+            """),
+            {"x": str(page_or_ig_id)}
+        )).first()
+
+        if row:
+            return row[0]
+
+        # Fallback: buscar en tenants.settings (modelo antiguo)
         row = (await conn.execute(
             text("""
               SELECT slug
@@ -1047,6 +1068,7 @@ async def resolve_tenant_by_page_or_ig_id(page_or_ig_id: str) -> str:
             """),
             {"x": str(page_or_ig_id)}
         )).first()
+
     return row[0] if row else ""
 
 
