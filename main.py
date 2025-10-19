@@ -2597,29 +2597,50 @@ async def facebook_oauth_callback(
             log.info(f"  Página {idx + 1}: {page.get('name')} (ID: {page.get('id')})")
 
         if not pages:
-            log.error(f"❌ No se encontraron páginas asociadas a esta cuenta")
-            log.error(f"📊 Datos completos de la respuesta: {pages_data}")
+            log.warning(f"⚠️ /me/accounts devolvió array vacío, intentando extraer de granular_scopes...")
 
-            # Verificar permisos del token
+            # Verificar permisos del token y extraer páginas de granular_scopes
             log.info(f"🔍 Verificando permisos del token...")
             debug_url = f"https://graph.facebook.com/debug_token?input_token={user_access_token}&access_token={app_id}|{app_secret}"
             debug_resp = await client.get(debug_url)
+
+            page_ids_from_scopes = []
             if debug_resp.status_code == 200:
                 debug_data = debug_resp.json()
                 token_data = debug_data.get('data', {})
                 log.info(f"📊 Permisos del token: {token_data.get('scopes', [])}")
-                log.info(f"📊 Granular scopes: {token_data.get('granular_scopes', [])}")
-                log.info(f"📊 App ID: {token_data.get('app_id')}")
-                log.info(f"📊 User ID: {token_data.get('user_id')}")
+                granular_scopes = token_data.get('granular_scopes', [])
+                log.info(f"📊 Granular scopes: {granular_scopes}")
 
-            # Intentar con fields específicos
-            log.info(f"🔍 Intentando con fields explícitos...")
-            pages_with_fields = f"https://graph.facebook.com/v20.0/me/accounts?fields=id,name,access_token,category&access_token={user_access_token}"
-            resp_fields = await client.get(pages_with_fields)
-            log.info(f"   Con fields - Status: {resp_fields.status_code}")
-            log.info(f"   Con fields - Response: {resp_fields.text}")
+                # Extraer page_ids de granular_scopes
+                for scope in granular_scopes:
+                    if scope.get('scope') == 'pages_show_list':
+                        page_ids_from_scopes = scope.get('target_ids', [])
+                        log.info(f"✅ Encontrados {len(page_ids_from_scopes)} page IDs en granular_scopes: {page_ids_from_scopes}")
+                        break
 
-            raise HTTPException(400, "No se encontraron páginas asociadas a esta cuenta")
+            # Si encontramos page IDs en granular_scopes, obtener info de cada página
+            if page_ids_from_scopes:
+                log.info(f"🔄 Obteniendo información de {len(page_ids_from_scopes)} páginas directamente...")
+                for page_id in page_ids_from_scopes:
+                    try:
+                        # Obtener info básica de la página
+                        page_info_url = f"https://graph.facebook.com/v20.0/{page_id}?fields=id,name,access_token&access_token={user_access_token}"
+                        page_resp = await client.get(page_info_url)
+
+                        if page_resp.status_code == 200:
+                            page_info = page_resp.json()
+                            pages.append(page_info)
+                            log.info(f"   ✅ Página obtenida: {page_info.get('name')} (ID: {page_id})")
+                        else:
+                            log.warning(f"   ⚠️ No se pudo obtener info de página {page_id}: {page_resp.status_code}")
+                    except Exception as e:
+                        log.warning(f"   ⚠️ Error obteniendo página {page_id}: {e}")
+
+            # Si aún no hay páginas, mostrar error
+            if not pages:
+                log.error(f"❌ No se encontraron páginas asociadas a esta cuenta")
+                raise HTTPException(400, "No se encontraron páginas asociadas a esta cuenta. Verifica que seas administrador de las páginas en Facebook.")
 
         # Guardar TODAS las páginas en la tabla facebook_pages
         log.info(f"💾 Guardando {len(pages)} página(s) en la base de datos...")
