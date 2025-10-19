@@ -10,6 +10,12 @@ interface FacebookPage {
   is_active: boolean
   created_at?: string
   updated_at?: string
+  tenant_slug?: string
+}
+
+interface TenantOption {
+  slug: string
+  name: string
 }
 
 interface Tenant {
@@ -36,6 +42,8 @@ export default function FacebookConnect({ token, tenant, onConnectionChange }: F
   const [success, setSuccess] = useState('')
   const [pages, setPages] = useState<FacebookPage[]>([])
   const [loading, setLoading] = useState(true)
+  const [tenants, setTenants] = useState<TenantOption[]>([])
+  const [selectedTenants, setSelectedTenants] = useState<Record<string, string>>({})
 
   // Cargar páginas de Facebook
   const fetchPages = async () => {
@@ -46,18 +54,43 @@ export default function FacebookConnect({ token, tenant, onConnectionChange }: F
       })
       if (!res.ok) throw new Error('Error al cargar páginas')
       const data = await res.json()
-      setPages(data.pages || [])
+      const loadedPages = data.pages || []
+      setPages(loadedPages)
+
+      // Inicializar selectedTenants con los tenants actuales de cada página
+      const initialSelected: Record<string, string> = {}
+      loadedPages.forEach((page: FacebookPage) => {
+        if (page.tenant_slug) {
+          initialSelected[page.page_id] = page.tenant_slug
+        }
+      })
+      setSelectedTenants(initialSelected)
     } catch (err: any) {
       console.error(err)
-      // No mostrar error si no hay páginas
       setPages([])
     } finally {
       setLoading(false)
     }
   }
 
+  // Cargar tenants disponibles
+  const fetchTenants = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/facebook/tenants`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (!res.ok) throw new Error('Error al cargar tenants')
+      const data = await res.json()
+      setTenants(data.tenants || [])
+    } catch (err: any) {
+      console.error(err)
+      setTenants([])
+    }
+  }
+
   useEffect(() => {
     fetchPages()
+    fetchTenants()
   }, [token])
 
   useEffect(() => {
@@ -91,6 +124,32 @@ export default function FacebookConnect({ token, tenant, onConnectionChange }: F
       console.error(err)
       setError(err.message)
       setConnecting(false)
+    }
+  }
+
+  const handleTenantChange = async (pageId: string, tenantSlug: string) => {
+    setError('')
+    try {
+      const res = await fetch(`${API_BASE}/auth/facebook/pages/${pageId}/assign-tenant`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ tenant_slug: tenantSlug })
+      })
+      if (!res.ok) throw new Error('Error al asignar tenant')
+
+      setSelectedTenants(prev => ({ ...prev, [pageId]: tenantSlug }))
+      setSuccess(`Página asignada a ${tenantSlug}`)
+      await fetchPages()
+      if (onConnectionChange) {
+        onConnectionChange()
+      }
+      setTimeout(() => setSuccess(''), 3000)
+    } catch (err: any) {
+      console.error(err)
+      setError(err.message)
     }
   }
 
@@ -218,7 +277,24 @@ export default function FacebookConnect({ token, tenant, onConnectionChange }: F
                   </div>
                 )}
 
-                {!page.is_active && (
+                {/* Selector de Tenant */}
+                <div className="mt-3 space-y-2">
+                  <label className="text-sm text-gray-400">Asignar a tenant:</label>
+                  <select
+                    value={selectedTenants[page.page_id] || ''}
+                    onChange={(e) => handleTenantChange(page.page_id, e.target.value)}
+                    className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                  >
+                    <option value="" disabled>Selecciona un tenant</option>
+                    {tenants.map(t => (
+                      <option key={t.slug} value={t.slug} className="bg-gray-800">
+                        {t.name} ({t.slug})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {!page.is_active && selectedTenants[page.page_id] && (
                   <button
                     onClick={() => handleActivatePage(page.page_id)}
                     className="w-full mt-2 px-3 py-1.5 text-sm bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/50 text-blue-200 rounded transition"

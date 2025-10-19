@@ -2833,22 +2833,34 @@ async def facebook_oauth_disconnect(current = Depends(require_user)):
 
 @app.get("/auth/facebook/pages")
 async def facebook_list_pages(current = Depends(require_user)):
-    """Lista todas las páginas de Facebook del tenant."""
+    """Lista todas las páginas de Facebook del tenant (o todas si es admin)."""
     tenant_slug = current["tenant_slug"]
+    user_role = current.get("role", "user")
 
     if not db_engine:
         return {"pages": []}
 
     async with db_engine.connect() as conn:
-        result = await conn.execute(
-            text("""
-                SELECT id, page_id, page_name, ig_user_id, is_active, created_at, updated_at
-                FROM facebook_pages
-                WHERE tenant_slug = :tenant
-                ORDER BY created_at ASC
-            """),
-            {"tenant": tenant_slug}
-        )
+        # Si es admin o tenant principal (acid-ia), ver todas las páginas
+        if user_role == "admin" or tenant_slug == "acid-ia":
+            result = await conn.execute(
+                text("""
+                    SELECT id, page_id, page_name, ig_user_id, is_active, created_at, updated_at, tenant_slug
+                    FROM facebook_pages
+                    ORDER BY tenant_slug, created_at ASC
+                """)
+            )
+        else:
+            # Usuario normal solo ve las páginas de su tenant
+            result = await conn.execute(
+                text("""
+                    SELECT id, page_id, page_name, ig_user_id, is_active, created_at, updated_at, tenant_slug
+                    FROM facebook_pages
+                    WHERE tenant_slug = :tenant
+                    ORDER BY created_at ASC
+                """),
+                {"tenant": tenant_slug}
+            )
         rows = result.fetchall()
 
     pages = []
@@ -2861,6 +2873,7 @@ async def facebook_list_pages(current = Depends(require_user)):
             "is_active": row[4],
             "created_at": row[5].isoformat() if row[5] else None,
             "updated_at": row[6].isoformat() if row[6] else None,
+            "tenant_slug": row[7],
         })
 
     return {"pages": pages}
@@ -2907,6 +2920,87 @@ async def facebook_activate_page(page_id: str, current = Depends(require_user)):
         )
 
     return {"success": True, "message": f"Página {page_id} activada"}
+
+
+@app.get("/auth/facebook/tenants")
+async def facebook_list_tenants(current = Depends(require_user)):
+    """Lista todos los tenants disponibles (solo para admin/superusers)."""
+    user_role = current.get("role", "user")
+
+    # Solo permitir a usuarios con rol admin o si es acid-ia (tenant principal)
+    if user_role != "admin" and current["tenant_slug"] != "acid-ia":
+        # Usuario normal solo ve su propio tenant
+        if not db_engine:
+            return {"tenants": []}
+
+        async with db_engine.connect() as conn:
+            result = await conn.execute(
+                text("SELECT slug, name FROM tenants WHERE slug = :slug"),
+                {"slug": current["tenant_slug"]}
+            )
+            row = result.first()
+            if row:
+                return {"tenants": [{"slug": row[0], "name": row[1]}]}
+            return {"tenants": []}
+
+    # Admin puede ver todos los tenants
+    if not db_engine:
+        return {"tenants": []}
+
+    async with db_engine.connect() as conn:
+        result = await conn.execute(
+            text("SELECT slug, name FROM tenants ORDER BY name")
+        )
+        rows = result.fetchall()
+
+    tenants = [{"slug": row[0], "name": row[1]} for row in rows]
+    return {"tenants": tenants}
+
+
+@app.post("/auth/facebook/pages/{page_id}/assign-tenant")
+async def facebook_assign_page_to_tenant(
+    page_id: str,
+    tenant_slug: str = Body(..., embed=True),
+    current = Depends(require_user)
+):
+    """Asigna una página de Facebook a un tenant específico."""
+    user_role = current.get("role", "user")
+
+    # Verificar que el usuario tenga permiso
+    if user_role != "admin" and current["tenant_slug"] not in [tenant_slug, "acid-ia"]:
+        raise HTTPException(403, "No tienes permiso para asignar páginas a este tenant")
+
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    async with db_engine.begin() as conn:
+        # Verificar que la página existe
+        result = await conn.execute(
+            text("SELECT id FROM facebook_pages WHERE page_id = :page_id"),
+            {"page_id": page_id}
+        )
+        if not result.first():
+            raise HTTPException(404, "Página no encontrada")
+
+        # Verificar que el tenant existe
+        tenant_result = await conn.execute(
+            text("SELECT slug FROM tenants WHERE slug = :slug"),
+            {"slug": tenant_slug}
+        )
+        if not tenant_result.first():
+            raise HTTPException(404, f"Tenant '{tenant_slug}' no encontrado")
+
+        # Actualizar el tenant de la página
+        await conn.execute(
+            text("""
+                UPDATE facebook_pages
+                SET tenant_slug = :tenant_slug, updated_at = NOW()
+                WHERE page_id = :page_id
+            """),
+            {"tenant_slug": tenant_slug, "page_id": page_id}
+        )
+
+    return {"success": True, "message": f"Página asignada a tenant '{tenant_slug}'"}
 
 
 # ── Admin endpoints ────────────────────────────────────────────────────
