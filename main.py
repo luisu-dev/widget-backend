@@ -1868,6 +1868,10 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                 recipient_id_event = str(m.get("recipient", {}).get("id", ""))
                 msg = m.get("message", {})
                 business_ids = {x for x in (page_id, ig_user_id) if x}
+
+                # DEBUG: Log completo del mensaje para diagnosticar
+                log.info(f"[{rid}] DM received - obj={obj}, sender={sender_id}, recipient={recipient_id_event}, page_id={page_id}, ig_user_id={ig_user_id}, business_ids={business_ids}")
+
                 mid = str(msg.get("mid", ""))
                 if meta_message_seen(mid):
                     log.debug(f"[{rid}] DM dedupe mid={mid}")
