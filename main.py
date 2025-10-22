@@ -3522,6 +3522,92 @@ async def admin_meta_test_reply(body: MetaTestReplyIn):
         "results": results,
     }
 
+@app.post("/v1/admin/run-migrations", dependencies=[Depends(require_admin)])
+async def admin_run_migrations():
+    """Ejecuta todas las migraciones pendientes en la base de datos."""
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    MIGRATIONS = [
+        "migrations/002_add_fb_user_id.sql",
+        "migrations/003_add_page_settings.sql",
+        "migrations/004_add_page_id_to_messages.sql",
+    ]
+
+    results = []
+
+    for migration_file in MIGRATIONS:
+        migration_result = {
+            "file": migration_file,
+            "statements": [],
+            "success": False
+        }
+
+        try:
+            # Leer el archivo de migración
+            if not os.path.exists(migration_file):
+                migration_result["error"] = f"Archivo no encontrado: {migration_file}"
+                results.append(migration_result)
+                continue
+
+            with open(migration_file, 'r', encoding='utf-8') as f:
+                sql = f.read()
+
+            async with db_engine.begin() as conn:
+                # Separar y ejecutar cada statement
+                lines = sql.split('\n')
+                current_statement = []
+
+                for line in lines:
+                    # Saltar comentarios y líneas vacías
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith('--'):
+                        continue
+
+                    current_statement.append(line)
+
+                    # Si encuentra un punto y coma, ejecutar el statement
+                    if ';' in line:
+                        stmt = '\n'.join(current_statement).strip()
+                        if stmt and not stmt.startswith('--'):
+                            try:
+                                await conn.execute(text(stmt))
+                                migration_result["statements"].append({
+                                    "sql": stmt[:100] + "..." if len(stmt) > 100 else stmt,
+                                    "status": "OK"
+                                })
+                            except Exception as e:
+                                error_msg = str(e)
+                                # Ignorar errores de "ya existe"
+                                if "already exists" in error_msg or "duplicate" in error_msg.lower():
+                                    migration_result["statements"].append({
+                                        "sql": stmt[:100] + "..." if len(stmt) > 100 else stmt,
+                                        "status": "SKIPPED (already exists)"
+                                    })
+                                else:
+                                    migration_result["statements"].append({
+                                        "sql": stmt[:100] + "..." if len(stmt) > 100 else stmt,
+                                        "status": "ERROR",
+                                        "error": error_msg[:200]
+                                    })
+                                    raise
+                        current_statement = []
+
+            migration_result["success"] = True
+
+        except Exception as e:
+            migration_result["error"] = str(e)[:500]
+
+        results.append(migration_result)
+
+    all_success = all(r["success"] for r in results)
+
+    return {
+        "ok": all_success,
+        "message": "Todas las migraciones completadas" if all_success else "Algunas migraciones fallaron",
+        "migrations": results
+    }
+
 @app.post("/v1/twilio/whatsapp/webhook")
 async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default="")):
     if tenant and not valid_slug(tenant):
