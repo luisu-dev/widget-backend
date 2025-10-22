@@ -19,18 +19,33 @@ interface BrandConfigProps {
       [key: string]: any
     }
   }
+  selectedPage?: {
+    page_id: string
+    page_name: string
+    page_settings?: {
+      brand?: string
+      tone?: string
+      policies?: string
+      hours?: string
+      products?: string
+      bot_off_message?: string
+      [key: string]: any
+    }
+  } | null
   onUpdate?: () => void
 }
 
-export default function BrandConfig({ token, tenant, onUpdate }: BrandConfigProps) {
+export default function BrandConfig({ token, tenant, selectedPage, onUpdate }: BrandConfigProps) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
-  const settings = tenant.settings || {}
+  // Usar settings de la página seleccionada si existe, sino usar settings del tenant
+  const settings = selectedPage?.page_settings || tenant.settings || {}
+  const defaultBrand = selectedPage?.page_name || tenant.name || ''
 
   const [formData, setFormData] = useState({
-    brand: settings.brand || tenant.name || '',
+    brand: settings.brand || defaultBrand,
     tone: settings.tone || 'amigable y profesional',
     policies: settings.policies || '',
     hours: settings.hours || '',
@@ -39,15 +54,18 @@ export default function BrandConfig({ token, tenant, onUpdate }: BrandConfigProp
   })
 
   useEffect(() => {
+    const currentSettings = selectedPage?.page_settings || tenant.settings || {}
+    const currentBrand = selectedPage?.page_name || tenant.name || ''
+
     setFormData({
-      brand: settings.brand || tenant.name || '',
-      tone: settings.tone || 'amigable y profesional',
-      policies: settings.policies || '',
-      hours: settings.hours || '',
-      products: settings.products || '',
-      bot_off_message: settings.bot_off_message || 'El asistente está en pausa. Escríbenos por WhatsApp o envíanos un correo y te respondemos enseguida.'
+      brand: currentSettings.brand || currentBrand,
+      tone: currentSettings.tone || 'amigable y profesional',
+      policies: currentSettings.policies || '',
+      hours: currentSettings.hours || '',
+      products: currentSettings.products || '',
+      bot_off_message: currentSettings.bot_off_message || 'El asistente está en pausa. Escríbenos por WhatsApp o envíanos un correo y te respondemos enseguida.'
     })
-  }, [tenant])
+  }, [tenant, selectedPage])
 
   const handleSave = async () => {
     setSaving(true)
@@ -55,7 +73,13 @@ export default function BrandConfig({ token, tenant, onUpdate }: BrandConfigProp
     setSuccess('')
 
     try {
-      const res = await fetch(`${API_BASE}/v1/admin/tenant/settings`, {
+      // Si hay página seleccionada, guardar settings de la página
+      // Si no, guardar settings del tenant (comportamiento antiguo)
+      const endpoint = selectedPage
+        ? `${API_BASE}/auth/facebook/pages/${selectedPage.page_id}/settings`
+        : `${API_BASE}/v1/admin/tenant/settings`
+
+      const res = await fetch(endpoint, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -68,7 +92,11 @@ export default function BrandConfig({ token, tenant, onUpdate }: BrandConfigProp
 
       if (!res.ok) throw new Error('Error al guardar configuración')
 
-      setSuccess('Configuración guardada exitosamente')
+      const message = selectedPage
+        ? `Configuración de "${selectedPage.page_name}" guardada exitosamente`
+        : 'Configuración guardada exitosamente'
+
+      setSuccess(message)
 
       // Notificar al componente padre
       if (onUpdate) {

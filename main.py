@@ -1107,7 +1107,7 @@ async def get_active_facebook_page(tenant_slug: str) -> Optional[dict]:
     async with db_engine.connect() as conn:
         result = await conn.execute(
             text("""
-                SELECT page_id, page_token, ig_user_id, page_name
+                SELECT page_id, page_token, ig_user_id, page_name, page_settings
                 FROM facebook_pages
                 WHERE tenant_slug = :tenant AND is_active = TRUE
                 LIMIT 1
@@ -1123,7 +1123,8 @@ async def get_active_facebook_page(tenant_slug: str) -> Optional[dict]:
         "page_id": row[0],
         "page_token": row[1],
         "ig_user_id": row[2],
-        "page_name": row[3]
+        "page_name": row[3],
+        "page_settings": row[4] or {}
     }
 
 def fb_tokens_from_tenant(t: dict | None) -> tuple[str, str, str]:
@@ -1273,14 +1274,21 @@ def get_twilio_client_for_tenant(t: dict | None):
         return None
     return TwilioClient(sid, tok)
 
-def build_system_for_tenant(tenant: Optional[dict]) -> str:
-    """Construye el prompt del sistema personalizado para un tenant."""
-    s = (tenant or {}).get("settings", {}) or {}
+def build_system_for_tenant(tenant: Optional[dict], page_settings: Optional[dict] = None) -> str:
+    """Construye el prompt del sistema personalizado para un tenant.
+
+    Args:
+        tenant: Tenant data with settings
+        page_settings: Optional page-specific settings that override tenant settings
+    """
+    # Prefer page_settings over tenant settings for multi-page accounts
+    s = page_settings or (tenant or {}).get("settings", {}) or {}
+
     # Soportar tanto brand_name como brand
     brand = s.get("brand_name") or s.get("brand") or (tenant or {}).get("name") or "esta marca"
     tone = s.get("tone", "cálido y directo")
 
-    # Extraer configuraciones del tenant (soportar múltiples nombres de campos)
+    # Extraer configuraciones del tenant/page (soportar múltiples nombres de campos)
     policies = s.get("policies", "")
     hours = s.get("business_hours") or s.get("hours", "")
     products = s.get("products_description") or s.get("products", "")
@@ -1801,10 +1809,12 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
 
             # Obtener página activa desde facebook_pages (modelo multi-tenant)
             active_page = await get_active_facebook_page(tenant_slug)
+            page_settings = {}
             if active_page:
                 page_id = active_page["page_id"]
                 page_token = active_page["page_token"]
                 ig_user_id = active_page["ig_user_id"] or ""
+                page_settings = active_page.get("page_settings", {}) or {}
             else:
                 # Fallback: leer desde settings (modelo antiguo)
                 page_id, page_token, ig_user_id = fb_tokens_from_tenant(t)
@@ -1855,7 +1865,8 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                     log.debug(f"[{rid}] bot off, no auto-reply slug={tenant_slug}")
                     continue
 
-                system_prompt = build_system_for_tenant(t)
+                # Use page-specific settings if available
+                system_prompt = build_system_for_tenant(t, page_settings=page_settings)
                 messages = build_messages_with_history(sid, system_prompt)
                 answer = "Gracias por escribir. Te atiendo enseguida."
                 wa_url = tenant_whatsapp_url(t)
@@ -1960,7 +1971,8 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
 
                     public_reply = "Gracias por tu comentario. Te escribo por DM para más detalles."
                     if text_in:
-                        brand_prompt = build_system_for_tenant(t)
+                        # Use page-specific settings if available
+                        brand_prompt = build_system_for_tenant(t, page_settings=page_settings)
                         reply_messages = [
                             {"role": "system", "content": brand_prompt},
                             {
@@ -2033,7 +2045,8 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
 
                     public_reply = "Gracias por tu comentario. Te escribo por DM para más detalles."
                     if text_in:
-                        brand_prompt = build_system_for_tenant(t)
+                        # Use page-specific settings if available
+                        brand_prompt = build_system_for_tenant(t, page_settings=page_settings)
                         reply_messages = [
                             {"role": "system", "content": brand_prompt},
                             {
@@ -2563,9 +2576,11 @@ async def facebook_oauth_callback(
         log.info(f"🔍 Verificando información del usuario...")
         me_url = f"https://graph.facebook.com/v20.0/me?access_token={user_access_token}"
         me_resp = await client.get(me_url)
+        fb_user_id = None
         if me_resp.status_code == 200:
             me_data = me_resp.json()
-            log.info(f"   User ID: {me_data.get('id')}")
+            fb_user_id = me_data.get('id')
+            log.info(f"   User ID: {fb_user_id}")
             log.info(f"   Nombre: {me_data.get('name', 'N/A')}")
         else:
             log.warning(f"   No se pudo obtener info del usuario: {me_resp.status_code}")
@@ -2715,6 +2730,7 @@ async def facebook_oauth_callback(
                             SET page_name = :name,
                                 page_token = :token,
                                 ig_user_id = :ig_id,
+                                fb_user_id = :fb_user_id,
                                 updated_at = NOW()
                             WHERE tenant_slug = :tenant AND page_id = :page_id
                         """),
@@ -2723,7 +2739,8 @@ async def facebook_oauth_callback(
                             "page_id": page_id,
                             "name": page_name,
                             "token": page_token,
-                            "ig_id": ig_account_id
+                            "ig_id": ig_account_id,
+                            "fb_user_id": fb_user_id
                         }
                     )
                     log.info(f"   🔄 Página actualizada (is_active={existing[1]})")
@@ -2736,8 +2753,8 @@ async def facebook_oauth_callback(
                     await conn.execute(
                         text("""
                             INSERT INTO facebook_pages
-                            (tenant_slug, page_id, page_name, page_token, ig_user_id, is_active)
-                            VALUES (:tenant, :page_id, :name, :token, :ig_id, :is_active)
+                            (tenant_slug, page_id, page_name, page_token, ig_user_id, fb_user_id, is_active)
+                            VALUES (:tenant, :page_id, :name, :token, :ig_id, :fb_user_id, :is_active)
                         """),
                         {
                             "tenant": tenant_slug,
@@ -2745,6 +2762,7 @@ async def facebook_oauth_callback(
                             "name": page_name,
                             "token": page_token,
                             "ig_id": ig_account_id,
+                            "fb_user_id": fb_user_id,
                             "is_active": is_active
                         }
                     )
@@ -2776,6 +2794,23 @@ async def facebook_oauth_callback(
             log.info(f"   - Páginas nuevas: {pages_saved}")
             log.info(f"   - Páginas actualizadas: {pages_updated}")
             log.info(f"   - Total: {len(pages)}")
+
+            # Guardar fb_user_id en settings del tenant para filtrado posterior
+            if fb_user_id:
+                log.info(f"\n💾 Guardando fb_user_id en tenant settings...")
+                result = await conn.execute(
+                    text("SELECT settings FROM tenants WHERE slug = :slug"),
+                    {"slug": tenant_slug}
+                )
+                row = result.first()
+                if row:
+                    settings = row[0] or {}
+                    settings['fb_user_id'] = fb_user_id
+                    await conn.execute(
+                        text("UPDATE tenants SET settings = :settings WHERE slug = :slug"),
+                        {"settings": json.dumps(settings), "slug": tenant_slug}
+                    )
+                    log.info(f"   ✅ fb_user_id guardado en settings")
     else:
         log.error(f"❌ db_engine no disponible, no se pudo guardar la configuración")
 
@@ -2833,7 +2868,7 @@ async def facebook_oauth_disconnect(current = Depends(require_user)):
 
 @app.get("/auth/facebook/pages")
 async def facebook_list_pages(current = Depends(require_user)):
-    """Lista todas las páginas de Facebook del tenant (o todas si es admin)."""
+    """Lista las páginas de Facebook del usuario actual de Facebook (filtrado por fb_user_id)."""
     tenant_slug = current["tenant_slug"]
     user_role = current.get("role", "user")
 
@@ -2841,20 +2876,34 @@ async def facebook_list_pages(current = Depends(require_user)):
         return {"pages": []}
 
     async with db_engine.connect() as conn:
-        # Si es admin o tenant principal (acid-ia), ver todas las páginas
-        if user_role == "admin" or tenant_slug == "acid-ia":
+        # Obtener fb_user_id del tenant
+        tenant_result = await conn.execute(
+            text("SELECT settings FROM tenants WHERE slug = :slug"),
+            {"slug": tenant_slug}
+        )
+        tenant_row = tenant_result.first()
+        fb_user_id = None
+        if tenant_row and tenant_row[0]:
+            settings = tenant_row[0]
+            fb_user_id = settings.get('fb_user_id')
+
+        # Filtrar páginas por fb_user_id del tenant
+        # Solo muestra las páginas de LA CUENTA DE FACEBOOK conectada
+        if fb_user_id:
             result = await conn.execute(
                 text("""
-                    SELECT id, page_id, page_name, ig_user_id, is_active, created_at, updated_at, tenant_slug
+                    SELECT id, page_id, page_name, ig_user_id, is_active, created_at, updated_at, tenant_slug, page_settings
                     FROM facebook_pages
-                    ORDER BY tenant_slug, created_at ASC
-                """)
+                    WHERE fb_user_id = :fb_user_id
+                    ORDER BY created_at ASC
+                """),
+                {"fb_user_id": fb_user_id}
             )
         else:
-            # Usuario normal solo ve las páginas de su tenant
+            # Si no hay fb_user_id, fallback al filtro antiguo por tenant
             result = await conn.execute(
                 text("""
-                    SELECT id, page_id, page_name, ig_user_id, is_active, created_at, updated_at, tenant_slug
+                    SELECT id, page_id, page_name, ig_user_id, is_active, created_at, updated_at, tenant_slug, page_settings
                     FROM facebook_pages
                     WHERE tenant_slug = :tenant
                     ORDER BY created_at ASC
@@ -2874,6 +2923,7 @@ async def facebook_list_pages(current = Depends(require_user)):
             "created_at": row[5].isoformat() if row[5] else None,
             "updated_at": row[6].isoformat() if row[6] else None,
             "tenant_slug": row[7],
+            "page_settings": row[8] or {},
         })
 
     return {"pages": pages}
@@ -3001,6 +3051,97 @@ async def facebook_assign_page_to_tenant(
         )
 
     return {"success": True, "message": f"Página asignada a tenant '{tenant_slug}'"}
+
+
+@app.put("/auth/facebook/pages/{page_id}/settings")
+async def facebook_update_page_settings(
+    page_id: str,
+    settings: dict = Body(..., embed=True),
+    current = Depends(require_user)
+):
+    """Actualiza la configuración específica de una página de Facebook."""
+    tenant_slug = current["tenant_slug"]
+
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    async with db_engine.begin() as conn:
+        # Verificar que la página existe y pertenece al fb_user_id del tenant
+        tenant_result = await conn.execute(
+            text("SELECT settings FROM tenants WHERE slug = :slug"),
+            {"slug": tenant_slug}
+        )
+        tenant_row = tenant_result.first()
+        if not tenant_row or not tenant_row[0]:
+            raise HTTPException(404, "Tenant settings no encontrados")
+
+        fb_user_id = tenant_row[0].get('fb_user_id')
+        if not fb_user_id:
+            raise HTTPException(403, "No tienes páginas de Facebook conectadas")
+
+        # Verificar que la página pertenece a este usuario de Facebook
+        result = await conn.execute(
+            text("""
+                SELECT id FROM facebook_pages
+                WHERE page_id = :page_id AND fb_user_id = :fb_user_id
+            """),
+            {"page_id": page_id, "fb_user_id": fb_user_id}
+        )
+        if not result.first():
+            raise HTTPException(404, "Página no encontrada o no tienes permiso")
+
+        # Actualizar los settings de la página
+        await conn.execute(
+            text("""
+                UPDATE facebook_pages
+                SET page_settings = :settings, updated_at = NOW()
+                WHERE page_id = :page_id
+            """),
+            {"page_id": page_id, "settings": json.dumps(settings)}
+        )
+
+    return {"success": True, "message": "Configuración de página actualizada"}
+
+
+@app.get("/auth/facebook/pages/{page_id}/settings")
+async def facebook_get_page_settings(
+    page_id: str,
+    current = Depends(require_user)
+):
+    """Obtiene la configuración específica de una página de Facebook."""
+    tenant_slug = current["tenant_slug"]
+
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    async with db_engine.connect() as conn:
+        # Obtener fb_user_id del tenant
+        tenant_result = await conn.execute(
+            text("SELECT settings FROM tenants WHERE slug = :slug"),
+            {"slug": tenant_slug}
+        )
+        tenant_row = tenant_result.first()
+        if not tenant_row or not tenant_row[0]:
+            return {"settings": {}}
+
+        fb_user_id = tenant_row[0].get('fb_user_id')
+        if not fb_user_id:
+            return {"settings": {}}
+
+        # Obtener settings de la página
+        result = await conn.execute(
+            text("""
+                SELECT page_settings FROM facebook_pages
+                WHERE page_id = :page_id AND fb_user_id = :fb_user_id
+            """),
+            {"page_id": page_id, "fb_user_id": fb_user_id}
+        )
+        row = result.first()
+
+        if not row:
+            raise HTTPException(404, "Página no encontrada")
+
+        return {"settings": row[0] or {}}
 
 
 # ── Admin endpoints ────────────────────────────────────────────────────

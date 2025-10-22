@@ -47,6 +47,8 @@ function Dashboard() {
   const [savingBotState, setSavingBotState] = useState(false);
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
   const [conversationMessages, setConversationMessages] = useState<any[]>([]);
+  const [facebookPages, setFacebookPages] = useState<any[]>([]);
+  const [selectedPage, setSelectedPage] = useState<any | null>(null);
 
   const fetchProfile = async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -66,6 +68,28 @@ function Dashboard() {
     }
   };
 
+  const fetchFacebookPages = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/facebook/pages`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const pages = data.pages || [];
+      setFacebookPages(pages);
+
+      // Seleccionar la página activa por defecto
+      const activePage = pages.find((p: any) => p.is_active);
+      if (activePage) {
+        setSelectedPage(activePage);
+      } else if (pages.length > 0) {
+        setSelectedPage(pages[0]);
+      }
+    } catch (err) {
+      console.error('Error loading Facebook pages:', err);
+    }
+  };
+
   useEffect(() => {
     if (!token) {
       navigate('/login');
@@ -73,21 +97,22 @@ function Dashboard() {
     }
 
     fetchProfile();
+    fetchFacebookPages();
   }, [token, navigate]);
 
-  // Fetch messages when switching to messages tab
+  // Fetch messages when switching to messages tab or changing selected page
   useEffect(() => {
     if (activeTab === 'messages' && token) {
       fetchMessages();
     }
-  }, [activeTab, token]);
+  }, [activeTab, token, selectedPage]);
 
-  // Fetch metrics when switching to metrics tab
+  // Fetch metrics when switching to metrics tab or changing selected page
   useEffect(() => {
     if (activeTab === 'metrics' && token) {
       fetchMetrics();
     }
-  }, [activeTab, token]);
+  }, [activeTab, token, selectedPage]);
 
   // Set bot enabled state from profile
   useEffect(() => {
@@ -98,7 +123,9 @@ function Dashboard() {
 
   const fetchMessages = async () => {
     try {
-      const res = await fetch(`${API_BASE}/v1/admin/messages?limit=200`, {
+      // Filtrar por página seleccionada si existe
+      const pageParam = selectedPage ? `&page_id=${selectedPage.page_id}` : '';
+      const res = await fetch(`${API_BASE}/v1/admin/messages?limit=200${pageParam}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) throw new Error('Error al cargar mensajes');
@@ -148,7 +175,9 @@ function Dashboard() {
 
   const fetchMetrics = async () => {
     try {
-      const res = await fetch(`${API_BASE}/v1/admin/metrics/overview?days=7`, {
+      // Filtrar por página seleccionada si existe
+      const pageParam = selectedPage ? `&page_id=${selectedPage.page_id}` : '';
+      const res = await fetch(`${API_BASE}/v1/admin/metrics/overview?days=7${pageParam}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) throw new Error('Error al cargar métricas');
@@ -261,6 +290,26 @@ function Dashboard() {
                 🔧 Admin Panel
               </button>
             )}
+
+            {/* Dropdown de selección de página - solo si hay múltiples páginas */}
+            {facebookPages.length > 1 && selectedPage && (
+              <div className="ml-auto">
+                <select
+                  value={selectedPage.page_id}
+                  onChange={(e) => {
+                    const page = facebookPages.find(p => p.page_id === e.target.value);
+                    if (page) setSelectedPage(page);
+                  }}
+                  className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white text-sm focus:outline-none focus:border-[#04d9b5] hover:bg-white/15 transition"
+                >
+                  {facebookPages.map((page) => (
+                    <option key={page.page_id} value={page.page_id} className="bg-gray-800">
+                      {page.page_name} {page.ig_user_id ? '📷' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </nav>
         </div>
       </div>
@@ -285,7 +334,10 @@ function Dashboard() {
             <FacebookConnect
               token={token}
               tenant={profile.tenant}
-              onConnectionChange={() => fetchProfile(false)}
+              onConnectionChange={() => {
+                fetchProfile(false);
+                fetchFacebookPages();
+              }}
             />
           </div>
         )}
@@ -467,10 +519,22 @@ function Dashboard() {
             </div>
 
             {/* Brand Configuration */}
+            {selectedPage && (
+              <div className="mb-6 p-4 rounded-lg bg-blue-500/10 border border-blue-500/30">
+                <p className="text-sm text-blue-200">
+                  📄 Configurando: <strong>{selectedPage.page_name}</strong>
+                  {selectedPage.ig_user_id && <span className="ml-2">📷 Instagram conectado</span>}
+                </p>
+              </div>
+            )}
             <BrandConfig
               token={token}
               tenant={profile.tenant}
-              onUpdate={() => fetchProfile(false)}
+              selectedPage={selectedPage}
+              onUpdate={() => {
+                fetchProfile(false);
+                fetchFacebookPages();
+              }}
             />
 
             {/* Killswitch */}
