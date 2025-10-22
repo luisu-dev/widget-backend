@@ -333,7 +333,6 @@ function Dashboard() {
 
             <FacebookConnect
               token={token}
-              tenant={profile.tenant}
               onConnectionChange={() => {
                 fetchProfile(false);
                 fetchFacebookPages();

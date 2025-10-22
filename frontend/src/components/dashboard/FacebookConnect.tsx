@@ -13,24 +13,12 @@ interface FacebookPage {
   tenant_slug?: string
 }
 
-interface Tenant {
-  settings?: {
-    fb_page_id?: string
-    fb_page_token?: string
-    fb_page_name?: string
-    ig_user_id?: string
-    ig_user_ids?: string[]
-    [key: string]: any
-  }
-}
-
 interface FacebookConnectProps {
   token: string
-  tenant: Tenant
   onConnectionChange?: () => void
 }
 
-export default function FacebookConnect({ token, tenant, onConnectionChange }: FacebookConnectProps) {
+export default function FacebookConnect({ token, onConnectionChange }: FacebookConnectProps) {
   const [connecting, setConnecting] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
   const [error, setError] = useState('')
