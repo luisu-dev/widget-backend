@@ -2679,8 +2679,60 @@ async def facebook_oauth_callback(
                 log.error(f"❌ No se encontraron páginas asociadas a esta cuenta")
                 raise HTTPException(400, "No se encontraron páginas asociadas a esta cuenta. Verifica que seas administrador de las páginas en Facebook.")
 
-        # Guardar TODAS las páginas en la tabla facebook_pages
-        log.info(f"💾 Guardando {len(pages)} página(s) en la base de datos...")
+        # Enriquecer TODAS las páginas con Instagram ID y webhook subscription (dentro del contexto HTTP)
+        log.info(f"🔄 Enriqueciendo {len(pages)} página(s) con Instagram ID...")
+
+        for idx, page in enumerate(pages, 1):
+            page_id = page.get("id")
+            page_token = page.get("access_token")
+            page_name = page.get("name")
+
+            log.info(f"\n📄 [{idx}/{len(pages)}] Procesando: {page_name} (ID: {page_id})")
+
+            # Obtener Instagram Business Account asociado (si existe)
+            ig_account_id = None
+            try:
+                ig_url = f"https://graph.facebook.com/v20.0/{page_id}?fields=instagram_business_account&access_token={page_token}"
+                resp_ig = await client.get(ig_url)
+                if resp_ig.status_code == 200:
+                    ig_data = resp_ig.json()
+                    ig_account = ig_data.get("instagram_business_account")
+                    if ig_account:
+                        ig_account_id = ig_account.get("id")
+                        log.info(f"   ✅ Instagram Business Account: {ig_account_id}")
+                    else:
+                        log.info(f"   ℹ️  Sin Instagram Business Account")
+                else:
+                    log.warning(f"   ⚠️  Error obteniendo Instagram: {resp_ig.status_code}")
+            except Exception as e:
+                log.warning(f"   ⚠️  Error buscando Instagram: {e}")
+
+            # Guardar el ig_account_id en el diccionario de la página
+            page['ig_account_id'] = ig_account_id
+
+            # Suscribir la página al webhook
+            try:
+                subscribe_url = f"https://graph.facebook.com/v20.0/{page_id}/subscribed_apps"
+                subscribe_params = {
+                    'access_token': page_token,
+                    'subscribed_fields': 'feed,messages,messaging_postbacks,message_deliveries,message_reads,messaging_optins,messaging_referrals'
+                }
+
+                subscribe_resp = await client.post(subscribe_url, params=subscribe_params)
+
+                if subscribe_resp.status_code == 200:
+                    subscribe_result = subscribe_resp.json()
+                    if subscribe_result.get('success'):
+                        log.info(f"   ✅ Suscrita al webhook")
+                    else:
+                        log.warning(f"   ⚠️  Suscripción falló: {subscribe_result}")
+                else:
+                    log.warning(f"   ⚠️  Error al suscribir: {subscribe_resp.status_code}")
+            except Exception as e:
+                log.warning(f"   ⚠️  Error suscribiendo webhook: {e}")
+
+    # Guardar TODAS las páginas en la tabla facebook_pages
+    log.info(f"\n💾 Guardando {len(pages)} página(s) en la base de datos...")
 
     if db_engine:
         async with db_engine.begin() as conn:
@@ -2691,26 +2743,9 @@ async def facebook_oauth_callback(
                 page_id = page.get("id")
                 page_token = page.get("access_token")
                 page_name = page.get("name")
+                ig_account_id = page.get("ig_account_id")  # Obtener del diccionario enriquecido
 
-                log.info(f"\n📄 [{idx}/{len(pages)}] Procesando: {page_name} (ID: {page_id})")
-
-                # Obtener Instagram Business Account asociado (si existe)
-                ig_account_id = None
-                try:
-                    ig_url = f"https://graph.facebook.com/v20.0/{page_id}?fields=instagram_business_account&access_token={page_token}"
-                    resp_ig = await client.get(ig_url)
-                    if resp_ig.status_code == 200:
-                        ig_data = resp_ig.json()
-                        ig_account = ig_data.get("instagram_business_account")
-                        if ig_account:
-                            ig_account_id = ig_account.get("id")
-                            log.info(f"   ✅ Instagram Business Account: {ig_account_id}")
-                        else:
-                            log.info(f"   ℹ️  Sin Instagram Business Account")
-                    else:
-                        log.warning(f"   ⚠️  Error obteniendo Instagram: {resp_ig.status_code}")
-                except Exception as e:
-                    log.warning(f"   ⚠️  Error buscando Instagram: {e}")
+                log.info(f"\n💾 [{idx}/{len(pages)}] Guardando: {page_name} (ID: {page_id}, IG: {ig_account_id or 'N/A'})")
 
                 # Verificar si esta página ya existe
                 check_result = await conn.execute(
@@ -2768,27 +2803,6 @@ async def facebook_oauth_callback(
                     )
                     log.info(f"   ✅ Página guardada (is_active={is_active})")
                     pages_saved += 1
-
-                # Suscribir la página al webhook
-                try:
-                    subscribe_url = f"https://graph.facebook.com/v20.0/{page_id}/subscribed_apps"
-                    subscribe_params = {
-                        'access_token': page_token,
-                        'subscribed_fields': 'feed,messages,messaging_postbacks,message_deliveries,message_reads,messaging_optins,messaging_referrals'
-                    }
-
-                    subscribe_resp = await client.post(subscribe_url, params=subscribe_params)
-
-                    if subscribe_resp.status_code == 200:
-                        subscribe_result = subscribe_resp.json()
-                        if subscribe_result.get('success'):
-                            log.info(f"   ✅ Suscrita al webhook")
-                        else:
-                            log.warning(f"   ⚠️  Suscripción falló: {subscribe_result}")
-                    else:
-                        log.warning(f"   ⚠️  Error al suscribir: {subscribe_resp.status_code}")
-                except Exception as e:
-                    log.warning(f"   ⚠️  Error suscribiendo webhook: {e}")
 
             log.info(f"\n✅ Resumen:")
             log.info(f"   - Páginas nuevas: {pages_saved}")
