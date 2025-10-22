@@ -1966,10 +1966,12 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                 else:
                     try:
                         platform = "instagram" if obj == "instagram" else "facebook"
+                        log.info(f"[{rid}] Sending message - platform={platform}, participant_id={participant_id}, page_token={(page_token or '')[:20]}...")
                         # Usa envío con auto-refresh del page_token si expira
                         await meta_send_text_with_refresh(tenant_slug, participant_id, answer, platform=platform)
+                        log.info(f"[{rid}] Message sent successfully to {participant_id}")
                     except Exception as e:
-                        log.error(f"[{rid}] meta send error: {e}")
+                        log.error(f"[{rid}] meta send error to participant={participant_id}, platform={platform}: {e}")
 
             # Feed / Comments
             for ch in entry.get("changes", []):
