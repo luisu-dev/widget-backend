@@ -2834,20 +2834,29 @@ async def facebook_oauth_disconnect(current = Depends(require_user)):
 
     if db_engine:
         async with db_engine.begin() as conn:
-            # Obtener settings actuales
+            # Obtener fb_user_id del tenant
             result = await conn.execute(
                 text("SELECT settings FROM tenants WHERE slug = :slug"),
                 {"slug": tenant_slug}
             )
             row = result.first()
             current_settings = row[0] if row and row[0] else {}
+            fb_user_id = current_settings.get("fb_user_id")
 
-            # Remover credenciales de Facebook/Instagram (multi-tenant)
+            # Eliminar todas las páginas de Facebook de este usuario
+            if fb_user_id:
+                await conn.execute(
+                    text("DELETE FROM facebook_pages WHERE fb_user_id = :fb_user_id"),
+                    {"fb_user_id": fb_user_id}
+                )
+
+            # Remover credenciales de Facebook/Instagram de settings
             current_settings.pop("fb_page_id", None)
             current_settings.pop("fb_page_token", None)
             current_settings.pop("fb_page_name", None)
             current_settings.pop("ig_user_id", None)
             current_settings.pop("ig_user_ids", None)
+            current_settings.pop("fb_user_id", None)
 
             # Guardar settings actualizados
             await conn.execute(
