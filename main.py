@@ -1099,6 +1099,35 @@ def tenant_bot_enabled(tenant: Optional[dict]) -> bool:
     return bool(settings.get("bot_enabled", True))
 
 
+async def get_facebook_page_by_id(page_id: str, tenant_slug: str) -> Optional[dict]:
+    """Obtiene una página de Facebook específica por page_id y tenant_slug."""
+    if not db_engine or not page_id or not tenant_slug:
+        return None
+
+    async with db_engine.connect() as conn:
+        result = await conn.execute(
+            text("""
+                SELECT page_id, page_token, ig_user_id, page_name, page_settings
+                FROM facebook_pages
+                WHERE page_id = :page_id AND tenant_slug = :tenant
+                LIMIT 1
+            """),
+            {"page_id": page_id, "tenant": tenant_slug}
+        )
+        row = result.first()
+
+    if not row:
+        return None
+
+    return {
+        "page_id": row[0],
+        "page_token": row[1],
+        "ig_user_id": row[2],
+        "page_name": row[3],
+        "page_settings": row[4] or {}
+    }
+
+
 async def get_active_facebook_page(tenant_slug: str) -> Optional[dict]:
     """Obtiene la página de Facebook activa para el tenant desde facebook_pages."""
     if not db_engine or not tenant_slug:
@@ -1807,14 +1836,23 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
 
             t = await fetch_tenant(tenant_slug)
 
-            # Obtener página activa desde facebook_pages (modelo multi-tenant)
-            active_page = await get_active_facebook_page(tenant_slug)
+            # Obtener página específica desde facebook_pages basándose en el owner_id del webhook
+            # Esto asegura que usamos el token correcto para la página que recibió el mensaje
+            webhook_page = None
+            if owner_id:
+                webhook_page = await get_facebook_page_by_id(owner_id, tenant_slug)
+
+            # Si no encontramos la página por owner_id, usar la página activa como fallback
+            if not webhook_page:
+                webhook_page = await get_active_facebook_page(tenant_slug)
+
             page_settings = {}
-            if active_page:
-                page_id = active_page["page_id"]
-                page_token = active_page["page_token"]
-                ig_user_id = active_page["ig_user_id"] or ""
-                page_settings = active_page.get("page_settings", {}) or {}
+            if webhook_page:
+                page_id = webhook_page["page_id"]
+                page_token = webhook_page["page_token"]
+                ig_user_id = webhook_page["ig_user_id"] or ""
+                page_settings = webhook_page.get("page_settings", {}) or {}
+                log.info(f"[{rid}] Using page: {webhook_page.get('page_name')} (ID: {page_id})")
             else:
                 # Fallback: leer desde settings (modelo antiguo)
                 page_id, page_token, ig_user_id = fb_tokens_from_tenant(t)
