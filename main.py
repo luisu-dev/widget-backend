@@ -1100,19 +1100,29 @@ def tenant_bot_enabled(tenant: Optional[dict]) -> bool:
 
 
 async def get_facebook_page_by_id(page_id: str, tenant_slug: str) -> Optional[dict]:
-    """Obtiene una página de Facebook específica por page_id y tenant_slug."""
+    """Obtiene una página de Facebook específica por page_id O ig_user_id y tenant_slug.
+
+    Args:
+        page_id: Puede ser el page_id (Facebook) o ig_user_id (Instagram)
+        tenant_slug: Slug del tenant
+
+    Returns:
+        Datos de la página si se encuentra, None si no
+    """
     if not db_engine or not page_id or not tenant_slug:
         return None
 
     async with db_engine.connect() as conn:
+        # Buscar por page_id O por ig_user_id (para webhooks de Instagram)
         result = await conn.execute(
             text("""
                 SELECT page_id, page_token, ig_user_id, page_name, page_settings
                 FROM facebook_pages
-                WHERE page_id = :page_id AND tenant_slug = :tenant
+                WHERE (page_id = :lookup_id OR ig_user_id = :lookup_id)
+                  AND tenant_slug = :tenant
                 LIMIT 1
             """),
-            {"page_id": page_id, "tenant": tenant_slug}
+            {"lookup_id": page_id, "tenant": tenant_slug}
         )
         row = result.first()
 
