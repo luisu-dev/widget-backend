@@ -1979,7 +1979,8 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                         platform = "instagram" if obj == "instagram" else "facebook"
                         log.info(f"[{rid}] Sending message - platform={platform}, participant_id={participant_id}, page_token={(page_token or '')[:20]}...")
                         # Usa envío con auto-refresh del page_token si expira
-                        await meta_send_text_with_refresh(tenant_slug, participant_id, answer, platform=platform)
+                        # Pasar el page_token correcto de la página que recibió el mensaje
+                        await meta_send_text_with_refresh(tenant_slug, participant_id, answer, platform=platform, page_token=page_token)
                         log.info(f"[{rid}] Message sent successfully to {participant_id}")
                     except Exception as e:
                         log.error(f"[{rid}] meta send error to participant={participant_id}, platform={platform}: {e}")
@@ -2166,15 +2167,16 @@ async def rotate_page_token(tenant: str = Query(...)):
     except Exception as e:
         raise HTTPException(400, str(e))
     
-async def meta_send_text_with_refresh(tenant_slug: str, recipient_id: str, text: str, platform: str):
-    # Obtener página activa (multi-tenant)
-    active_page = await get_active_facebook_page(tenant_slug)
-    if active_page:
-        page_token = active_page["page_token"]
-    else:
-        # Fallback: leer desde settings (modelo antiguo)
-        t = await fetch_tenant(tenant_slug)
-        _, page_token, _ = fb_tokens_from_tenant(t)
+async def meta_send_text_with_refresh(tenant_slug: str, recipient_id: str, text: str, platform: str, page_token: str = None):
+    # Si no se proporciona page_token, obtener página activa (multi-tenant)
+    if not page_token:
+        active_page = await get_active_facebook_page(tenant_slug)
+        if active_page:
+            page_token = active_page["page_token"]
+        else:
+            # Fallback: leer desde settings (modelo antiguo)
+            t = await fetch_tenant(tenant_slug)
+            _, page_token, _ = fb_tokens_from_tenant(t)
 
     try:
         return await meta_send_text(page_token, recipient_id, text, platform=platform)
