@@ -2842,11 +2842,21 @@ async def facebook_oauth_callback(
                     # La primera página se marca como activa por defecto
                     is_active = (idx == 1)
 
+                    # Pre-llenar settings iniciales para onboarding
+                    initial_settings = {
+                        "brand": page_name,
+                        "tone": "amigable y profesional",
+                        "products": "",
+                        "hours": "",
+                        "policies": "",
+                        "bot_off_message": "El asistente está en pausa. Escríbenos por WhatsApp o envíanos un correo y te respondemos enseguida."
+                    }
+
                     await conn.execute(
                         text("""
                             INSERT INTO facebook_pages
-                            (tenant_slug, page_id, page_name, page_token, ig_user_id, fb_user_id, is_active)
-                            VALUES (:tenant, :page_id, :name, :token, :ig_id, :fb_user_id, :is_active)
+                            (tenant_slug, page_id, page_name, page_token, ig_user_id, fb_user_id, is_active, page_settings)
+                            VALUES (:tenant, :page_id, :name, :token, :ig_id, :fb_user_id, :is_active, :settings)
                         """),
                         {
                             "tenant": tenant_slug,
@@ -2855,10 +2865,11 @@ async def facebook_oauth_callback(
                             "token": page_token,
                             "ig_id": ig_account_id,
                             "fb_user_id": fb_user_id,
-                            "is_active": is_active
+                            "is_active": is_active,
+                            "settings": json.dumps(initial_settings)
                         }
                     )
-                    log.info(f"   ✅ Página guardada (is_active={is_active})")
+                    log.info(f"   ✅ Página guardada (is_active={is_active}) con settings iniciales")
                     pages_saved += 1
 
             log.info(f"\n✅ Resumen:")
@@ -2886,11 +2897,13 @@ async def facebook_oauth_callback(
         log.error(f"❌ db_engine no disponible, no se pudo guardar la configuración")
 
     # Redirigir al dashboard con éxito
+    # Si hay páginas nuevas, activar onboarding
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+    onboarding_param = "&onboarding=true" if pages_saved > 0 else ""
     log.info(f"🎉 Facebook OAuth completado exitosamente. Redirigiendo a {frontend_url}/dashboard")
     return Response(
         status_code=302,
-        headers={"Location": f"{frontend_url}/dashboard?facebook_connected=true"}
+        headers={"Location": f"{frontend_url}/dashboard?facebook_connected=true{onboarding_param}"}
     )
 
 
