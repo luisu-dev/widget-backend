@@ -3316,6 +3316,7 @@ async def tenant_list_messages(
     channel: str = Query(default=""),
     limit: int = Query(default=50, ge=1, le=200),
     before_id: Optional[int] = Query(default=None),
+    page_id: Optional[str] = Query(default=None),
     current = Depends(require_user)
 ):
     if not db_engine:
@@ -3328,6 +3329,9 @@ async def tenant_list_messages(
     if before_id:
         clauses.append("id < :before")
         params["before"] = before_id
+    if page_id:
+        clauses.append("page_id = :page_id")
+        params["page_id"] = page_id
     where = " AND ".join(clauses)
     q = f"""
         SELECT id, tenant_slug, session_id, channel, direction, author, content, payload, created_at
@@ -3342,20 +3346,32 @@ async def tenant_list_messages(
 
 
 @app.get("/v1/admin/metrics/overview")
-async def tenant_metrics_overview(days: int = Query(default=7, ge=1, le=90), current = Depends(require_user)):
+async def tenant_metrics_overview(
+    days: int = Query(default=7, ge=1, le=90),
+    page_id: Optional[str] = Query(default=None),
+    current = Depends(require_user)
+):
     if not db_engine:
         raise HTTPException(503, "Database not configured")
     tenant = current["tenant_slug"]
+
+    # Construir filtros dinámicamente
+    page_filter = "AND page_id = :page_id" if page_id else ""
+    params = {"tenant": tenant, "days": str(days)}
+    if page_id:
+        params["page_id"] = page_id
+
     async with db_engine.connect() as conn:
-        msgs = (await conn.execute(text("""
-            SELECT 
+        msgs = (await conn.execute(text(f"""
+            SELECT
                 count(*) FILTER (WHERE direction = 'in') AS inbound,
                 count(*) FILTER (WHERE direction = 'out') AS outbound,
                 count(DISTINCT session_id) AS conversations
             FROM messages
             WHERE tenant_slug = :tenant
               AND created_at >= NOW() - (:days || ' days')::interval
-        """), {"tenant": tenant, "days": str(days)})).mappings().first() or {}
+              {page_filter}
+        """), params)).mappings().first() or {}
 
         actions = (await conn.execute(text("""
             SELECT type, count(*) AS c
