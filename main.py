@@ -1863,6 +1863,7 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                 ig_user_id = webhook_page["ig_user_id"] or ""
                 page_settings = webhook_page.get("page_settings", {}) or {}
                 log.info(f"[{rid}] Using page: {webhook_page.get('page_name')} (ID: {page_id})")
+                log.info(f"[{rid}] Page settings: brand={page_settings.get('brand', 'N/A')}, products={page_settings.get('products', 'N/A')[:50]}...")
             else:
                 # Fallback: leer desde settings (modelo antiguo)
                 page_id, page_token, ig_user_id = fb_tokens_from_tenant(t)
