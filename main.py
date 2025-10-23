@@ -701,13 +701,13 @@ async def store_event(tenant_slug: str, sid: str, etype: str, payload: dict | No
         )
 
 
-async def log_message(tenant_slug: str, sid: str, channel: str, direction: str, content: str, author: Optional[str] = None, payload: Optional[dict] = None):
+async def log_message(tenant_slug: str, sid: str, channel: str, direction: str, content: str, author: Optional[str] = None, payload: Optional[dict] = None, page_id: Optional[str] = None):
     if not db_engine:
         return
     async with db_engine.begin() as conn:
         await conn.execute(
-            text("""INSERT INTO messages (tenant_slug, session_id, channel, direction, author, content, payload)
-                    VALUES (:tenant, :sid, :channel, :direction, :author, :content, CAST(:payload AS JSONB))"""),
+            text("""INSERT INTO messages (tenant_slug, session_id, channel, direction, author, content, payload, page_id)
+                    VALUES (:tenant, :sid, :channel, :direction, :author, :content, CAST(:payload AS JSONB), :page_id)"""),
             {
                 "tenant": tenant_slug or "public",
                 "sid": sid,
@@ -716,6 +716,7 @@ async def log_message(tenant_slug: str, sid: str, channel: str, direction: str, 
                 "author": author,
                 "content": content[:MAX_MESSAGE_CONTENT_LENGTH] if content else None,
                 "payload": json.dumps(payload or {}),
+                "page_id": page_id,
             }
         )
 
@@ -1912,7 +1913,7 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                 add_message(sid, "user", text_in)
                 asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_in", {"from": sender_id, "text": text_in}))
                 channel_label = "instagram_dm" if obj == "instagram" else "facebook_dm"
-                asyncio.create_task(log_message(tenant_slug, sid, channel_label, "in", text_in, author=sender_id))
+                asyncio.create_task(log_message(tenant_slug, sid, channel_label, "in", text_in, author=sender_id, page_id=page_id))
 
                 if not bot_active:
                     log.debug(f"[{rid}] bot off, no auto-reply slug={tenant_slug}")
@@ -1968,7 +1969,7 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
 
                 add_message(sid, "assistant", answer)
                 asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_out", {"to": sender_id, "text": answer[:MAX_TEXT_LENGTH]}))
-                asyncio.create_task(log_message(tenant_slug, sid, channel_label, "out", answer, author="bot"))
+                asyncio.create_task(log_message(tenant_slug, sid, channel_label, "out", answer, author="bot", page_id=page_id))
                 # Enviar respuesta solo si tenemos token (desde DB)
                 if not page_token:
                     log.warning(
@@ -2062,7 +2063,7 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                     else:
                         try:
                             await fb_reply_comment(page_token, comment_id, public_reply)
-                            asyncio.create_task(log_message(tenant_slug, sid, "facebook_comment", "out", public_reply, author="bot"))
+                            asyncio.create_task(log_message(tenant_slug, sid, "facebook_comment", "out", public_reply, author="bot", page_id=page_id))
                         except Exception as e:
                             log.error(f"[{rid}] fb_reply_comment error: {e}")
 
@@ -2076,7 +2077,7 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                         tenant_slug, sid, "page_comment_in",
                         {"comment_id": comment_id, "author_id": author_id, "text": text_in}
                     ))
-                    asyncio.create_task(log_message(tenant_slug, sid, "facebook_comment", "in", text_in, author=author_id))
+                    asyncio.create_task(log_message(tenant_slug, sid, "facebook_comment", "in", text_in, author=author_id, page_id=page_id))
 
                 # Instagram comments
                 if obj == "instagram" and field == "comments":
@@ -2136,7 +2137,7 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                     else:
                         try:
                             await ig_reply_comment(page_token, ig_comment_id, public_reply)
-                            asyncio.create_task(log_message(tenant_slug, sid, "instagram_comment", "out", public_reply, author="bot"))
+                            asyncio.create_task(log_message(tenant_slug, sid, "instagram_comment", "out", public_reply, author="bot", page_id=page_id))
                         except Exception as e:
                             log.error(f"[{rid}] ig_reply_comment error: {e}")
 
@@ -2150,7 +2151,7 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                         tenant_slug, sid, "instagram_comment_in",
                         {"comment_id": ig_comment_id, "author_id": author_id, "text": text_in}
                     ))
-                    asyncio.create_task(log_message(tenant_slug, sid, "instagram_comment", "in", text_in, author=author_id))
+                    asyncio.create_task(log_message(tenant_slug, sid, "instagram_comment", "in", text_in, author=author_id, page_id=page_id))
 
         return {"ok": True}
     except Exception as e:
