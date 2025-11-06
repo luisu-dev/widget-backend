@@ -175,17 +175,38 @@ function Dashboard() {
 
   const fetchMetrics = async () => {
     try {
+      console.log('Fetching metrics...');
       // Filtrar por página seleccionada si existe
       const pageParam = selectedPage ? `&page_id=${selectedPage.page_id}` : '';
-      const res = await fetch(`${API_BASE}/v1/admin/metrics/overview?days=7${pageParam}`, {
+      const url = `${API_BASE}/v1/admin/metrics/overview?days=7${pageParam}`;
+      console.log('Metrics URL:', url);
+      console.log('Selected page:', selectedPage);
+
+      const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (!res.ok) throw new Error('Error al cargar métricas');
+
+      console.log('Metrics response status:', res.status);
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error('Metrics error response:', errorText);
+        throw new Error('Error al cargar métricas');
+      }
+
       const data = await res.json();
+      console.log('Metrics data:', data);
       setMetrics(data);
     } catch (err) {
       console.error('Error fetching metrics:', err);
       setError('Error al cargar métricas');
+      // Set empty metrics to avoid infinite loading
+      setMetrics({
+        messages: { inbound: 0, outbound: 0, conversations: 0 },
+        approxTokens: 0,
+        leads: 0,
+        actions: {}
+      });
     }
   };
 
@@ -291,23 +312,34 @@ function Dashboard() {
               </button>
             )}
 
-            {/* Dropdown de selección de página - solo si hay múltiples páginas */}
-            {facebookPages.length > 1 && selectedPage && (
-              <div className="ml-auto">
-                <select
-                  value={selectedPage.page_id}
-                  onChange={(e) => {
-                    const page = facebookPages.find(p => p.page_id === e.target.value);
-                    if (page) setSelectedPage(page);
-                  }}
-                  className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white text-sm focus:outline-none focus:border-[#04d9b5] hover:bg-white/15 transition"
-                >
-                  {facebookPages.map((page) => (
-                    <option key={page.page_id} value={page.page_id} className="bg-gray-800">
-                      {page.page_name} {page.ig_user_id ? '📷' : ''}
-                    </option>
-                  ))}
-                </select>
+            {/* Indicador de página activa */}
+            {facebookPages.length > 0 && selectedPage && (
+              <div className="ml-auto flex items-center space-x-2">
+                <span className="text-white/70 text-sm font-medium">Página:</span>
+                {facebookPages.length === 1 ? (
+                  // Si solo hay una página, mostrar un badge fijo
+                  <div className="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600/30 to-pink-600/30 border-2 border-purple-500/60 shadow-lg">
+                    <span className="text-white text-sm font-bold">
+                      {selectedPage.page_name} {selectedPage.ig_user_id ? '📷' : '👥'}
+                    </span>
+                  </div>
+                ) : (
+                  // Si hay múltiples páginas, mostrar dropdown
+                  <select
+                    value={selectedPage.page_id}
+                    onChange={(e) => {
+                      const page = facebookPages.find(p => p.page_id === e.target.value);
+                      if (page) setSelectedPage(page);
+                    }}
+                    className="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600/20 to-pink-600/20 border-2 border-purple-500/50 text-white text-sm font-medium focus:outline-none focus:border-[#04d9b5] hover:border-purple-400 transition shadow-lg cursor-pointer"
+                  >
+                    {facebookPages.map((page) => (
+                      <option key={page.page_id} value={page.page_id} className="bg-gray-900 text-white font-medium">
+                        {page.page_name} {page.ig_user_id ? '📷' : '👥'}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
             )}
           </nav>
