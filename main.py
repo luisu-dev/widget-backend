@@ -1895,6 +1895,17 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                         f"[{rid}] DM skip: mensaje propio sender={sender_id} recipient={recipient_id_event}"
                     )
                     continue
+
+                # PROTECCIÓN ANTI-LOOP: Detectar si el mensaje viene de otra cuenta de negocio
+                # Si el sender es otra página/cuenta de IG Business, ignorar para evitar loops infinitos
+                if sender_id:
+                    sender_tenant = await resolve_tenant_by_page_or_ig_id(sender_id)
+                    if sender_tenant:
+                        log.warning(
+                            f"[{rid}] DM LOOP DETECTED: sender={sender_id} es otra cuenta de negocio (tenant={sender_tenant}). "
+                            f"Ignorando para evitar loop infinito."
+                        )
+                        continue
                 text_in = (msg.get("text") or "").strip()
                 if not text_in:
                     continue
