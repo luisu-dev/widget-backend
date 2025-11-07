@@ -1239,6 +1239,11 @@ async def meta_send_text(page_token: str, recipient_id: str, text: str, platform
 SEEN_META_EVENTS: "OrderedDict[str, dict]" = OrderedDict()
 SEEN_META_MSGS: "OrderedDict[str, dict]" = OrderedDict()
 
+# Anti-loop: Track recent messages per session to detect loops
+RECENT_MESSAGES: "OrderedDict[str, list]" = OrderedDict()
+MAX_RECENT_MESSAGES = 10
+LOOP_DETECTION_THRESHOLD = 5  # If 5+ messages in 30 seconds, likely a loop
+
 
 def _seen_key(obj: str, owner: str, field: str, verb: str, cid: str) -> str:
     return "|".join([obj or "", owner or "", field or "", verb or "", cid or ""])
@@ -1911,18 +1916,62 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                     continue
 
                 # PROTECCIÓN ANTI-LOOP: Detectar si el mensaje viene de otra cuenta de negocio
-                # Si el sender es otra página/cuenta de IG Business, ignorar para evitar loops infinitos
-                if sender_id:
-                    sender_tenant = await resolve_tenant_by_page_or_ig_id(sender_id)
-                    if sender_tenant:
-                        log.warning(
-                            f"[{rid}] DM LOOP DETECTED: sender={sender_id} es otra cuenta de negocio (tenant={sender_tenant}). "
-                            f"Ignorando para evitar loop infinito."
+                # Verificar si el sender_id es un IG User ID o Page ID de otro tenant
+                if sender_id and db_engine:
+                    async with db_engine.connect() as conn:
+                        result = await conn.execute(
+                            text("""
+                                SELECT tenant_slug, page_name
+                                FROM facebook_pages
+                                WHERE page_id = :sender_id OR ig_user_id = :sender_id
+                                LIMIT 1
+                            """),
+                            {"sender_id": sender_id}
                         )
-                        continue
+                        sender_page = result.mappings().first()
+
+                        if sender_page:
+                            log.warning(
+                                f"[{rid}] 🚫 DM LOOP DETECTED: sender={sender_id} pertenece a "
+                                f"{sender_page['page_name']} (tenant={sender_page['tenant_slug']}). "
+                                f"Ignorando para evitar loop infinito."
+                            )
+                            continue
                 text_in = (msg.get("text") or "").strip()
                 if not text_in:
                     continue
+
+                # PROTECCIÓN ANTI-LOOP: Detectar patrones de mensajes rápidos (posible loop)
+                session_key = f"{tenant_slug}:{sender_id}"
+                now = time.time()
+
+                if session_key not in RECENT_MESSAGES:
+                    RECENT_MESSAGES[session_key] = []
+
+                # Limpiar mensajes antiguos (más de 30 segundos)
+                RECENT_MESSAGES[session_key] = [
+                    ts for ts in RECENT_MESSAGES[session_key]
+                    if now - ts < 30
+                ]
+
+                # Agregar timestamp actual
+                RECENT_MESSAGES[session_key].append(now)
+
+                # Si hay muchos mensajes en poco tiempo, es un loop
+                if len(RECENT_MESSAGES[session_key]) >= LOOP_DETECTION_THRESHOLD:
+                    log.error(
+                        f"[{rid}] 🚨 LOOP DETECTION: {len(RECENT_MESSAGES[session_key])} mensajes "
+                        f"en 30 segundos desde sender={sender_id}. IGNORANDO para evitar loop."
+                    )
+                    # Limpiar el tracking para evitar acumulación
+                    RECENT_MESSAGES[session_key] = []
+                    continue
+
+                # Limpiar entradas antiguas del OrderedDict
+                if len(RECENT_MESSAGES) > 1000:
+                    for _ in range(100):
+                        RECENT_MESSAGES.popitem(last=False)
+
                 participant_id = sender_id or recipient_id_event
                 if participant_id in business_ids and recipient_id_event and recipient_id_event not in business_ids:
                     participant_id = recipient_id_event
