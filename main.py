@@ -1095,7 +1095,21 @@ async def fetch_user_by_id(user_id: int) -> Optional[dict]:
     return dict(row._mapping) if row else None
 
 
-def tenant_bot_enabled(tenant: Optional[dict]) -> bool:
+def tenant_bot_enabled(tenant: Optional[dict], page_settings: Optional[dict] = None) -> bool:
+    """Check if bot is enabled for this tenant/page.
+
+    Priority:
+    1. page_settings.bot_enabled (if page_settings provided)
+    2. tenant.settings.bot_enabled
+    3. Default: True
+    """
+    # Check page-specific settings first
+    if page_settings:
+        page_bot_enabled = page_settings.get("bot_enabled")
+        if page_bot_enabled is not None:
+            return bool(page_bot_enabled)
+
+    # Fallback to tenant settings
     settings = (tenant or {}).get("settings", {}) or {}
     return bool(settings.get("bot_enabled", True))
 
@@ -1872,7 +1886,7 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                 if not page_id and owner_id:
                     page_id = owner_id
 
-            bot_active = tenant_bot_enabled(t)
+            bot_active = tenant_bot_enabled(t, page_settings=page_settings)
 
             # Messenger / IG DMs (igual a como lo tenías)
             for m in entry.get("messaging", []):
