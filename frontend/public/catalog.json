@@ -154,35 +154,59 @@
     },
     {
       "key": "modulo-meta",
-      "title": "Módulo Meta (próximamente)",
+      "title": "Módulo Meta",
       "image": "/images/meta.png",
+      "priceId": "price_1SRIml9ubUUr929z1Qx1vYGA",
       "features": [
-        "Automatización de DM y comentarios",
-        "Respuestas y redirecciones alineadas a políticas",
-        "Registro de eventos por tenant"
+        "Automatiza tus redes sociales en Meta",
+        "Responde DMs y comentarios automáticamente",
+        "Automatiza flujos de conversación"
       ],
+      "price": "$1,000 MXN/mes (+IVA)",
       "sections": [
         {
           "title": "Características destacadas",
           "items": [
-            "Atención automatizada en DM y comentarios de Facebook/Instagram",
-            "Respuestas públicas y privados con redirecciones a WhatsApp o URLs",
+            "Atención automatizada en DM de Facebook Messenger e Instagram",
+            "Respuestas automáticas a comentarios en posts",
+            "Redirecciones inteligentes a WhatsApp o URLs",
+            "Configuración independiente por página/marca",
             "Cumplimiento con políticas de Meta"
           ]
         },
         {
           "title": "Detalles",
-          "body": "Respuesta pública + mensaje privado cuando aplique, con registro de eventos por tenant."
+          "items": [
+            "Respuestas personalizadas por marca con IA",
+            "Gestión de múltiples páginas desde un solo dashboard",
+            "Métricas de conversaciones y engagement",
+            "Registro de eventos por tenant",
+            "Killswitch para pausar el bot cuando necesites"
+          ]
         },
         {
-          "title": "Precio",
-          "body": "Se definirá al momento del lanzamiento."
+          "title": "Qué incluye",
+          "items": [
+            "Conexión de páginas de Facebook e Instagram",
+            "Configuración del tono y personalidad del bot por página",
+            "Dashboard con conversaciones y métricas en tiempo real",
+            "Soporte para múltiples marcas/páginas"
+          ]
+        },
+        {
+          "title": "Qué se entrega",
+          "items": [
+            "Acceso al dashboard de gestión",
+            "Páginas conectadas y bot activo",
+            "Documentación de uso y mejores prácticas"
+          ]
         },
         {
           "title": "Requisitos",
           "items": [
-            "Páginas y cuentas de Instagram con permisos completos",
-            "Business Manager configurado"
+            "Páginas de Facebook con rol de administrador",
+            "Cuentas de Instagram Business conectadas a páginas de Facebook",
+            "Permisos de mensajería y gestión de comentarios"
           ]
         }
       ]
