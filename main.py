@@ -3409,8 +3409,24 @@ async def tenant_list_messages(
 ):
     if not db_engine:
         raise HTTPException(503, "Database not configured")
+
+    # Si se especifica page_id, obtener el tenant de esa página
+    # Esto permite que un usuario administre múltiples páginas con tenants diferentes
+    tenant_filter = current["tenant_slug"]
+
+    if page_id:
+        async with db_engine.connect() as conn:
+            # Obtener el tenant de la página seleccionada
+            result = await conn.execute(
+                text("SELECT tenant_slug FROM facebook_pages WHERE page_id = :page_id"),
+                {"page_id": page_id}
+            )
+            page_data = result.mappings().first()
+            if page_data:
+                tenant_filter = page_data["tenant_slug"]
+
     clauses = ["tenant_slug = :tenant"]
-    params: Dict[str, Any] = {"tenant": current["tenant_slug"], "limit": limit}
+    params: Dict[str, Any] = {"tenant": tenant_filter, "limit": limit}
     if channel:
         clauses.append("channel = :channel")
         params["channel"] = channel
@@ -3441,7 +3457,19 @@ async def tenant_metrics_overview(
 ):
     if not db_engine:
         raise HTTPException(503, "Database not configured")
+
+    # Si se especifica page_id, obtener el tenant de esa página
     tenant = current["tenant_slug"]
+
+    if page_id and db_engine:
+        async with db_engine.connect() as conn:
+            result = await conn.execute(
+                text("SELECT tenant_slug FROM facebook_pages WHERE page_id = :page_id"),
+                {"page_id": page_id}
+            )
+            page_data = result.mappings().first()
+            if page_data:
+                tenant = page_data["tenant_slug"]
 
     # Construir filtros dinámicamente
     page_filter = "AND page_id = :page_id" if page_id else ""
