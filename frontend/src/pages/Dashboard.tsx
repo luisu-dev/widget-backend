@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import FacebookConnect from '../components/dashboard/FacebookConnect';
 import BrandConfig from '../components/dashboard/BrandConfig';
+import Integrations from '../components/Integrations';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
@@ -355,22 +356,13 @@ function Dashboard() {
         )}
 
         {activeTab === 'integrations' && (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-2xl font-bold text-white mb-2">Integraciones</h2>
-              <p className="text-gray-400">
-                Conecta tus cuentas de redes sociales para recibir y responder mensajes automáticamente.
-              </p>
-            </div>
-
-            <FacebookConnect
-              token={token}
-              onConnectionChange={() => {
-                fetchProfile(false);
-                fetchFacebookPages();
-              }}
-            />
-          </div>
+          <Integrations
+            token={token}
+            onConnectionChange={() => {
+              fetchProfile(false);
+              fetchFacebookPages();
+            }}
+          />
         )}
 
         {activeTab === 'messages' && (
