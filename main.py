@@ -3916,6 +3916,144 @@ async def stripe_connect_onboard(tenant: str = Query(...)):
     )
     return {"onboarding_url": link.url, "acct": acct}
 
+#----------Integración Twilio WhatsApp --------------
+@app.post("/v1/admin/twilio/configure")
+async def twilio_configure(body: dict, current = Depends(require_user)):
+    """
+    Configura las credenciales de Twilio para un tenant.
+    Body: { account_sid, auth_token, whatsapp_from }
+    """
+    tenant_slug = current["tenant_slug"]
+    t = await fetch_tenant(tenant_slug)
+    if not t:
+        raise HTTPException(404, "Tenant no encontrado")
+
+    account_sid = (body.get("account_sid") or "").strip()
+    auth_token = (body.get("auth_token") or "").strip()
+    whatsapp_from = (body.get("whatsapp_from") or "").strip()
+
+    if not account_sid or not auth_token:
+        raise HTTPException(400, "account_sid y auth_token son requeridos")
+
+    # Validar formato del número de WhatsApp
+    if whatsapp_from and not whatsapp_from.startswith("whatsapp:"):
+        whatsapp_from = f"whatsapp:{whatsapp_from}"
+
+    # Guardar en settings del tenant
+    settings = (t.get("settings") or {}).copy()
+    settings["twilio_account_sid"] = account_sid
+    settings["twilio_auth_token"] = auth_token
+    if whatsapp_from:
+        settings["twilio_whatsapp_from"] = whatsapp_from
+
+    await update_tenant_settings(tenant_slug, settings)
+
+    return {
+        "success": True,
+        "message": "Credenciales de Twilio guardadas correctamente",
+        "webhook_url": f"{os.getenv('BACKEND_URL', 'https://acidia.app')}/v1/twilio/whatsapp/webhook?tenant={tenant_slug}"
+    }
+
+
+@app.post("/v1/admin/twilio/test")
+async def twilio_test_connection(body: dict, current = Depends(require_user)):
+    """
+    Prueba la conexión con Twilio enviando un mensaje de prueba.
+    Body: { to: "+525512345678" }
+    """
+    tenant_slug = current["tenant_slug"]
+    t = await fetch_tenant(tenant_slug)
+    if not t:
+        raise HTTPException(404, "Tenant no encontrado")
+
+    to = (body.get("to") or "").strip()
+    if not to:
+        raise HTTPException(400, "El campo 'to' es requerido")
+
+    # Normalizar número
+    to_e164 = norm_phone(to)
+    if not to_e164:
+        raise HTTPException(400, "Número de teléfono inválido")
+
+    # Obtener cliente de Twilio para el tenant
+    client_t = get_twilio_client_for_tenant(t)
+    if not client_t:
+        raise HTTPException(400, "Twilio no está configurado para este tenant. Configura primero las credenciales.")
+
+    _, _, wa_from, _ = twilio_cfg_from_tenant(t)
+    if not wa_from:
+        raise HTTPException(400, "Número de WhatsApp no configurado")
+
+    # Enviar mensaje de prueba
+    try:
+        test_message = f"✅ Conexión exitosa! Tu bot de {(t.get('name') or tenant_slug)} está listo para automatizar WhatsApp."
+
+        message = client_t.messages.create(
+            from_=wa_from,
+            to=f"whatsapp:{to_e164}",
+            body=test_message
+        )
+
+        return {
+            "success": True,
+            "message": "Mensaje de prueba enviado correctamente",
+            "message_sid": message.sid,
+            "to": to_e164
+        }
+    except Exception as e:
+        log.error(f"Error enviando mensaje de prueba Twilio: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "Error al enviar mensaje de prueba. Verifica tus credenciales."
+        }
+
+
+@app.get("/v1/admin/twilio/webhook-url")
+async def twilio_get_webhook_url(current = Depends(require_user)):
+    """
+    Obtiene la URL del webhook para configurar en Twilio.
+    """
+    tenant_slug = current["tenant_slug"]
+    backend_url = os.getenv("BACKEND_URL", "https://acidia.app")
+
+    return {
+        "webhook_url": f"{backend_url}/v1/twilio/whatsapp/webhook?tenant={tenant_slug}",
+        "instructions": [
+            "1. Ve a https://console.twilio.com/us1/develop/sms/settings/whatsapp-sender",
+            "2. Selecciona tu número de WhatsApp",
+            "3. En 'When a message comes in', pega la URL del webhook",
+            "4. Método: HTTP POST",
+            "5. Guarda los cambios"
+        ]
+    }
+
+
+@app.get("/v1/admin/twilio/status")
+async def twilio_get_status(current = Depends(require_user)):
+    """
+    Verifica el estado de la configuración de Twilio para el tenant.
+    """
+    tenant_slug = current["tenant_slug"]
+    t = await fetch_tenant(tenant_slug)
+    if not t:
+        raise HTTPException(404, "Tenant no encontrado")
+
+    settings = t.get("settings") or {}
+    has_account_sid = bool(settings.get("twilio_account_sid"))
+    has_auth_token = bool(settings.get("twilio_auth_token"))
+    has_whatsapp_from = bool(settings.get("twilio_whatsapp_from"))
+
+    is_configured = has_account_sid and has_auth_token and has_whatsapp_from
+
+    return {
+        "configured": is_configured,
+        "has_account_sid": has_account_sid,
+        "has_auth_token": has_auth_token,
+        "has_whatsapp_from": has_whatsapp_from,
+        "whatsapp_from": settings.get("twilio_whatsapp_from") if has_whatsapp_from else None
+    }
+
 #Endpoint público que usará tu web/widget:
 @app.post("/v1/stripe/checkout/by-plan")
 async def stripe_checkout_by_plan(body: dict, tenant: str = Query(...)):
