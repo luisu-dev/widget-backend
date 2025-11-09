@@ -13,6 +13,28 @@ interface FacebookPage {
   tenant_slug?: string
 }
 
+interface InstagramProfile {
+  id: string
+  username: string
+  name: string
+  biography?: string
+  followers_count: number
+  follows_count: number
+  media_count: number
+  profile_picture_url?: string
+}
+
+interface InstagramMedia {
+  id: string
+  caption?: string
+  media_type: string
+  media_url?: string
+  permalink: string
+  thumbnail_url?: string
+  timestamp: string
+  username?: string
+}
+
 interface FacebookConnectProps {
   token: string
   onConnectionChange?: () => void
@@ -25,6 +47,12 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
   const [success, setSuccess] = useState('')
   const [pages, setPages] = useState<FacebookPage[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Instagram data
+  const [expandedIgPages, setExpandedIgPages] = useState<Set<string>>(new Set())
+  const [igProfiles, setIgProfiles] = useState<Record<string, InstagramProfile>>({})
+  const [igMedia, setIgMedia] = useState<Record<string, InstagramMedia[]>>({})
+  const [loadingIgData, setLoadingIgData] = useState<Set<string>>(new Set())
 
   // Cargar páginas de Facebook
   const fetchPages = async () => {
@@ -48,6 +76,63 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
   useEffect(() => {
     fetchPages()
   }, [token])
+
+  // Fetch Instagram profile data
+  const fetchInstagramProfile = async (igUserId: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/instagram/profile/${igUserId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (!res.ok) throw new Error('Error al cargar perfil de Instagram')
+      const data = await res.json()
+      setIgProfiles(prev => ({ ...prev, [igUserId]: data.profile }))
+    } catch (err: any) {
+      console.error('Error fetching Instagram profile:', err)
+    }
+  }
+
+  // Fetch Instagram media
+  const fetchInstagramMedia = async (igUserId: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/instagram/media/${igUserId}?limit=12`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (!res.ok) throw new Error('Error al cargar medios de Instagram')
+      const data = await res.json()
+      setIgMedia(prev => ({ ...prev, [igUserId]: data.media }))
+    } catch (err: any) {
+      console.error('Error fetching Instagram media:', err)
+    }
+  }
+
+  // Toggle Instagram details expansion
+  const toggleInstagramDetails = async (igUserId: string) => {
+    const newExpanded = new Set(expandedIgPages)
+
+    if (newExpanded.has(igUserId)) {
+      newExpanded.delete(igUserId)
+    } else {
+      newExpanded.add(igUserId)
+
+      // Load data if not already loaded
+      if (!igProfiles[igUserId] || !igMedia[igUserId]) {
+        setLoadingIgData(prev => new Set(prev).add(igUserId))
+
+        await Promise.all([
+          !igProfiles[igUserId] && fetchInstagramProfile(igUserId),
+          !igMedia[igUserId] && fetchInstagramMedia(igUserId)
+        ])
+
+        setLoadingIgData(prev => {
+          const next = new Set(prev)
+          next.delete(igUserId)
+          return next
+        })
+      }
+    }
+
+    setExpandedIgPages(newExpanded)
+  }
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -206,11 +291,121 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
                 </div>
 
                 {page.ig_user_id && (
-                  <div className="flex items-center gap-2 mb-2 text-sm text-purple-400">
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M12 2c2.717 0 3.056.01 4.122.06 1.065.05 1.79.217 2.428.465.66.254 1.216.598 1.772 1.153a4.908 4.908 0 0 1 1.153 1.772c.247.637.415 1.363.465 2.428.047 1.066.06 1.405.06 4.122 0 2.717-.01 3.056-.06 4.122-.05 1.065-.218 1.79-.465 2.428a4.883 4.883 0 0 1-1.153 1.772 4.915 4.915 0 0 1-1.772 1.153c-.637.247-1.363.415-2.428.465-1.066.047-1.405.06-4.122.06-2.717 0-3.056-.01-4.122-.06-1.065-.05-1.79-.218-2.428-.465a4.89 4.89 0 0 1-1.772-1.153 4.904 4.904 0 0 1-1.153-1.772c-.248-.637-.415-1.363-.465-2.428C2.013 15.056 2 14.717 2 12c0-2.717.01-3.056.06-4.122.05-1.066.217-1.79.465-2.428a4.88 4.88 0 0 1 1.153-1.772A4.897 4.897 0 0 1 5.45 2.525c.638-.248 1.362-.415 2.428-.465C8.944 2.013 9.283 2 12 2zm0 5a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm6.5-.25a1.25 1.25 0 1 0-2.5 0 1.25 1.25 0 0 0 2.5 0zM12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6z"/>
-                    </svg>
-                    <span>Instagram conectado</span>
+                  <div className="mt-3 border-t border-white/10 pt-3">
+                    <button
+                      onClick={() => toggleInstagramDetails(page.ig_user_id!)}
+                      className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-white/5 transition"
+                    >
+                      <div className="flex items-center gap-2 text-sm text-purple-400">
+                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M12 2c2.717 0 3.056.01 4.122.06 1.065.05 1.79.217 2.428.465.66.254 1.216.598 1.772 1.153a4.908 4.908 0 0 1 1.153 1.772c.247.637.415 1.363.465 2.428.047 1.066.06 1.405.06 4.122 0 2.717-.01 3.056-.06 4.122-.05 1.065-.218 1.79-.465 2.428a4.883 4.883 0 0 1-1.153 1.772 4.915 4.915 0 0 1-1.772 1.153c-.637.247-1.363.415-2.428.465-1.066.047-1.405.06-4.122.06-2.717 0-3.056-.01-4.122-.06-1.065-.05-1.79-.218-2.428-.465a4.89 4.89 0 0 1-1.772-1.153 4.904 4.904 0 0 1-1.153-1.772c-.248-.637-.415-1.363-.465-2.428C2.013 15.056 2 14.717 2 12c0-2.717.01-3.056.06-4.122.05-1.066.217-1.79.465-2.428a4.88 4.88 0 0 1 1.153-1.772A4.897 4.897 0 0 1 5.45 2.525c.638-.248 1.362-.415 2.428-.465C8.944 2.013 9.283 2 12 2zm0 5a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm6.5-.25a1.25 1.25 0 1 0-2.5 0 1.25 1.25 0 0 0 2.5 0zM12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6z"/>
+                        </svg>
+                        <span className="font-medium">Ver detalles de Instagram</span>
+                      </div>
+                      <svg
+                        className={`w-4 h-4 text-purple-400 transition-transform ${
+                          expandedIgPages.has(page.ig_user_id) ? 'rotate-180' : ''
+                        }`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+
+                    {/* Instagram Details (expandable) */}
+                    {expandedIgPages.has(page.ig_user_id) && (
+                      <div className="mt-3 space-y-4">
+                        {loadingIgData.has(page.ig_user_id) ? (
+                          <div className="text-center text-gray-400 py-4">
+                            Cargando datos de Instagram...
+                          </div>
+                        ) : (
+                          <>
+                            {/* Instagram Profile */}
+                            {igProfiles[page.ig_user_id] && (
+                              <div className="bg-gradient-to-br from-purple-500/10 to-pink-500/10 border border-purple-500/30 rounded-lg p-4">
+                                <div className="flex items-start gap-4">
+                                  {igProfiles[page.ig_user_id].profile_picture_url && (
+                                    <img
+                                      src={igProfiles[page.ig_user_id].profile_picture_url}
+                                      alt="Profile"
+                                      className="w-16 h-16 rounded-full border-2 border-purple-400"
+                                    />
+                                  )}
+                                  <div className="flex-1">
+                                    <div className="text-white font-semibold text-lg">
+                                      {igProfiles[page.ig_user_id].name}
+                                    </div>
+                                    <div className="text-purple-300 text-sm">
+                                      @{igProfiles[page.ig_user_id].username}
+                                    </div>
+                                    {igProfiles[page.ig_user_id].biography && (
+                                      <div className="text-gray-300 text-xs mt-2">
+                                        {igProfiles[page.ig_user_id].biography}
+                                      </div>
+                                    )}
+                                    <div className="flex gap-4 mt-3 text-xs">
+                                      <div className="text-white">
+                                        <span className="font-bold">{igProfiles[page.ig_user_id].media_count.toLocaleString()}</span> publicaciones
+                                      </div>
+                                      <div className="text-white">
+                                        <span className="font-bold">{igProfiles[page.ig_user_id].followers_count.toLocaleString()}</span> seguidores
+                                      </div>
+                                      <div className="text-white">
+                                        <span className="font-bold">{igProfiles[page.ig_user_id].follows_count.toLocaleString()}</span> seguidos
+                                      </div>
+                                    </div>
+                                    <div className="text-xs text-gray-400 mt-2 font-mono">
+                                      ID: {igProfiles[page.ig_user_id].id}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Instagram Media Gallery */}
+                            {igMedia[page.ig_user_id] && igMedia[page.ig_user_id].length > 0 && (
+                              <div>
+                                <div className="text-white text-sm font-medium mb-2">
+                                  Publicaciones recientes ({igMedia[page.ig_user_id].length})
+                                </div>
+                                <div className="grid grid-cols-3 gap-2">
+                                  {igMedia[page.ig_user_id].slice(0, 9).map((media) => (
+                                    <a
+                                      key={media.id}
+                                      href={media.permalink}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="aspect-square relative group overflow-hidden rounded-lg border border-white/10 hover:border-purple-400/50 transition"
+                                    >
+                                      <img
+                                        src={media.media_type === 'VIDEO' ? media.thumbnail_url : media.media_url}
+                                        alt={media.caption?.substring(0, 50) || 'Instagram post'}
+                                        className="w-full h-full object-cover"
+                                      />
+                                      {media.media_type === 'VIDEO' && (
+                                        <div className="absolute top-2 right-2 bg-black/60 rounded-full p-1">
+                                          <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 24 24">
+                                            <path d="M8 5v14l11-7z"/>
+                                          </svg>
+                                        </div>
+                                      )}
+                                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center p-2">
+                                        <p className="text-white text-xs text-center line-clamp-3">
+                                          {media.caption || 'Sin descripción'}
+                                        </p>
+                                      </div>
+                                    </a>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 

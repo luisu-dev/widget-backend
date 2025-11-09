@@ -3142,6 +3142,112 @@ async def facebook_list_pages(current = Depends(require_user)):
     return {"pages": pages}
 
 
+@app.get("/auth/instagram/profile/{ig_user_id}")
+async def instagram_get_profile(ig_user_id: str, current = Depends(require_user)):
+    """
+    Obtiene el perfil completo de Instagram usando la Graph API.
+    Retorna: username, name, biography, followers_count, follows_count, media_count, profile_picture_url
+    """
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    tenant_slug = current["tenant_slug"]
+
+    async with db_engine.connect() as conn:
+        # Obtener el page_token desde la página de Facebook que tiene este ig_user_id
+        result = await conn.execute(
+            text("""
+                SELECT page_token FROM facebook_pages
+                WHERE ig_user_id = :ig_user_id AND tenant_slug = :tenant
+                LIMIT 1
+            """),
+            {"ig_user_id": ig_user_id, "tenant": tenant_slug}
+        )
+        row = result.first()
+        if not row or not row[0]:
+            raise HTTPException(404, "Instagram account not found or no access token")
+
+        page_token = row[0]
+
+    # Llamar a la Graph API para obtener información del perfil
+    # Campos disponibles con instagram_basic: id, username, name, biography, followers_count, follows_count, media_count, profile_picture_url
+    fields = "id,username,name,biography,followers_count,follows_count,media_count,profile_picture_url"
+    url = f"https://graph.facebook.com/v20.0/{ig_user_id}?fields={fields}&access_token={page_token}"
+
+    import httpx
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(url)
+
+        if resp.status_code != 200:
+            raise HTTPException(500, f"Error fetching Instagram profile: {resp.text}")
+
+        profile_data = resp.json()
+
+    return {
+        "profile": profile_data
+    }
+
+
+@app.get("/auth/instagram/media/{ig_user_id}")
+async def instagram_get_media(ig_user_id: str, limit: int = 12, current = Depends(require_user)):
+    """
+    Obtiene la lista de medios (publicaciones) de Instagram.
+    Retorna: id, caption, media_type, media_url, permalink, thumbnail_url, timestamp, username
+    """
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    tenant_slug = current["tenant_slug"]
+
+    async with db_engine.connect() as conn:
+        # Obtener el page_token
+        result = await conn.execute(
+            text("""
+                SELECT page_token FROM facebook_pages
+                WHERE ig_user_id = :ig_user_id AND tenant_slug = :tenant
+                LIMIT 1
+            """),
+            {"ig_user_id": ig_user_id, "tenant": tenant_slug}
+        )
+        row = result.first()
+        if not row or not row[0]:
+            raise HTTPException(404, "Instagram account not found or no access token")
+
+        page_token = row[0]
+
+    # Llamar a la Graph API para obtener medios
+    # Primero obtener la lista de media IDs
+    media_url = f"https://graph.facebook.com/v20.0/{ig_user_id}/media?limit={limit}&access_token={page_token}"
+
+    import httpx
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(media_url)
+
+        if resp.status_code != 200:
+            raise HTTPException(500, f"Error fetching Instagram media: {resp.text}")
+
+        media_list_data = resp.json()
+        media_ids = media_list_data.get("data", [])
+
+        # Obtener detalles de cada media
+        media_details = []
+        fields = "id,caption,media_type,media_url,permalink,thumbnail_url,timestamp,username"
+
+        for media_item in media_ids:
+            media_id = media_item.get("id")
+            if media_id:
+                detail_url = f"https://graph.facebook.com/v20.0/{media_id}?fields={fields}&access_token={page_token}"
+                detail_resp = await client.get(detail_url)
+
+                if detail_resp.status_code == 200:
+                    media_details.append(detail_resp.json())
+
+    return {
+        "media": media_details,
+        "count": len(media_details)
+    }
+
+
 @app.post("/auth/facebook/pages/{page_id}/activate")
 async def facebook_activate_page(page_id: str, current = Depends(require_user)):
     """Activa una página específica y desactiva las demás para el tenant."""
