@@ -2613,6 +2613,51 @@ async def auth_me(current = Depends(require_user)):
     }
 
 
+@app.get("/auth/tenants")
+async def get_user_tenants(current = Depends(require_user)):
+    """Obtiene todas las marcas/tenants que puede gestionar el usuario."""
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    user_id = current["id"]
+
+    async with db_engine.connect() as conn:
+        # Obtener todos los tenants del usuario
+        result = await conn.execute(
+            text("""
+                SELECT slug, name, whatsapp, settings, stripe_acct, catalog_url, web_domains
+                FROM tenants
+                WHERE owner_user_id = :user_id
+                ORDER BY name
+            """),
+            {"user_id": user_id}
+        )
+
+        tenants = []
+        for row in result.mappings():
+            tenant_data = dict(row)
+
+            # Verificar si tiene Facebook/Instagram conectado
+            fb_result = await conn.execute(
+                text("SELECT COUNT(*) FROM facebook_pages WHERE tenant_slug = :slug"),
+                {"slug": tenant_data["slug"]}
+            )
+            fb_count = fb_result.scalar()
+
+            tenant_data["has_facebook"] = fb_count > 0
+            tenant_data["integrations"] = {
+                "facebook": fb_count > 0,
+                "stripe": bool(tenant_data.get("stripe_acct")),
+                "catalog": bool(tenant_data.get("catalog_url")),
+                "web": len(tenant_data.get("web_domains", [])) > 0 if tenant_data.get("web_domains") else False,
+                "whatsapp": bool(tenant_data.get("whatsapp"))
+            }
+
+            tenants.append(tenant_data)
+
+    return {"tenants": tenants}
+
+
 # ── Facebook OAuth endpoints ───────────────────────────────────────────
 @app.options("/auth/facebook/connect")
 async def options_facebook_connect():
@@ -3915,6 +3960,184 @@ async def stripe_connect_onboard(tenant: str = Query(...)):
         type="account_onboarding",
     )
     return {"onboarding_url": link.url, "acct": acct}
+
+#----------Stripe per Tenant (Multi-brand) --------------
+@app.get("/v1/admin/stripe/onboard")
+async def stripe_onboard_tenant(tenant_slug: str = Query(...), token: str = Query(None)):
+    """
+    Inicia el onboarding de Stripe para un tenant/marca específico.
+    Acepta token como query parameter para permitir redirecciones desde el navegador.
+    """
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    # Validar token manualmente desde query parameter
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token parameter")
+
+    try:
+        payload = decode_access_token(token)
+        user = await fetch_user_by_id(int(payload.get("sub", 0)))
+        if not user or user.get("tenant_slug") != payload.get("tenant"):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
+
+    async with db_engine.connect() as conn:
+        # Obtener el tenant
+        result = await conn.execute(
+            text("SELECT slug, name, stripe_acct, owner_user_id FROM tenants WHERE slug = :slug"),
+            {"slug": tenant_slug}
+        )
+        tenant = result.mappings().first()
+
+        if not tenant:
+            raise HTTPException(404, "Tenant no encontrado")
+
+        # Verificar que el usuario sea el dueño
+        if tenant["owner_user_id"] != user["id"]:
+            raise HTTPException(403, "No tienes permiso para modificar este tenant")
+
+        # Verificar si ya tiene una cuenta de Stripe
+        acct = tenant["stripe_acct"]
+        if not acct:
+            # Crear nueva cuenta de Stripe
+            account = stripe.Account.create(
+                type="express",
+                country="MX",
+                capabilities={
+                    "card_payments": {"requested": True},
+                    "transfers": {"requested": True},
+                },
+            )
+            acct = account.id
+
+            # Guardar en la base de datos
+            async with db_engine.begin() as conn_write:
+                await conn_write.execute(
+                    text("UPDATE tenants SET stripe_acct = :acct WHERE slug = :slug"),
+                    {"acct": acct, "slug": tenant_slug}
+                )
+
+        # Crear link de onboarding
+        link = stripe.AccountLink.create(
+            account=acct,
+            refresh_url=f"{SITE_URL}/dashboard?tab=integrations&stripe_refresh=true&tenant={tenant_slug}",
+            return_url=f"{SITE_URL}/dashboard?tab=integrations&stripe_connected=true&tenant={tenant_slug}",
+            type="account_onboarding",
+        )
+
+        # Redirigir al usuario al onboarding de Stripe
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=link.url)
+
+
+@app.get("/v1/admin/stripe/dashboard")
+async def stripe_dashboard_tenant(tenant_slug: str = Query(...), token: str = Query(None)):
+    """
+    Genera un link al dashboard de Stripe para un tenant/marca específico.
+    Acepta token como query parameter para permitir redirecciones desde el navegador.
+    """
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    # Validar token manualmente desde query parameter
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token parameter")
+
+    try:
+        payload = decode_access_token(token)
+        user = await fetch_user_by_id(int(payload.get("sub", 0)))
+        if not user or user.get("tenant_slug") != payload.get("tenant"):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
+
+    async with db_engine.connect() as conn:
+        # Obtener el tenant
+        result = await conn.execute(
+            text("SELECT stripe_acct, owner_user_id FROM tenants WHERE slug = :slug"),
+            {"slug": tenant_slug}
+        )
+        tenant = result.mappings().first()
+
+        if not tenant:
+            raise HTTPException(404, "Tenant no encontrado")
+
+        # Verificar que el usuario sea el dueño
+        if tenant["owner_user_id"] != user["id"]:
+            raise HTTPException(403, "No tienes permiso para acceder a este tenant")
+
+        if not tenant["stripe_acct"]:
+            raise HTTPException(404, "Stripe no conectado para este tenant")
+
+        # Crear login link para el dashboard
+        login_link = stripe.Account.create_login_link(tenant["stripe_acct"])
+
+        # Redirigir al dashboard de Stripe
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=login_link.url)
+
+#----------WhatsApp Activation Request --------------
+@app.post("/v1/admin/whatsapp/request-activation")
+async def whatsapp_request_activation(body: dict, current = Depends(require_user)):
+    """
+    Recibe una solicitud de activación de WhatsApp del cliente y envía un correo al equipo.
+    Body: { business_name, phone_number, contact_email, additional_info }
+    """
+    tenant_slug = current["tenant_slug"]
+    user_email = current.get("email", "unknown")
+
+    business_name = body.get("business_name", "").strip()
+    phone_number = body.get("phone_number", "").strip()
+    contact_email = body.get("contact_email", "").strip()
+    additional_info = body.get("additional_info", "").strip()
+
+    if not business_name or not phone_number or not contact_email:
+        raise HTTPException(400, "business_name, phone_number y contact_email son requeridos")
+
+    # Enviar correo al equipo de Acidia
+    import resend
+
+    resend_api_key = os.getenv("RESEND_API_KEY")
+    if not resend_api_key:
+        print("⚠️ RESEND_API_KEY no configurado, no se puede enviar correo de solicitud")
+        raise HTTPException(500, "Servicio de correo no configurado")
+
+    resend.api_key = resend_api_key
+
+    # Email para el equipo
+    email_body = f"""
+    <h2>Nueva Solicitud de Activación de WhatsApp</h2>
+
+    <h3>Información del Cliente:</h3>
+    <ul>
+        <li><strong>Tenant:</strong> {tenant_slug}</li>
+        <li><strong>Email de Usuario:</strong> {user_email}</li>
+        <li><strong>Nombre del Negocio:</strong> {business_name}</li>
+        <li><strong>Número de Teléfono:</strong> {phone_number}</li>
+        <li><strong>Email de Contacto:</strong> {contact_email}</li>
+    </ul>
+
+    {f'<h3>Información Adicional:</h3><p>{additional_info}</p>' if additional_info else ''}
+
+    <hr>
+    <p><small>Esta solicitud fue enviada desde el dashboard de Acidia.</small></p>
+    """
+
+    try:
+        resend.Emails.send({
+            "from": "Acidia Platform <noreply@acidia.app>",
+            "to": ["info@acidia.app"],
+            "subject": f"Nueva Solicitud WhatsApp - {business_name}",
+            "html": email_body
+        })
+        print(f"✅ Solicitud de WhatsApp enviada para tenant {tenant_slug}")
+    except Exception as e:
+        print(f"❌ Error enviando correo de solicitud WhatsApp: {e}")
+        raise HTTPException(500, "Error al enviar solicitud")
+
+    return {"success": True, "message": "Solicitud enviada correctamente"}
 
 #----------Integración Twilio WhatsApp --------------
 @app.post("/v1/admin/twilio/configure")
