@@ -11,7 +11,6 @@ interface IntegrationsProps {
 export default function Integrations({ token, onConnectionChange }: IntegrationsProps) {
   const [activeSection, setActiveSection] = useState<string | null>(null);
   const [whatsappStatus, setWhatsappStatus] = useState<any>(null);
-  const [catalogUrl, setCatalogUrl] = useState('');
   const [loading, setLoading] = useState(false);
 
   // WhatsApp activation form

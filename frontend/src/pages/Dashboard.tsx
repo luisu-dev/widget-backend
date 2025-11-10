@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import FacebookConnect from '../components/dashboard/FacebookConnect';
 import BrandConfig from '../components/dashboard/BrandConfig';
 import Integrations from '../components/Integrations';
 
