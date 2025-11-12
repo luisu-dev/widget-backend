@@ -25,9 +25,9 @@ export default function AdminWhatsApp() {
   });
 
   useEffect(() => {
-    const storedToken = localStorage.getItem('token');
+    const storedToken = localStorage.getItem('token') || localStorage.getItem('zia_token');
     if (!storedToken) {
-      navigate('/login');
+      navigate('/login', { state: { from: { pathname: '/admin/whatsapp' } } });
       return;
     }
     setToken(storedToken);

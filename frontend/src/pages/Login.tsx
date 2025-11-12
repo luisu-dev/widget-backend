@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
@@ -9,6 +9,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const navigate = useNavigate()
+  const location = useLocation()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -28,7 +29,11 @@ export default function Login() {
 
       const data = await res.json()
       localStorage.setItem('zia_token', data.access_token)
-      navigate('/dashboard')
+      localStorage.setItem('token', data.access_token)
+
+      // Redirigir a la ruta original o al dashboard
+      const from = (location.state as any)?.from?.pathname || '/dashboard'
+      navigate(from, { replace: true })
     } catch (err: any) {
       setError(err.message || 'Error al iniciar sesión')
     } finally {
