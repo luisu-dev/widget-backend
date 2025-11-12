@@ -2644,13 +2644,21 @@ async def get_user_tenants(current = Depends(require_user)):
             )
             fb_count = fb_result.scalar()
 
+            # Verificar si tiene Twilio WhatsApp configurado
+            settings = tenant_data.get("settings") or {}
+            has_twilio = bool(
+                settings.get("twilio_account_sid") and
+                settings.get("twilio_auth_token") and
+                settings.get("twilio_whatsapp_from")
+            )
+
             tenant_data["has_facebook"] = fb_count > 0
             tenant_data["integrations"] = {
                 "facebook": fb_count > 0,
                 "stripe": bool(tenant_data.get("stripe_acct")),
                 "catalog": bool(tenant_data.get("catalog_url")),
                 "web": len(tenant_data.get("web_domains", [])) > 0 if tenant_data.get("web_domains") else False,
-                "whatsapp": bool(tenant_data.get("whatsapp"))
+                "whatsapp": has_twilio or bool(tenant_data.get("whatsapp"))
             }
 
             tenants.append(tenant_data)
@@ -4380,7 +4388,8 @@ async def twilio_get_status(current = Depends(require_user)):
         "has_account_sid": has_account_sid,
         "has_auth_token": has_auth_token,
         "has_whatsapp_from": has_whatsapp_from,
-        "whatsapp_from": settings.get("twilio_whatsapp_from") if has_whatsapp_from else None
+        "whatsapp_from": settings.get("twilio_whatsapp_from") if has_whatsapp_from else None,
+        "webhook_url": f"{os.getenv('BACKEND_URL', 'https://acidia.app')}/v1/twilio/whatsapp/webhook?tenant={tenant_slug}"
     }
 
 #Endpoint público que usará tu web/widget:

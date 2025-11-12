@@ -23,6 +23,15 @@ export default function Integrations({ token, onConnectionChange }: Integrations
   });
   const [whatsappRequestSent, setWhatsappRequestSent] = useState(false);
 
+  // Twilio configuration form
+  const [showTwilioForm, setShowTwilioForm] = useState(false);
+  const [twilioForm, setTwilioForm] = useState({
+    account_sid: '',
+    auth_token: '',
+    whatsapp_from: ''
+  });
+  const [twilioConfigured, setTwilioConfigured] = useState(false);
+
   // Tenants/brands for multi-brand integrations
   const [tenants, setTenants] = useState<any[]>([]);
 
@@ -87,6 +96,45 @@ export default function Integrations({ token, onConnectionChange }: Integrations
     } catch (error: any) {
       console.error('Error sending WhatsApp request:', error);
       alert('Error al enviar solicitud. Intenta de nuevo.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTwilioConfig = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/v1/admin/twilio/configure`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(twilioForm)
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.detail || 'Error al configurar Twilio');
+      }
+
+      const data = await res.json();
+      setTwilioConfigured(true);
+      setShowTwilioForm(false);
+      await fetchWhatsAppStatus();
+
+      // Mostrar webhook URL
+      alert(`Configuración exitosa!\n\nWebhook URL para Twilio:\n${data.webhook_url}\n\nCopia esta URL y configúrala en tu cuenta de Twilio.`);
+
+      // Reset form
+      setTwilioForm({
+        account_sid: '',
+        auth_token: '',
+        whatsapp_from: ''
+      });
+    } catch (error: any) {
+      console.error('Error configuring Twilio:', error);
+      alert(error.message || 'Error al configurar Twilio. Verifica tus credenciales.');
     } finally {
       setLoading(false);
     }
@@ -174,10 +222,34 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                   <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
                   <span className="text-green-400 font-medium text-sm">WhatsApp conectado</span>
                 </div>
-                <div className="bg-white/5 border border-white/10 rounded-lg p-3">
-                  <div className="text-xs text-gray-400">Número de WhatsApp:</div>
-                  <div className="text-white font-mono text-sm">{whatsappStatus.whatsapp_from}</div>
+                <div className="bg-white/5 border border-white/10 rounded-lg p-3 space-y-2">
+                  <div>
+                    <div className="text-xs text-gray-400">Número de WhatsApp:</div>
+                    <div className="text-white font-mono text-sm">{whatsappStatus.whatsapp_from}</div>
+                  </div>
+                  <div className="pt-2 border-t border-white/10">
+                    <div className="text-xs text-gray-400 mb-1">Webhook URL para Twilio:</div>
+                    <div className="text-white font-mono text-xs break-all bg-black/30 p-2 rounded">
+                      {whatsappStatus.webhook_url}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Configura esta URL en tu cuenta de Twilio para recibir mensajes
+                    </p>
+                  </div>
                 </div>
+                <button
+                  onClick={() => {
+                    setShowTwilioForm(true);
+                    setTwilioForm({
+                      account_sid: '',
+                      auth_token: '',
+                      whatsapp_from: ''
+                    });
+                  }}
+                  className="w-full px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-gray-300 hover:bg-white/10 transition text-sm"
+                >
+                  Reconfigurar credenciales
+                </button>
               </div>
             ) : whatsappRequestSent ? (
               <div className="bg-green-500/20 border border-green-500/40 rounded-lg p-4">
@@ -185,41 +257,92 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                   ✓ Solicitud enviada exitosamente. Nos pondremos en contacto contigo pronto para configurar WhatsApp.
                 </p>
               </div>
-            ) : !showWhatsAppForm ? (
-              <div className="space-y-3">
-                <p className="text-gray-300 text-sm">
-                  Activa WhatsApp para tu negocio. Solo llena el formulario y nosotros nos encargamos de todo.
-                </p>
-                <ul className="space-y-2 text-xs text-gray-400">
-                  <li className="flex items-center gap-2">
-                    <svg className="w-3 h-3 text-[#04d9b5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    Configuración completa por nuestro equipo
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <svg className="w-3 h-3 text-[#04d9b5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    Número de WhatsApp Business dedicado
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <svg className="w-3 h-3 text-[#04d9b5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    Respuestas automáticas con IA
-                  </li>
-                </ul>
-                <button
-                  onClick={() => setShowWhatsAppForm(true)}
-                  className="w-full px-4 py-2 rounded-lg bg-[#04d9b5]/20 border border-[#04d9b5]/40 text-[#04d9b5] hover:bg-[#04d9b5]/30 transition text-sm"
-                >
-                  Solicitar Activación
-                </button>
-              </div>
-            ) : (
+            ) : showTwilioForm ? (
               <div className="space-y-4">
-                <h4 className="text-white text-sm font-medium">Solicitud de Activación de WhatsApp</h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="text-white text-sm font-medium">Configurar Twilio WhatsApp</h4>
+                  <button
+                    onClick={() => setShowTwilioForm(false)}
+                    className="text-gray-400 hover:text-white text-xs"
+                  >
+                    ← Volver
+                  </button>
+                </div>
+
+                <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3">
+                  <p className="text-blue-300 text-xs">
+                    Ingresa tus credenciales de Twilio. Encuéntralas en: <br />
+                    <a href="https://console.twilio.com" target="_blank" rel="noopener noreferrer" className="underline">
+                      console.twilio.com
+                    </a>
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Account SID *</label>
+                    <input
+                      type="text"
+                      value={twilioForm.account_sid}
+                      onChange={(e) => setTwilioForm({ ...twilioForm, account_sid: e.target.value })}
+                      placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                      className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#04d9b5] font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Auth Token *</label>
+                    <input
+                      type="password"
+                      value={twilioForm.auth_token}
+                      onChange={(e) => setTwilioForm({ ...twilioForm, auth_token: e.target.value })}
+                      placeholder="********************************"
+                      className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#04d9b5] font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">WhatsApp From Number *</label>
+                    <input
+                      type="text"
+                      value={twilioForm.whatsapp_from}
+                      onChange={(e) => setTwilioForm({ ...twilioForm, whatsapp_from: e.target.value })}
+                      placeholder="whatsapp:+14155238886 o +14155238886"
+                      className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#04d9b5] font-mono"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Para Sandbox: whatsapp:+14155238886 • Para número real: tu número de Twilio
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setShowTwilioForm(false)}
+                    className="flex-1 px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-gray-300 hover:bg-white/10 transition text-sm"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleTwilioConfig}
+                    disabled={loading || !twilioForm.account_sid || !twilioForm.auth_token || !twilioForm.whatsapp_from}
+                    className="flex-1 px-4 py-2 rounded-lg bg-[#04d9b5]/20 border border-[#04d9b5]/40 text-[#04d9b5] hover:bg-[#04d9b5]/30 transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {loading ? 'Guardando...' : 'Guardar Configuración'}
+                  </button>
+                </div>
+              </div>
+            ) : showWhatsAppForm ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-white text-sm font-medium">Solicitud de Activación de WhatsApp</h4>
+                  <button
+                    onClick={() => setShowWhatsAppForm(false)}
+                    className="text-gray-400 hover:text-white text-xs"
+                  >
+                    ← Volver
+                  </button>
+                </div>
 
                 <div className="space-y-3">
                   <div>
@@ -284,6 +407,44 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                   >
                     {loading ? 'Enviando...' : 'Enviar Solicitud'}
                   </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-gray-300 text-sm">
+                  Activa WhatsApp para tu negocio y empieza a recibir mensajes de tus clientes.
+                </p>
+                <ul className="space-y-2 text-xs text-gray-400">
+                  <li className="flex items-center gap-2">
+                    <svg className="w-3 h-3 text-[#04d9b5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Respuestas automáticas con IA
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <svg className="w-3 h-3 text-[#04d9b5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Integración con tu catálogo de productos
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <svg className="w-3 h-3 text-[#04d9b5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Atención 24/7 para tus clientes
+                  </li>
+                </ul>
+
+                <div className="space-y-2 pt-2">
+                  <button
+                    onClick={() => setShowWhatsAppForm(true)}
+                    className="w-full px-4 py-2 rounded-lg bg-[#04d9b5]/20 border border-[#04d9b5]/40 text-[#04d9b5] hover:bg-[#04d9b5]/30 transition text-sm"
+                  >
+                    Solicitar Activación
+                  </button>
+                  <p className="text-xs text-gray-400">
+                    Completa el formulario y nuestro equipo se encargará de configurar WhatsApp para ti. Te contactaremos en 24-48 horas.
+                  </p>
                 </div>
               </div>
             )}
