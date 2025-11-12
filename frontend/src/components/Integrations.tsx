@@ -30,7 +30,6 @@ export default function Integrations({ token, onConnectionChange }: Integrations
     auth_token: '',
     whatsapp_from: ''
   });
-  const [twilioConfigured, setTwilioConfigured] = useState(false);
 
   // Tenants/brands for multi-brand integrations
   const [tenants, setTenants] = useState<any[]>([]);
@@ -119,7 +118,6 @@ export default function Integrations({ token, onConnectionChange }: Integrations
       }
 
       const data = await res.json();
-      setTwilioConfigured(true);
       setShowTwilioForm(false);
       await fetchWhatsAppStatus();
 
