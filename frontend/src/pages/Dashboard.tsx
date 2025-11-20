@@ -112,9 +112,16 @@ function Dashboard() {
   // Fetch messages when switching to messages tab or changing selected page
   useEffect(() => {
     if (activeTab === 'messages' && token) {
+      // Si no hay páginas conectadas, limpiar mensajes
+      if (facebookPages.length === 0) {
+        setMessages([]);
+        setSelectedSession(null);
+        setConversationMessages([]);
+        return;
+      }
       fetchMessages();
     }
-  }, [activeTab, token, selectedPage]);
+  }, [activeTab, token, selectedPage, facebookPages.length]);
 
   // Fetch metrics when switching to metrics tab or changing selected page
   useEffect(() => {
