@@ -947,6 +947,12 @@ class MessageQuery(BaseModel):
     created_at: datetime
 
 
+class AdminSendMessageIn(BaseModel):
+    session_id: str
+    message: str
+    page_id: Optional[str] = None
+
+
 def _mask(value: Optional[str], show: int = 4) -> Optional[str]:
     if not value:
         return None
@@ -3606,6 +3612,90 @@ async def tenant_list_messages(
     async with db_engine.connect() as conn:
         rows = (await conn.execute(text(q), params)).mappings().all()
     return {"items": [dict(row) for row in rows]}
+
+
+@app.post("/v1/admin/messages/send")
+async def admin_send_message(
+    body: AdminSendMessageIn,
+    current = Depends(require_user)
+):
+    """Enviar un mensaje desde el dashboard de admin a una conversación existente."""
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    session_id = body.session_id.strip()
+    message = body.message.strip()
+
+    if not session_id or not message:
+        raise HTTPException(400, "session_id y message son requeridos")
+
+    # Parsear session_id para extraer información
+    # Formato: fb:{tenant_slug}:{participant_id} o ig:{tenant_slug}:{participant_id}
+    parts = session_id.split(":")
+    if len(parts) < 3:
+        raise HTTPException(400, f"session_id inválido: {session_id}")
+
+    platform = parts[0]  # fb o ig
+    tenant_slug = parts[1]
+    recipient_id = parts[2]
+
+    # Verificar que el usuario tiene acceso a este tenant
+    if tenant_slug != current["tenant_slug"]:
+        # Verificar si tiene acceso via página
+        if body.page_id:
+            async with db_engine.connect() as conn:
+                result = await conn.execute(
+                    text("SELECT tenant_slug FROM facebook_pages WHERE page_id = :page_id AND fb_user_id = :fb_user_id"),
+                    {"page_id": body.page_id, "fb_user_id": current.get("fb_user_id")}
+                )
+                page_data = result.mappings().first()
+                if not page_data or page_data["tenant_slug"] != tenant_slug:
+                    raise HTTPException(403, "No tienes acceso a este tenant")
+        else:
+            raise HTTPException(403, "No tienes acceso a este tenant")
+
+    # Obtener página activa para este tenant
+    active_page = await get_active_facebook_page(tenant_slug)
+    if not active_page:
+        raise HTTPException(400, f"No hay página de Facebook activa para el tenant '{tenant_slug}'")
+
+    page_token = active_page["page_token"]
+    page_id = active_page["page_id"]
+
+    if not page_token:
+        raise HTTPException(400, "Falta page_token para enviar mensajes")
+
+    # Enviar mensaje
+    try:
+        result = await meta_send_text(page_token, recipient_id, message, platform)
+
+        # Guardar el mensaje en la base de datos
+        async with db_engine.connect() as conn:
+            await conn.execute(
+                text("""
+                    INSERT INTO messages (tenant_slug, session_id, channel, direction, author, content, payload, page_id)
+                    VALUES (:tenant, :session_id, :channel, 'out', 'admin', :content, :payload, :page_id)
+                """),
+                {
+                    "tenant": tenant_slug,
+                    "session_id": session_id,
+                    "channel": f"{platform}_dm",
+                    "content": message,
+                    "payload": json.dumps({"admin_reply": True, "meta_response": result}),
+                    "page_id": page_id
+                }
+            )
+            await conn.commit()
+
+        return {
+            "ok": True,
+            "message": "Mensaje enviado correctamente",
+            "recipient_id": recipient_id,
+            "platform": platform,
+            "meta_response": result
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Error al enviar mensaje: {str(e)}")
 
 
 @app.get("/v1/admin/metrics/overview")

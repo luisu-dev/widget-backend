@@ -49,6 +49,8 @@ function Dashboard() {
   const [conversationMessages, setConversationMessages] = useState<any[]>([]);
   const [facebookPages, setFacebookPages] = useState<any[]>([]);
   const [selectedPage, setSelectedPage] = useState<any | null>(null);
+  const [replyMessage, setReplyMessage] = useState('');
+  const [sendingReply, setSendingReply] = useState(false);
 
   const fetchProfile = async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -183,9 +185,54 @@ function Dashboard() {
 
   const openConversation = (sessionId: string) => {
     setSelectedSession(sessionId);
+    setReplyMessage('');
     const conv = groupedConversations().find(c => c.sessionId === sessionId);
     if (conv) {
       setConversationMessages(conv.messages);
+    }
+  };
+
+  const sendReply = async () => {
+    if (!selectedSession || !replyMessage.trim()) return;
+
+    setSendingReply(true);
+    try {
+      const res = await fetch(`${API_BASE}/v1/admin/messages/send`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          session_id: selectedSession,
+          message: replyMessage.trim(),
+          page_id: selectedPage?.page_id
+        })
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.detail || 'Error al enviar mensaje');
+      }
+
+      // Agregar mensaje a la conversación local
+      const newMessage = {
+        id: Date.now(),
+        direction: 'out',
+        author: 'Admin',
+        content: replyMessage.trim(),
+        created_at: new Date().toISOString()
+      };
+      setConversationMessages([...conversationMessages, newMessage]);
+      setReplyMessage('');
+
+      // Refrescar mensajes para obtener el mensaje guardado
+      setTimeout(() => fetchMessages(), 1000);
+    } catch (err: any) {
+      console.error('Error sending reply:', err);
+      setError(err.message || 'Error al enviar mensaje');
+    } finally {
+      setSendingReply(false);
     }
   };
 
@@ -481,6 +528,35 @@ function Dashboard() {
                       </div>
                     </div>
                   ))}
+                </div>
+                {/* Reply Input */}
+                <div className="p-4 border-t border-white/10">
+                  <div className="flex space-x-2">
+                    <input
+                      type="text"
+                      value={replyMessage}
+                      onChange={(e) => setReplyMessage(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          sendReply();
+                        }
+                      }}
+                      placeholder="Escribe tu respuesta..."
+                      className="flex-1 px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#04d9b5]"
+                      disabled={sendingReply}
+                    />
+                    <button
+                      onClick={sendReply}
+                      disabled={sendingReply || !replyMessage.trim()}
+                      className="px-4 py-2 rounded-lg bg-[#04d9b5] text-black font-medium hover:bg-[#04d9b5]/80 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {sendingReply ? 'Enviando...' : 'Enviar'}
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Presiona Enter para enviar. Este mensaje se enviará directamente al usuario.
+                  </p>
                 </div>
               </div>
             )}
