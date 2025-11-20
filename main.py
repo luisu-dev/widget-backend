@@ -1232,13 +1232,24 @@ async def meta_send_text(page_token: str, recipient_id: str, text: str, platform
     async with httpx.AsyncClient(timeout=10.0) as cx:
         r = await cx.post(url, params=_graph_params(page_token), json=payload)
         if r.status_code >= 400:
+            error_text = (r.text or "").strip()
             log.error(
                 "[META][SEND][%s] response=%s payload=%s",
                 r.status_code,
-                (r.text or "").strip(),
+                error_text,
                 json.dumps(payload, ensure_ascii=False)
             )
-        r.raise_for_status()
+            # Parse Facebook error message
+            try:
+                error_data = r.json()
+                fb_error = error_data.get("error", {})
+                error_message = fb_error.get("message", error_text)
+                error_code = fb_error.get("code", r.status_code)
+                raise RuntimeError(f"Facebook error {error_code}: {error_message}")
+            except (json.JSONDecodeError, RuntimeError) as e:
+                if isinstance(e, RuntimeError):
+                    raise
+                raise RuntimeError(f"Facebook error {r.status_code}: {error_text}")
         return r.json()
 
 
