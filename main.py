@@ -1245,11 +1245,24 @@ async def meta_send_text(page_token: str, recipient_id: str, text: str, platform
                 fb_error = error_data.get("error", {})
                 error_message = fb_error.get("message", error_text)
                 error_code = fb_error.get("code", r.status_code)
-                raise RuntimeError(f"Facebook error {error_code}: {error_message}")
+
+                # Provide user-friendly error messages
+                if error_code == 100:
+                    if "usuario" in error_message.lower() or "user" in error_message.lower():
+                        raise RuntimeError("No se puede enviar el mensaje: el usuario ya no está disponible. Esto puede ocurrir si reconectaste la página de Facebook o si la conversación es muy antigua.")
+                    raise RuntimeError(f"Error de Facebook: {error_message}")
+                elif error_code == 10:
+                    raise RuntimeError("No tienes permiso para enviar mensajes. Verifica que tu app tenga el permiso 'pages_messaging' aprobado.")
+                elif error_code == 230:
+                    raise RuntimeError("No puedes enviar mensajes después de 24 horas. Facebook solo permite responder dentro de las 24 horas del último mensaje del usuario.")
+                elif error_code == 190:
+                    raise RuntimeError("El token de Facebook ha expirado. Por favor, reconecta tu página de Facebook en Integraciones.")
+                else:
+                    raise RuntimeError(f"Error de Facebook ({error_code}): {error_message}")
             except (json.JSONDecodeError, RuntimeError) as e:
                 if isinstance(e, RuntimeError):
                     raise
-                raise RuntimeError(f"Facebook error {r.status_code}: {error_text}")
+                raise RuntimeError(f"Error de Facebook ({r.status_code}): {error_text}")
         return r.json()
 
 
