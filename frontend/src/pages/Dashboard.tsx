@@ -78,6 +78,15 @@ function Dashboard() {
       const pages = data.pages || [];
       setFacebookPages(pages);
 
+      // Si no hay páginas conectadas, limpiar selección y mensajes
+      if (pages.length === 0) {
+        setSelectedPage(null);
+        setMessages([]);
+        setSelectedSession(null);
+        setConversationMessages([]);
+        return;
+      }
+
       // Seleccionar la página activa por defecto
       const activePage = pages.find((p: any) => p.is_active);
       if (activePage) {

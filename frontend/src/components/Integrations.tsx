@@ -12,6 +12,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
   const [activeSection, setActiveSection] = useState<string | null>(null);
   const [whatsappStatus, setWhatsappStatus] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [connectedPagesCount, setConnectedPagesCount] = useState(0);
 
   // WhatsApp activation form
   const [showWhatsAppForm, setShowWhatsAppForm] = useState(false);
@@ -37,7 +38,27 @@ export default function Integrations({ token, onConnectionChange }: Integrations
   useEffect(() => {
     fetchWhatsAppStatus();
     fetchTenants();
+    fetchConnectedPagesCount();
   }, []);
+
+  const fetchConnectedPagesCount = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/facebook/pages`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setConnectedPagesCount(data.pages?.length || 0);
+      }
+    } catch (error) {
+      console.error('Error fetching pages count:', error);
+    }
+  };
+
+  const handleConnectionChange = () => {
+    fetchConnectedPagesCount();
+    onConnectionChange();
+  };
 
   const fetchTenants = async () => {
     try {
@@ -164,7 +185,11 @@ export default function Integrations({ token, onConnectionChange }: Integrations
             <span className="text-xs text-gray-400">Facebook • Instagram</span>
           </div>
           <div className="flex items-center space-x-3">
-            <span className="text-xs text-green-400">3 conectadas</span>
+            {connectedPagesCount > 0 ? (
+              <span className="text-xs text-green-400">{connectedPagesCount} conectada{connectedPagesCount !== 1 ? 's' : ''}</span>
+            ) : (
+              <span className="text-xs text-gray-500">No conectadas</span>
+            )}
             <svg
               className={`w-4 h-4 text-[#04d9b5] transition-transform ${activeSection === 'social' ? 'rotate-180' : ''}`}
               fill="none"
@@ -178,7 +203,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
 
         {activeSection === 'social' && (
           <div className="px-6 py-4 border-t border-white/10 bg-black/20">
-            <FacebookConnect token={token} onConnectionChange={onConnectionChange} />
+            <FacebookConnect token={token} onConnectionChange={handleConnectionChange} />
           </div>
         )}
       </div>
