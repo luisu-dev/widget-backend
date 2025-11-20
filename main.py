@@ -3599,6 +3599,22 @@ async def tenant_list_messages(
     if not db_engine:
         raise HTTPException(503, "Database not configured")
 
+    # Obtener las páginas conectadas del usuario
+    fb_user_id = current.get("fb_user_id")
+    connected_page_ids = []
+
+    if fb_user_id:
+        async with db_engine.connect() as conn:
+            result = await conn.execute(
+                text("SELECT page_id FROM facebook_pages WHERE fb_user_id = :fb_user_id"),
+                {"fb_user_id": fb_user_id}
+            )
+            connected_page_ids = [row["page_id"] for row in result.mappings().all()]
+
+    # Si no hay páginas conectadas, devolver lista vacía
+    if not connected_page_ids:
+        return {"items": []}
+
     # Si se especifica page_id, obtener el tenant de esa página
     # Esto permite que un usuario administre múltiples páginas con tenants diferentes
     tenant_filter = current["tenant_slug"]
@@ -3616,15 +3632,23 @@ async def tenant_list_messages(
 
     clauses = ["tenant_slug = :tenant"]
     params: Dict[str, Any] = {"tenant": tenant_filter, "limit": limit}
+
+    # Filtrar solo por páginas conectadas
+    if page_id:
+        clauses.append("page_id = :page_id")
+        params["page_id"] = page_id
+    else:
+        # Si no se especifica página, filtrar por todas las páginas conectadas
+        clauses.append("page_id = ANY(:connected_pages)")
+        params["connected_pages"] = connected_page_ids
+
     if channel:
         clauses.append("channel = :channel")
         params["channel"] = channel
     if before_id:
         clauses.append("id < :before")
         params["before"] = before_id
-    if page_id:
-        clauses.append("page_id = :page_id")
-        params["page_id"] = page_id
+
     where = " AND ".join(clauses)
     q = f"""
         SELECT id, tenant_slug, session_id, channel, direction, author, content, payload, created_at
