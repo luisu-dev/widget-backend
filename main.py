@@ -953,6 +953,10 @@ class AdminSendMessageIn(BaseModel):
     page_id: Optional[str] = None
 
 
+class TenantSettingsUpdate(BaseModel):
+    settings: Dict[str, Any]
+
+
 def _mask(value: Optional[str], show: int = 4) -> Optional[str]:
     if not value:
         return None
@@ -3660,6 +3664,36 @@ async def tenant_list_messages(
     async with db_engine.connect() as conn:
         rows = (await conn.execute(text(q), params)).mappings().all()
     return {"items": [dict(row) for row in rows]}
+
+
+@app.patch("/v1/admin/tenant/settings")
+async def update_tenant_settings(
+    body: TenantSettingsUpdate,
+    current = Depends(require_user)
+):
+    """Actualizar configuración del tenant (bot_enabled, etc.)."""
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    tenant_slug = current["tenant_slug"]
+
+    # Obtener settings actuales
+    tenant = await fetch_tenant(tenant_slug)
+    if not tenant:
+        raise HTTPException(404, "Tenant no encontrado")
+
+    # Merge settings existentes con los nuevos
+    current_settings = tenant.get("settings", {}) or {}
+    new_settings = {**current_settings, **body.settings}
+
+    # Actualizar en la base de datos
+    async with db_engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE tenants SET settings = :settings WHERE slug = :slug"),
+            {"settings": json.dumps(new_settings), "slug": tenant_slug}
+        )
+
+    return {"ok": True, "settings": new_settings}
 
 
 @app.post("/v1/admin/messages/send")
