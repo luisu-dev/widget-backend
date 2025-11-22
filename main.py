@@ -3633,13 +3633,13 @@ async def tenant_list_messages(
     clauses = ["tenant_slug = :tenant"]
     params: Dict[str, Any] = {"tenant": tenant_filter, "limit": limit}
 
-    # Filtrar solo por páginas conectadas
+    # Filtrar por páginas conectadas O mensajes sin page_id (históricos)
     if page_id:
         clauses.append("page_id = :page_id")
         params["page_id"] = page_id
     else:
-        # Si no se especifica página, filtrar por todas las páginas conectadas
-        clauses.append("page_id = ANY(:connected_pages)")
+        # Mostrar mensajes de páginas conectadas O mensajes antiguos sin page_id
+        clauses.append("(page_id = ANY(:connected_pages) OR page_id IS NULL)")
         params["connected_pages"] = connected_page_ids
 
     if channel:
