@@ -3675,10 +3675,10 @@ async def tenant_list_messages(
             SELECT id, tenant_slug, session_id, channel, direction, author, content, payload, created_at
             FROM messages
             WHERE {where}
-            ORDER BY created_at DESC, id DESC
+            ORDER BY id DESC
             LIMIT :limit
         ) AS recent
-        ORDER BY created_at ASC, id ASC
+        ORDER BY id ASC
     """
     async with db_engine.connect() as conn:
         rows = (await conn.execute(text(q), params)).mappings().all()
