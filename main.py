@@ -1224,7 +1224,7 @@ def fb_tokens_from_tenant(t: dict | None) -> tuple[str, str, str]:
         ig_user_id = ig_user_ids[0]
     return page_id, page_token, ig_user_id
 
-async def meta_send_text(page_token: str, recipient_id: str, text: str, platform: str = "facebook") -> dict:
+async def meta_send_text(page_token: str, recipient_id: str, text: str, platform: str = "facebook", messaging_type: str = "RESPONSE", tag: Optional[str] = None) -> dict:
     if not page_token:
         raise RuntimeError("Falta fb_page_token")
     safe_text = (text or "").strip()
@@ -1237,7 +1237,10 @@ async def meta_send_text(page_token: str, recipient_id: str, text: str, platform
         "recipient": {"id": recipient_id},
         "message": {"text": safe_text}
     }
-    payload["messaging_type"] = "RESPONSE"
+    if messaging_type:
+        payload["messaging_type"] = messaging_type
+    if messaging_type == "MESSAGE_TAG" and tag:
+        payload["tag"] = tag
     async with httpx.AsyncClient(timeout=10.0) as cx:
         r = await cx.post(url, params=_graph_params(page_token), json=payload)
         if r.status_code >= 400:
@@ -3766,9 +3769,39 @@ async def admin_send_message(
     if not page_token:
         raise HTTPException(400, "Falta page_token para enviar mensajes")
 
+    # Determinar messaging_type según ventana de 24h
+    messaging_type = "RESPONSE"
+    tag = None
+
+    # Si la última interacción inbound fue hace más de ~24h, usar MESSAGE_TAG (Messenger)
+    if db_engine:
+        async with db_engine.connect() as conn:
+            last_in = await conn.execute(
+                text("""
+                    SELECT created_at
+                    FROM messages
+                    WHERE session_id = :sid AND direction = 'in'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """),
+                {"sid": session_id}
+            )
+            row = last_in.first()
+            if row and row[0]:
+                last_dt = row[0]
+                # Asegura tz awareness
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) - last_dt > timedelta(hours=23.5):
+                    if platform == "fb":
+                        messaging_type = "MESSAGE_TAG"
+                        tag = "HUMAN_AGENT"
+                    else:
+                        raise HTTPException(400, "Instagram solo permite responder dentro de 24h. Pídele al usuario que envíe un nuevo mensaje.")
+
     # Enviar mensaje
     try:
-        result = await meta_send_text(page_token, recipient_id, message, platform)
+        result = await meta_send_text(page_token, recipient_id, message, platform, messaging_type=messaging_type, tag=tag)
 
         # Guardar el mensaje en la base de datos
         async with db_engine.connect() as conn:
