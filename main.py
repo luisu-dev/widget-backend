@@ -288,6 +288,11 @@ async def require_user(request: Request) -> dict:
     user = await fetch_user_by_id(int(payload.get("sub", 0)))
     if not user or user.get("tenant_slug") != payload.get("tenant"):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    tenant = await fetch_tenant(user["tenant_slug"])
+    if tenant:
+        tenant_fb_user_id = (tenant.get("settings") or {}).get("fb_user_id")
+        if tenant_fb_user_id:
+            user["fb_user_id"] = tenant_fb_user_id
     request.state.user = user
     return user
 
@@ -3603,25 +3608,32 @@ async def tenant_list_messages(
     if not db_engine:
         raise HTTPException(503, "Database not configured")
 
+    tenant_slug = current["tenant_slug"]
+
     # Obtener las páginas conectadas del usuario
     fb_user_id = current.get("fb_user_id")
-    connected_page_ids = []
+    tenant = await fetch_tenant(tenant_slug)
+    tenant_settings = (tenant.get("settings") or {}) if tenant else {}
+    if not fb_user_id:
+        fb_user_id = tenant_settings.get("fb_user_id")
+    connected_page_ids: list[str] = []
 
-    if fb_user_id:
-        async with db_engine.connect() as conn:
+    async with db_engine.connect() as conn:
+        if fb_user_id:
             result = await conn.execute(
                 text("SELECT page_id FROM facebook_pages WHERE fb_user_id = :fb_user_id"),
                 {"fb_user_id": fb_user_id}
             )
-            connected_page_ids = [row["page_id"] for row in result.mappings().all()]
-
-    # Si no hay páginas conectadas, devolver lista vacía
-    if not connected_page_ids:
-        return {"items": []}
+        else:
+            result = await conn.execute(
+                text("SELECT page_id FROM facebook_pages WHERE tenant_slug = :tenant"),
+                {"tenant": tenant_slug}
+            )
+        connected_page_ids = [row["page_id"] for row in result.mappings().all() if row["page_id"]]
 
     # Si se especifica page_id, obtener el tenant de esa página
     # Esto permite que un usuario administre múltiples páginas con tenants diferentes
-    tenant_filter = current["tenant_slug"]
+    tenant_filter = tenant_slug
 
     if page_id:
         async with db_engine.connect() as conn:
@@ -3633,6 +3645,9 @@ async def tenant_list_messages(
             page_data = result.mappings().first()
             if page_data:
                 tenant_filter = page_data["tenant_slug"]
+        # Si conocemos las páginas conectadas, validar acceso
+        if connected_page_ids and page_id not in connected_page_ids:
+            raise HTTPException(403, "No tienes acceso a esta página")
 
     clauses = ["tenant_slug = :tenant"]
     params: Dict[str, Any] = {"tenant": tenant_filter, "limit": limit}
@@ -3641,7 +3656,7 @@ async def tenant_list_messages(
     if page_id:
         clauses.append("page_id = :page_id")
         params["page_id"] = page_id
-    else:
+    elif connected_page_ids:
         # Mostrar mensajes de páginas conectadas O mensajes antiguos sin page_id
         clauses.append("(page_id = ANY(:connected_pages) OR page_id IS NULL)")
         params["connected_pages"] = connected_page_ids
