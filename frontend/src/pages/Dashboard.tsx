@@ -127,6 +127,15 @@ function Dashboard() {
     }
   }, [activeTab, token, selectedPage, facebookPages.length]);
 
+  // Polling de mensajes mientras está abierta la vista de conversaciones
+  useEffect(() => {
+    if (activeTab !== 'messages' || !token) return;
+    const id = setInterval(() => {
+      fetchMessages();
+    }, 5000);
+    return () => clearInterval(id);
+  }, [activeTab, token, selectedPage, facebookPages.length]);
+
   // Fetch metrics when switching to metrics tab or changing selected page
   useEffect(() => {
     if (activeTab === 'metrics' && token) {
@@ -194,6 +203,15 @@ function Dashboard() {
     }
     fetchConversationBotState(sessionId);
   };
+
+  // Mantener sincronizada la conversación seleccionada cuando llegan nuevos mensajes
+  useEffect(() => {
+    if (!selectedSession) return;
+    const conv = groupedConversations().find(c => c.sessionId === selectedSession);
+    if (conv) {
+      setConversationMessages(conv.messages);
+    }
+  }, [messages, selectedSession]);
 
   const sendReply = async () => {
     if (!selectedSession || !replyMessage.trim()) return;
