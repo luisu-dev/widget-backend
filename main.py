@@ -3901,6 +3901,18 @@ async def admin_toggle_conversation_bot(body: ConversationBotToggle, current = D
     return {"ok": True, "session_id": sid, "bot_enabled": body.enabled}
 
 
+@app.get("/v1/admin/conversations/bot-state")
+async def admin_get_conversation_bot_state(session_id: str = Query(...), current = Depends(require_user)):
+    """Devuelve el estado del bot (pausado/activo) para una conversación."""
+    sid = session_id.strip()
+    if not sid:
+        raise HTTPException(400, "session_id requerido")
+    sid_tenant = session_tenant_from_sid(sid)
+    if not sid_tenant or sid_tenant != current["tenant_slug"]:
+        raise HTTPException(403, "No tienes acceso a esta conversación")
+    return {"ok": True, "session_id": sid, "bot_enabled": not is_session_paused(sid)}
+
+
 @app.get("/v1/admin/metrics/overview")
 async def tenant_metrics_overview(
     days: int = Query(default=7, ge=1, le=90),

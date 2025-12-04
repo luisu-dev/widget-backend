@@ -51,6 +51,8 @@ function Dashboard() {
   const [selectedPage, setSelectedPage] = useState<any | null>(null);
   const [replyMessage, setReplyMessage] = useState('');
   const [sendingReply, setSendingReply] = useState(false);
+  const [conversationBotEnabled, setConversationBotEnabled] = useState(true);
+  const [togglingConversationBot, setTogglingConversationBot] = useState(false);
 
   const fetchProfile = async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -190,6 +192,7 @@ function Dashboard() {
     if (conv) {
       setConversationMessages(conv.messages);
     }
+    fetchConversationBotState(sessionId);
   };
 
   const sendReply = async () => {
@@ -270,6 +273,51 @@ function Dashboard() {
         leads: 0,
         actions: {}
       });
+    }
+  };
+
+  const fetchConversationBotState = async (sessionId: string) => {
+    if (!sessionId) return;
+    try {
+      const res = await fetch(`${API_BASE}/v1/admin/conversations/bot-state?session_id=${encodeURIComponent(sessionId)}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Error al consultar estado del bot');
+      const data = await res.json();
+      setConversationBotEnabled(Boolean(data.bot_enabled));
+    } catch (err) {
+      console.error('Error fetching conversation bot state:', err);
+      // fallback a activo
+      setConversationBotEnabled(true);
+    }
+  };
+
+  const toggleConversationBot = async () => {
+    if (!selectedSession) return;
+    setTogglingConversationBot(true);
+    const nextState = !conversationBotEnabled;
+    try {
+      const res = await fetch(`${API_BASE}/v1/admin/conversations/bot-toggle`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          session_id: selectedSession,
+          enabled: nextState
+        })
+      });
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.detail || 'Error al cambiar estado del bot en esta conversación');
+      }
+      setConversationBotEnabled(nextState);
+    } catch (err: any) {
+      console.error('Error toggling conversation bot:', err);
+      setError(err.message || 'Error al cambiar estado del bot');
+    } finally {
+      setTogglingConversationBot(false);
     }
   };
 
@@ -528,8 +576,33 @@ function Dashboard() {
             {selectedSession && (
               <div className="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl overflow-hidden">
                 <div className="p-4 border-b border-white/10">
-                  <div className="text-sm text-gray-400">Sesión:</div>
-                  <div className="text-white font-mono text-sm">{selectedSession}</div>
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    <div>
+                      <div className="text-sm text-gray-400">Sesión:</div>
+                      <div className="text-white font-mono text-sm">{selectedSession}</div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="text-sm text-gray-300">
+                        Bot en esta conversación:{' '}
+                        <span className={conversationBotEnabled ? 'text-[#04d9b5]' : 'text-orange-300'}>
+                          {conversationBotEnabled ? 'Activo' : 'Pausado'}
+                        </span>
+                      </div>
+                      <button
+                        onClick={toggleConversationBot}
+                        disabled={togglingConversationBot}
+                        className={`relative inline-flex h-10 w-16 items-center rounded-full transition ${
+                          conversationBotEnabled ? 'bg-[#04d9b5]' : 'bg-gray-600'
+                        } ${togglingConversationBot ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        <span
+                          className={`inline-block h-8 w-8 transform rounded-full bg-white transition ${
+                            conversationBotEnabled ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  </div>
                 </div>
                 <div className="p-4 space-y-4 max-h-[600px] overflow-y-auto">
                   {conversationMessages.map((msg) => (
