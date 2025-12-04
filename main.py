@@ -3758,13 +3758,37 @@ async def admin_send_message(
         else:
             raise HTTPException(403, "No tienes acceso a este tenant")
 
-    # Obtener página activa para este tenant
-    active_page = await get_active_facebook_page(tenant_slug)
-    if not active_page:
+    # Resolver page_id/token correcto para esta sesión (evita PSID inválido al usar otra página)
+    page_id = body.page_id
+    if not page_id and db_engine:
+        async with db_engine.connect() as conn:
+            last_page = await conn.execute(
+                text("""
+                    SELECT page_id
+                    FROM messages
+                    WHERE session_id = :sid AND page_id IS NOT NULL
+                    ORDER BY id DESC
+                    LIMIT 1
+                """),
+                {"sid": session_id}
+            )
+            row = last_page.first()
+            if row and row[0]:
+                page_id = row[0]
+
+    target_page = None
+    if page_id:
+        target_page = await get_facebook_page_by_id(page_id, tenant_slug)
+        if not target_page:
+            raise HTTPException(400, f"No se encontró la página {page_id} para este tenant")
+    else:
+        target_page = await get_active_facebook_page(tenant_slug)
+
+    if not target_page:
         raise HTTPException(400, f"No hay página de Facebook activa para el tenant '{tenant_slug}'")
 
-    page_token = active_page["page_token"]
-    page_id = active_page["page_id"]
+    page_token = target_page["page_token"]
+    page_id = target_page["page_id"]
 
     if not page_token:
         raise HTTPException(400, "Falta page_token para enviar mensajes")
