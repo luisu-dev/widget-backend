@@ -957,6 +957,10 @@ class AdminSendMessageIn(BaseModel):
     message: str
     page_id: Optional[str] = None
 
+class ConversationBotToggle(BaseModel):
+    session_id: str
+    enabled: bool = True
+
 
 class TenantSettingsUpdate(BaseModel):
     settings: Dict[str, Any]
@@ -1010,6 +1014,25 @@ def ensure_session(session_id: Optional[str]) -> str:
         SESSIONS[sid] = {"startedAt": now_ms(), "status": "active"}
         MESSAGES[sid] = []
     return sid
+
+def session_tenant_from_sid(sid: str) -> Optional[str]:
+    if not sid or ":" not in sid:
+        return None
+    parts = sid.split(":")
+    if len(parts) < 3:
+        return None
+    return parts[1]
+
+def is_session_paused(sid: str) -> bool:
+    return sid in PAUSED_SESSIONS
+
+def set_session_paused(sid: str, paused: bool) -> None:
+    if not sid:
+        return
+    if paused:
+        PAUSED_SESSIONS.add(sid)
+    else:
+        PAUSED_SESSIONS.discard(sid)
 
 def add_message(sid: str, role: str, content: str):
     MESSAGES[sid].append({"role": role, "content": content, "ts": now_ms()})
@@ -1285,6 +1308,8 @@ SEEN_META_MSGS: "OrderedDict[str, dict]" = OrderedDict()
 RECENT_MESSAGES: "OrderedDict[str, list]" = OrderedDict()
 MAX_RECENT_MESSAGES = 10
 LOOP_DETECTION_THRESHOLD = 5  # If 5+ messages in 30 seconds, likely a loop
+# Pausas de bot por conversación (en memoria)
+PAUSED_SESSIONS: set[str] = set()
 
 
 def _seen_key(obj: str, owner: str, field: str, verb: str, cid: str) -> str:
@@ -2030,6 +2055,11 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                 asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_in", {"from": sender_id, "text": text_in}))
                 channel_label = "instagram_dm" if obj == "instagram" else "facebook_dm"
                 asyncio.create_task(log_message(tenant_slug, sid, channel_label, "in", text_in, author=sender_id, page_id=page_id))
+
+                # Si la conversación está pausada, no responder automáticamente
+                if is_session_paused(sid):
+                    log.info(f"[{rid}] bot pausado para {sid}, no responde auto")
+                    continue
 
                 if not bot_active:
                     log.debug(f"[{rid}] bot off, no auto-reply slug={tenant_slug}")
@@ -3854,6 +3884,21 @@ async def admin_send_message(
         }
     except Exception as e:
         raise HTTPException(500, f"Error al enviar mensaje: {str(e)}")
+
+
+@app.post("/v1/admin/conversations/bot-toggle")
+async def admin_toggle_conversation_bot(body: ConversationBotToggle, current = Depends(require_user)):
+    """Pausar o reanudar el bot para una conversación específica."""
+    sid = body.session_id.strip()
+    if not sid:
+        raise HTTPException(400, "session_id requerido")
+
+    sid_tenant = session_tenant_from_sid(sid)
+    if not sid_tenant or sid_tenant != current["tenant_slug"]:
+        raise HTTPException(403, "No tienes acceso a esta conversación")
+
+    set_session_paused(sid, paused=not body.enabled)
+    return {"ok": True, "session_id": sid, "bot_enabled": body.enabled}
 
 
 @app.get("/v1/admin/metrics/overview")
