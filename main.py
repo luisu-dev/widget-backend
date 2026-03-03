@@ -1,6 +1,6 @@
 import os, uuid, time, asyncio, json, logging, re, secrets, hashlib, base64
 from collections import OrderedDict
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, HTTPException, Request, Header, Depends, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field, EmailStr
 from openai import OpenAI, OpenAIError
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from sqlalchemy import text
-from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse, quote_plus
+from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse, quote_plus, quote
+from zoneinfo import ZoneInfo
 import csv, io
 from twilio.rest import Client as TwilioClient
 from twilio.twiml.messaging_response import MessagingResponse
@@ -158,6 +159,8 @@ STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 SITE_URL = os.getenv("SITE_URL", "https://web-zia.vercel.app")
 GRAPH = "https://graph.facebook.com/v20.0"
+GOOGLE_CALENDAR_DEFAULT_ID = os.getenv("GOOGLE_CALENDAR_DEFAULT_ID", "").strip()
+GOOGLE_CALENDAR_DEFAULT_TZ = os.getenv("GOOGLE_CALENDAR_DEFAULT_TZ", "America/Mexico_City").strip() or "America/Mexico_City"
 
 stripe.api_key = STRIPE_SECRET_KEY
 
@@ -170,6 +173,21 @@ CHAT_MAX_HISTORY_PAIRS = 8  # Máximo de pares de mensajes en historial de chat
 OPENAI_RETRY_DELAY = 0.7  # Segundos de espera entre reintentos de OpenAI
 CATALOG_FETCH_TIMEOUT = 6  # Timeout en segundos para fetch de catálogo
 DB_CONNECT_TIMEOUT = 5  # Timeout en segundos para conexión a DB
+GOOGLE_TOKEN_REFRESH_BUFFER_SECONDS = 120
+
+BOOKING_FIELD_DEFS = {
+    "name": {"label": "Nombre completo", "question": "¿Cuál es tu nombre completo?"},
+    "email": {"label": "Correo electrónico", "question": "¿Cuál es tu correo electrónico?"},
+    "whatsapp": {"label": "WhatsApp", "question": "¿Cuál es tu número de WhatsApp con lada?"},
+    "phone": {"label": "Teléfono", "question": "¿Cuál es tu teléfono de contacto con lada?"},
+    "company": {"label": "Empresa", "question": "¿Cuál es el nombre de tu empresa?"},
+    "service": {"label": "Servicio de interés", "question": "¿Qué servicio te interesa agendar?"},
+    "notes": {"label": "Notas", "question": "¿Algún detalle adicional para la cita?"},
+    "date": {"label": "Fecha", "question": "¿Qué fecha prefieres? (YYYY-MM-DD o DD/MM/YYYY)"},
+    "time": {"label": "Hora", "question": "¿Qué hora prefieres? (HH:MM, formato 24h)"},
+}
+BOOKING_DEFAULT_FIELDS = ["name", "email", "service", "date", "time"]
+GOOGLE_ACCESS_TOKEN_CACHE: Dict[str, Any] = {"token": "", "exp": 0}
 
 ZIA_SYSTEM_PROMPT = (
     "Eres el asistente de {brand}. "
@@ -376,6 +394,242 @@ def wants_quote(text: str) -> bool:
     keys = ["cotiza", "cotización", "cotizar", "presupuesto", "precio", "quote"]
     return any(k in t for k in keys)
 
+def wants_booking(text: str) -> bool:
+    t = (text or "").lower()
+    keys = ["agendar", "agenda", "cita", "reunión", "reunion", "demo", "llamada", "calendar"]
+    return any(k in t for k in keys)
+
+def _parse_date_input(raw: str) -> Optional[str]:
+    s = (raw or "").strip()
+    if not s:
+        return None
+    try:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+            datetime.strptime(s, "%Y-%m-%d")
+            return s
+        if re.fullmatch(r"\d{1,2}/\d{1,2}/\d{4}", s):
+            dt = datetime.strptime(s, "%d/%m/%Y")
+            return dt.strftime("%Y-%m-%d")
+    except Exception:
+        return None
+    return None
+
+def _parse_time_input(raw: str) -> Optional[str]:
+    s = (raw or "").strip()
+    if not re.fullmatch(r"\d{1,2}:\d{2}", s):
+        return None
+    try:
+        dt = datetime.strptime(s, "%H:%M")
+        return dt.strftime("%H:%M")
+    except Exception:
+        return None
+
+def normalize_booking_fields(raw_fields: Any) -> List[str]:
+    fields = raw_fields if isinstance(raw_fields, list) else BOOKING_DEFAULT_FIELDS
+    normalized: List[str] = []
+    for f in fields:
+        key = str(f or "").strip().lower()
+        if key in BOOKING_FIELD_DEFS and key not in normalized:
+            normalized.append(key)
+    if "date" not in normalized:
+        normalized.append("date")
+    if "time" not in normalized:
+        normalized.append("time")
+    if not normalized:
+        return BOOKING_DEFAULT_FIELDS.copy()
+    return normalized
+
+def calendar_cfg_from_tenant(t: Optional[dict]) -> dict:
+    settings = (t or {}).get("settings", {}) or {}
+    fields = normalize_booking_fields(settings.get("booking_collect_fields"))
+    duration = settings.get("booking_duration_minutes", 30)
+    try:
+        duration = int(duration)
+    except Exception:
+        duration = 30
+    duration = max(15, min(180, duration))
+    return {
+        "enabled": bool(settings.get("google_calendar_enabled")),
+        "calendar_id": (settings.get("google_calendar_id") or GOOGLE_CALENDAR_DEFAULT_ID or "").strip(),
+        "timezone": (settings.get("booking_timezone") or GOOGLE_CALENDAR_DEFAULT_TZ or "America/Mexico_City").strip(),
+        "duration_minutes": duration,
+        "collect_fields": fields,
+    }
+
+def google_calendar_ready_for_tenant(t: Optional[dict]) -> bool:
+    cfg = calendar_cfg_from_tenant(t)
+    return bool(cfg["enabled"] and cfg["calendar_id"] and _load_google_service_account_info())
+
+def _load_google_service_account_info() -> Optional[dict]:
+    raw_json = (os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "") or "").strip()
+    file_path = (os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "") or "").strip()
+    info: Optional[dict] = None
+    if raw_json:
+        candidate = raw_json
+        if not raw_json.startswith("{"):
+            try:
+                candidate = base64.b64decode(raw_json).decode("utf-8")
+            except Exception:
+                candidate = raw_json
+        try:
+            info = json.loads(candidate)
+        except Exception:
+            log.warning("GOOGLE_SERVICE_ACCOUNT_JSON no es JSON válido")
+    elif file_path:
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                info = json.load(f)
+        except Exception as e:
+            log.warning(f"GOOGLE_SERVICE_ACCOUNT_FILE inválido: {e}")
+    if not info:
+        return None
+    if isinstance(info.get("private_key"), str):
+        info["private_key"] = info["private_key"].replace("\\n", "\n")
+    if not info.get("client_email") or not info.get("private_key"):
+        return None
+    if not info.get("token_uri"):
+        info["token_uri"] = "https://oauth2.googleapis.com/token"
+    return info
+
+async def get_google_access_token() -> str:
+    now = int(time.time())
+    token = GOOGLE_ACCESS_TOKEN_CACHE.get("token") or ""
+    exp = int(GOOGLE_ACCESS_TOKEN_CACHE.get("exp") or 0)
+    if token and exp - GOOGLE_TOKEN_REFRESH_BUFFER_SECONDS > now:
+        return token
+
+    sa = _load_google_service_account_info()
+    if not sa:
+        raise RuntimeError("Google Service Account no configurado")
+
+    iat = now
+    exp_new = now + 3600
+    assertion = jwt.encode(
+        {
+            "iss": sa["client_email"],
+            "scope": "https://www.googleapis.com/auth/calendar.events",
+            "aud": sa.get("token_uri", "https://oauth2.googleapis.com/token"),
+            "iat": iat,
+            "exp": exp_new,
+        },
+        sa["private_key"],
+        algorithm="RS256",
+    )
+
+    async with httpx.AsyncClient(timeout=20) as hc:
+        resp = await hc.post(
+            sa.get("token_uri", "https://oauth2.googleapis.com/token"),
+            data={
+                "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                "assertion": assertion,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+    if resp.status_code >= 400:
+        raise RuntimeError(f"No se pudo obtener token de Google ({resp.status_code})")
+    payload = resp.json()
+    access_token = payload.get("access_token") or ""
+    expires_in = int(payload.get("expires_in") or 3600)
+    if not access_token:
+        raise RuntimeError("Token de Google vacío")
+    GOOGLE_ACCESS_TOKEN_CACHE["token"] = access_token
+    GOOGLE_ACCESS_TOKEN_CACHE["exp"] = now + expires_in
+    return access_token
+
+async def create_google_calendar_event(t: Optional[dict], sid: str, booking_data: dict) -> dict:
+    cfg = calendar_cfg_from_tenant(t)
+    if not cfg["calendar_id"]:
+        raise RuntimeError("Calendar ID no configurado")
+
+    date_s = booking_data.get("date")
+    time_s = booking_data.get("time")
+    if not date_s or not time_s:
+        raise RuntimeError("Faltan fecha/hora para crear la cita")
+
+    try:
+        tz = ZoneInfo(cfg["timezone"])
+    except Exception:
+        tz = ZoneInfo("UTC")
+
+    dt_start = datetime.strptime(f"{date_s} {time_s}", "%Y-%m-%d %H:%M").replace(tzinfo=tz)
+    dt_end = dt_start + timedelta(minutes=cfg["duration_minutes"])
+
+    summary = f"Cita - {booking_data.get('name') or 'Nuevo prospecto'}"
+    if booking_data.get("service"):
+        summary = f"{summary} ({booking_data['service']})"
+
+    lines = [
+        f"Session ID: {sid}",
+        f"Tenant: {(t or {}).get('slug', 'public')}",
+        "",
+        "Datos recolectados:",
+    ]
+    for key in cfg["collect_fields"]:
+        val = booking_data.get(key)
+        if not val:
+            continue
+        label = BOOKING_FIELD_DEFS.get(key, {}).get("label", key)
+        lines.append(f"- {label}: {val}")
+    description = "\n".join(lines)
+
+    event_payload: Dict[str, Any] = {
+        "summary": summary,
+        "description": description,
+        "start": {"dateTime": dt_start.isoformat(), "timeZone": cfg["timezone"]},
+        "end": {"dateTime": dt_end.isoformat(), "timeZone": cfg["timezone"]},
+    }
+    if booking_data.get("email") and is_email(booking_data["email"]):
+        event_payload["attendees"] = [{"email": booking_data["email"]}]
+
+    token = await get_google_access_token()
+    calendar_id = quote(cfg["calendar_id"], safe="")
+    url = f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events"
+
+    async with httpx.AsyncClient(timeout=20) as hc:
+        resp = await hc.post(
+            url,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json=event_payload,
+        )
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Google Calendar respondió {resp.status_code}")
+    out = resp.json()
+    return {
+        "id": out.get("id"),
+        "html_link": out.get("htmlLink"),
+        "hangout_link": out.get("hangoutLink"),
+        "status": out.get("status"),
+        "start": out.get("start"),
+        "end": out.get("end"),
+    }
+
+def booking_question_for_field(field_key: str) -> str:
+    return BOOKING_FIELD_DEFS.get(field_key, {}).get("question") or "Compárteme este dato, por favor."
+
+def validate_booking_field_value(field_key: str, raw_value: str) -> tuple[bool, str, str]:
+    value = (raw_value or "").strip()
+    if not value:
+        return False, "", "Este campo es requerido."
+    if field_key == "email":
+        if not is_email(value):
+            return False, "", "Ese correo no parece válido. Intenta de nuevo."
+        return True, value.lower(), ""
+    if field_key in {"whatsapp", "phone"}:
+        if not is_phone(value):
+            return False, "", "Ese número no parece válido. Incluye lada, por favor."
+        return True, norm_phone(value), ""
+    if field_key == "date":
+        norm = _parse_date_input(value)
+        if not norm:
+            return False, "", "Fecha inválida. Usa YYYY-MM-DD o DD/MM/YYYY."
+        return True, norm, ""
+    if field_key == "time":
+        norm = _parse_time_input(value)
+        if not norm:
+            return False, "", "Hora inválida. Usa formato 24h HH:MM."
+        return True, norm, ""
+    return True, value, ""
+
 def valid_slug(slug: str) -> bool:
     return bool(re.fullmatch(r"[a-z0-9\-]{1,40}", (slug or "")))
 
@@ -433,7 +687,7 @@ def to_sqlalchemy_url(url: str, driver: str = "asyncpg") -> str:
     scheme = "postgresql+psycopg" if driver == "psycopg" else "postgresql+asyncpg"
     return urlunparse((scheme, p.netloc, p.path, p.params, new_query, p.fragment))
 
-async def update_tenant_settings(slug: str, patch: dict):
+async def merge_tenant_settings(slug: str, patch: dict):
     if not db_engine:
         raise HTTPException(503, "Database not configured")
     async with db_engine.begin() as conn:
@@ -494,7 +748,7 @@ async def ensure_prices_for_tenant(t: dict, mxn_starter_cents: int = 150000, mxn
         changed = True
 
     if changed:
-        await update_tenant_settings(t["slug"], {"stripe_prices": prices})
+        await merge_tenant_settings(t["slug"], {"stripe_prices": prices})
 
     return prices
 
@@ -966,6 +1220,14 @@ class TenantSettingsUpdate(BaseModel):
     settings: Dict[str, Any]
 
 
+class CalendarSettingsUpdate(BaseModel):
+    enabled: bool = False
+    calendar_id: Optional[str] = None
+    timezone: str = GOOGLE_CALENDAR_DEFAULT_TZ
+    duration_minutes: int = Field(default=30, ge=15, le=180)
+    collect_fields: List[str] = Field(default_factory=lambda: BOOKING_DEFAULT_FIELDS.copy())
+
+
 def _mask(value: Optional[str], show: int = 4) -> Optional[str]:
     if not value:
         return None
@@ -1040,8 +1302,28 @@ def add_message(sid: str, role: str, content: str):
 def get_flow(sid: str) -> dict:
     return SESSIONS.setdefault(sid, {}).setdefault(
         "contact_flow",
-        {"stage": None, "name": None, "method": None, "contact": None}
+        {
+            "stage": None,
+            "name": None,
+            "method": None,
+            "contact": None,
+            "booking_fields": [],
+            "booking_answers": {},
+            "booking_index": 0,
+        }
     )
+
+def reset_contact_flow(sid: str) -> None:
+    SESSIONS.setdefault(sid, {})["contact_flow"] = {
+        "stage": None,
+        "name": None,
+        "method": None,
+        "contact": None,
+        "booking_fields": [],
+        "booking_answers": {},
+        "booking_index": 0,
+    }
+    SESSIONS[sid].pop("last_lead_id", None)
 
 async def save_lead(tenant_slug: str, sid: str, name: str, method: str, contact: str, meta: dict | None = None) -> dict:
     if not db_engine:
@@ -2374,11 +2656,13 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 "compr", "compra", "adquir", "pagar", "pago", "orden", "checkout", "suscrib"
             ])
             flow = get_flow(sid)
+            booking_cfg = calendar_cfg_from_tenant(t)
             if flow.get("stage"):
                 reset_keys = ["precio", "cost", "cotiza", "catalog", "catalogo", "producto", "plan", "gracias", "otra", "cancel"]
                 if purchase_intent or any(k in text_lc for k in reset_keys) or text_lc.endswith("?"):
                     log.debug(f"[chat][flow] reset sid={sid}")
-                    flow.update({"stage": None, "name": None, "method": None, "contact": None})
+                    reset_contact_flow(sid)
+                    flow = get_flow(sid)
 
             if t and not tenant_bot_enabled(t):
                 off_msg = ((t.get("settings") or {}).get("bot_off_message") or "El asistente está en pausa. Escríbenos por WhatsApp o envíanos un correo y te respondemos enseguida.")
@@ -2471,6 +2755,117 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                         return
 
             # ——— SOLO si no hubo compra, corren los flows de contacto/cotización ———
+            if flow["stage"] is None and wants_booking(input.message):
+                if not google_calendar_ready_for_tenant(t):
+                    msg = "Podemos agendarte, pero Google Calendar aún no está configurado. Si quieres, te tomo tus datos por WhatsApp o correo."
+                    yield sse_event(json.dumps({"content": msg}), event="delta")
+                    yield sse_event(json.dumps({"chips": ["WhatsApp", "Email"]}), event="ui")
+                    yield sse_event(json.dumps({}), event="done")
+                    return
+                flow["stage"] = "booking_collect"
+                flow["booking_fields"] = booking_cfg["collect_fields"]
+                flow["booking_answers"] = {}
+                flow["booking_index"] = 0
+                first_field = flow["booking_fields"][0]
+                yield sse_event(json.dumps({"content": "Perfecto, vamos a agendar tu cita."}), event="delta")
+                yield sse_event(json.dumps({"content": booking_question_for_field(first_field)}), event="delta")
+                yield sse_event(json.dumps({}), event="done")
+                return
+
+            if flow["stage"] == "booking_collect":
+                fields = flow.get("booking_fields") or booking_cfg["collect_fields"]
+                idx = int(flow.get("booking_index") or 0)
+                if idx < 0 or idx >= len(fields):
+                    idx = 0
+                current_field = fields[idx]
+                ok, normalized, error_msg = validate_booking_field_value(current_field, input.message or "")
+                if not ok:
+                    yield sse_event(json.dumps({"content": error_msg}), event="delta")
+                    yield sse_event(json.dumps({"content": booking_question_for_field(current_field)}), event="delta")
+                    yield sse_event(json.dumps({}), event="done")
+                    return
+
+                answers = flow.setdefault("booking_answers", {})
+                answers[current_field] = normalized
+
+                if current_field == "name" and not flow.get("name"):
+                    flow["name"] = normalized.title()
+                if current_field in {"email", "whatsapp", "phone"} and not flow.get("method"):
+                    flow["method"] = "email" if current_field == "email" else "whatsapp"
+                    flow["contact"] = normalized
+
+                next_idx = idx + 1
+                flow["booking_index"] = next_idx
+                if next_idx < len(fields):
+                    next_field = fields[next_idx]
+                    yield sse_event(json.dumps({"content": booking_question_for_field(next_field)}), event="delta")
+                    yield sse_event(json.dumps({}), event="done")
+                    return
+
+                try:
+                    event_data = await create_google_calendar_event(t, sid, answers)
+                    lead_contact = answers.get("email") or answers.get("whatsapp") or answers.get("phone") or "n/a"
+                    lead_method = "email" if answers.get("email") else "whatsapp" if answers.get("whatsapp") else "llamada"
+                    lead_name = answers.get("name") or "Prospecto"
+                    lead = await save_lead(
+                        tenant or "public",
+                        sid,
+                        lead_name,
+                        lead_method,
+                        str(lead_contact),
+                        meta={
+                            "source": "widget",
+                            "booking": answers,
+                            "calendar_event_id": event_data.get("id"),
+                        },
+                    )
+                    if db_engine:
+                        try:
+                            async with db_engine.begin() as conn:
+                                await conn.execute(
+                                    text("""INSERT INTO events (tenant_slug, session_id, type, payload)
+                                            VALUES (:tenant, :sid, 'booking_created', CAST(:payload AS JSONB))"""),
+                                    {
+                                        "tenant": tenant or "public",
+                                        "sid": sid,
+                                        "payload": json.dumps({
+                                            "calendar_event_id": event_data.get("id"),
+                                            "calendar_link": event_data.get("html_link"),
+                                            "lead_id": lead.get("id"),
+                                        }),
+                                    },
+                                )
+                        except Exception as e:
+                            log.warning(f"event booking_created not stored: {e}")
+
+                    confirm_date = answers.get("date")
+                    confirm_time = answers.get("time")
+                    confirmation = f"Listo, tu cita quedó agendada para {confirm_date} a las {confirm_time}."
+                    if event_data.get("html_link"):
+                        confirmation += f" Puedes verla aquí: {event_data['html_link']}"
+                    yield sse_event(json.dumps({"content": confirmation}), event="delta")
+                    yield sse_event(json.dumps({
+                        "booking": {
+                            "status": "created",
+                            "event_id": event_data.get("id"),
+                            "event_link": event_data.get("html_link"),
+                            "meet_link": event_data.get("hangout_link"),
+                        }
+                    }), event="ui")
+                    yield sse_event(json.dumps({}), event="done")
+                    reset_contact_flow(sid)
+                    return
+                except Exception as e:
+                    log.warning(f"no se pudo crear cita en Google Calendar: {e}")
+                    fallback = (
+                        "No pude crear la cita automáticamente en Google Calendar en este momento. "
+                        "Ya tengo tus datos; te contactamos para confirmar el horario."
+                    )
+                    yield sse_event(json.dumps({"content": fallback}), event="delta")
+                    yield sse_event(json.dumps({}), event="done")
+                    reset_contact_flow(sid)
+                    return
+
             if flow["stage"] is None and wants_quote(input.message):
                 flow.update({"stage": "ask_name"})
                 yield sse_event(json.dumps({"content": "Genial, te ayudo con la cotización. ¿Cuál es tu nombre completo?"}), event="delta")
@@ -2541,7 +2936,7 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                         yield sse_event(json.dumps({"whatsapp": wa_url, "whatsappLabel": "Abrir WhatsApp"}), event="ui")
                     yield sse_event(json.dumps({"lead":{"id": lead.get("id"), "status":"saved"}}), event="ui")
                     yield sse_event(json.dumps({}), event="done")
-                    SESSIONS[sid]["contact_flow"] = {"stage": None, "name": None, "method": None, "contact": None}
+                    reset_contact_flow(sid)
                     return
 
                 elif flow["method"] == "email":
@@ -2549,7 +2944,7 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                     yield sse_event(json.dumps({"chips": ["Ver checklist"]}), event="ui")
                     yield sse_event(json.dumps({"lead":{"id": lead.get("id"), "status":"saved"}}), event="ui")
                     yield sse_event(json.dumps({}), event="done")
-                    SESSIONS[sid]["contact_flow"] = {"stage": None, "name": None, "method": None, "contact": None}
+                    reset_contact_flow(sid)
                     return
 
                 else:
@@ -2587,8 +2982,7 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                     log.warning(f"no se pudo guardar preferred_slot: {e}")
                 yield sse_event(json.dumps({"content": f"Perfecto, anoté: {slot_text}. Cuando gustes podemos confirmar por aquí o por WhatsApp."}), event="delta")
                 yield sse_event(json.dumps({}), event="done")
-                SESSIONS[sid]["contact_flow"] = {"stage": None, "name": None, "method": None, "contact": None}
-                SESSIONS[sid].pop("last_lead_id", None)
+                reset_contact_flow(sid)
                 return
 
             # ——— Respuesta del LLM si no hubo ninguna de las rutas anteriores ———
@@ -3619,7 +4013,7 @@ async def tenant_update_settings(body: TenantSettingsUpdate, current = Depends(r
             )
 
     if body.settings:
-        await update_tenant_settings(tenant_slug, body.settings)
+        await merge_tenant_settings(tenant_slug, body.settings)
 
     tenant_updated = await fetch_tenant(tenant_slug)
     return TenantSettingsOut(
@@ -3746,6 +4140,53 @@ async def update_tenant_settings(
         )
 
     return {"ok": True, "settings": new_settings}
+
+
+@app.get("/v1/admin/google-calendar/settings")
+async def get_google_calendar_settings(current = Depends(require_user)):
+    tenant_slug = current["tenant_slug"]
+    tenant = await fetch_tenant(tenant_slug)
+    if not tenant:
+        raise HTTPException(404, "Tenant no encontrado")
+    cfg = calendar_cfg_from_tenant(tenant)
+    return {
+        "enabled": cfg["enabled"],
+        "calendar_id": cfg["calendar_id"],
+        "timezone": cfg["timezone"],
+        "duration_minutes": cfg["duration_minutes"],
+        "collect_fields": cfg["collect_fields"],
+        "service_account_configured": bool(_load_google_service_account_info()),
+        "ready": google_calendar_ready_for_tenant(tenant),
+    }
+
+
+@app.put("/v1/admin/google-calendar/settings")
+async def put_google_calendar_settings(body: CalendarSettingsUpdate, current = Depends(require_user)):
+    tenant_slug = current["tenant_slug"]
+    tenant = await fetch_tenant(tenant_slug)
+    if not tenant:
+        raise HTTPException(404, "Tenant no encontrado")
+
+    settings_patch = {
+        "google_calendar_enabled": bool(body.enabled),
+        "google_calendar_id": (body.calendar_id or "").strip(),
+        "booking_timezone": (body.timezone or GOOGLE_CALENDAR_DEFAULT_TZ).strip(),
+        "booking_duration_minutes": int(body.duration_minutes),
+        "booking_collect_fields": normalize_booking_fields(body.collect_fields),
+    }
+    await merge_tenant_settings(tenant_slug, settings_patch)
+    updated = await fetch_tenant(tenant_slug)
+    cfg = calendar_cfg_from_tenant(updated)
+    return {
+        "ok": True,
+        "enabled": cfg["enabled"],
+        "calendar_id": cfg["calendar_id"],
+        "timezone": cfg["timezone"],
+        "duration_minutes": cfg["duration_minutes"],
+        "collect_fields": cfg["collect_fields"],
+        "service_account_configured": bool(_load_google_service_account_info()),
+        "ready": google_calendar_ready_for_tenant(updated),
+    }
 
 
 @app.post("/v1/admin/messages/send")
@@ -4370,7 +4811,7 @@ async def stripe_connect_onboard(tenant: str = Query(...)):
             },
         )
         acct = account.id
-        await update_tenant_settings(tenant, {"stripe_acct": acct})
+        await merge_tenant_settings(tenant, {"stripe_acct": acct})
 
     link = stripe.AccountLink.create(
         account=acct,
@@ -4588,7 +5029,7 @@ async def twilio_configure(body: dict, current = Depends(require_user)):
     if whatsapp_from:
         settings["twilio_whatsapp_from"] = whatsapp_from
 
-    await update_tenant_settings(tenant_slug, settings)
+    await merge_tenant_settings(tenant_slug, settings)
 
     return {
         "success": True,

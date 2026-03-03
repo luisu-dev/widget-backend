@@ -8,11 +8,44 @@ interface IntegrationsProps {
   onConnectionChange: () => void;
 }
 
+type CalendarFieldKey =
+  | 'name'
+  | 'email'
+  | 'whatsapp'
+  | 'phone'
+  | 'company'
+  | 'service'
+  | 'notes'
+  | 'date'
+  | 'time';
+
+const CALENDAR_FIELD_OPTIONS: Array<{ key: CalendarFieldKey; label: string }> = [
+  { key: 'name', label: 'Nombre completo' },
+  { key: 'email', label: 'Correo electrónico' },
+  { key: 'whatsapp', label: 'WhatsApp' },
+  { key: 'phone', label: 'Teléfono' },
+  { key: 'company', label: 'Empresa' },
+  { key: 'service', label: 'Servicio de interés' },
+  { key: 'notes', label: 'Notas adicionales' },
+  { key: 'date', label: 'Fecha de la cita' },
+  { key: 'time', label: 'Hora de la cita' }
+];
+
 export default function Integrations({ token, onConnectionChange }: IntegrationsProps) {
   const [activeSection, setActiveSection] = useState<string | null>(null);
   const [whatsappStatus, setWhatsappStatus] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [connectedPagesCount, setConnectedPagesCount] = useState(0);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [calendarConfig, setCalendarConfig] = useState({
+    enabled: false,
+    calendar_id: '',
+    timezone: 'America/Mexico_City',
+    duration_minutes: 30,
+    collect_fields: ['name', 'email', 'service', 'date', 'time'] as CalendarFieldKey[],
+    service_account_configured: false,
+    ready: false
+  });
 
   // WhatsApp activation form
   const [showWhatsAppForm, setShowWhatsAppForm] = useState(false);
@@ -39,6 +72,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
     fetchWhatsAppStatus();
     fetchTenants();
     fetchConnectedPagesCount();
+    fetchGoogleCalendarSettings();
   }, []);
 
   const fetchConnectedPagesCount = async () => {
@@ -85,6 +119,85 @@ export default function Integrations({ token, onConnectionChange }: Integrations
       }
     } catch (error) {
       console.error('Error fetching WhatsApp status:', error);
+    }
+  };
+
+  const fetchGoogleCalendarSettings = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/v1/admin/google-calendar/settings`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCalendarConfig({
+          enabled: Boolean(data.enabled),
+          calendar_id: data.calendar_id || '',
+          timezone: data.timezone || 'America/Mexico_City',
+          duration_minutes: Number(data.duration_minutes || 30),
+          collect_fields: (data.collect_fields || ['name', 'email', 'service', 'date', 'time']) as CalendarFieldKey[],
+          service_account_configured: Boolean(data.service_account_configured),
+          ready: Boolean(data.ready)
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching Google Calendar settings:', error);
+    }
+  };
+
+  const toggleCalendarField = (field: CalendarFieldKey) => {
+    setCalendarConfig((prev) => {
+      const hasField = prev.collect_fields.includes(field);
+      let next = hasField
+        ? prev.collect_fields.filter((f) => f !== field)
+        : [...prev.collect_fields, field];
+
+      if (!next.includes('date')) next = [...next, 'date'];
+      if (!next.includes('time')) next = [...next, 'time'];
+
+      return { ...prev, collect_fields: next as CalendarFieldKey[] };
+    });
+  };
+
+  const handleSaveGoogleCalendar = async () => {
+    setCalendarLoading(true);
+    try {
+      const payload = {
+        enabled: calendarConfig.enabled,
+        calendar_id: calendarConfig.calendar_id.trim(),
+        timezone: calendarConfig.timezone.trim() || 'America/Mexico_City',
+        duration_minutes: Number(calendarConfig.duration_minutes || 30),
+        collect_fields: calendarConfig.collect_fields
+      };
+
+      const res = await fetch(`${API_BASE}/v1/admin/google-calendar/settings`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'No se pudo guardar la configuración');
+      }
+      const data = await res.json();
+      setCalendarConfig((prev) => ({
+        ...prev,
+        enabled: Boolean(data.enabled),
+        calendar_id: data.calendar_id || '',
+        timezone: data.timezone || 'America/Mexico_City',
+        duration_minutes: Number(data.duration_minutes || 30),
+        collect_fields: (data.collect_fields || prev.collect_fields) as CalendarFieldKey[],
+        service_account_configured: Boolean(data.service_account_configured),
+        ready: Boolean(data.ready)
+      }));
+      alert('Configuración de Google Calendar guardada.');
+    } catch (error: any) {
+      console.error('Error saving Google Calendar settings:', error);
+      alert(error.message || 'Error guardando configuración de Google Calendar.');
+    } finally {
+      setCalendarLoading(false);
     }
   };
 
@@ -471,6 +584,122 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                 </div>
               </div>
             )}
+          </div>
+        )}
+      </div>
+
+      {/* Google Calendar */}
+      <div className="bg-black/40 backdrop-blur border border-white/10 rounded-xl overflow-hidden">
+        <button
+          onClick={() => toggleSection('calendar')}
+          className="w-full px-6 py-5 flex items-center justify-between hover:bg-white/5 transition group"
+        >
+          <div className="flex items-center space-x-4">
+            <h3 className="text-base font-medium text-white group-hover:text-[#04d9b5] transition">
+              Google Calendar
+            </h3>
+            <span className="text-xs text-gray-400">Citas automáticas</span>
+          </div>
+          <div className="flex items-center space-x-3">
+            {calendarConfig.ready ? (
+              <span className="text-xs text-green-400">Listo</span>
+            ) : (
+              <span className="text-xs text-gray-500">Pendiente</span>
+            )}
+            <svg
+              className={`w-4 h-4 text-[#04d9b5] transition-transform ${activeSection === 'calendar' ? 'rotate-180' : ''}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+          </div>
+        </button>
+
+        {activeSection === 'calendar' && (
+          <div className="px-6 py-4 border-t border-white/10 bg-black/20 space-y-4">
+            <div className="flex items-center justify-between rounded-lg bg-white/5 border border-white/10 p-3">
+              <div>
+                <p className="text-sm text-white font-medium">Agendado automático</p>
+                <p className="text-xs text-gray-400">Si está activo, el bot puede crear citas directamente.</p>
+              </div>
+              <button
+                onClick={() => setCalendarConfig((prev) => ({ ...prev, enabled: !prev.enabled }))}
+                className={`w-14 h-8 rounded-full transition ${calendarConfig.enabled ? 'bg-[#04d9b5]' : 'bg-gray-600'}`}
+              >
+                <div className={`w-6 h-6 bg-white rounded-full transition-transform ${calendarConfig.enabled ? 'translate-x-7' : 'translate-x-1'}`} />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Calendar ID</label>
+                <input
+                  type="text"
+                  value={calendarConfig.calendar_id}
+                  onChange={(e) => setCalendarConfig((prev) => ({ ...prev, calendar_id: e.target.value }))}
+                  placeholder="ej. negocio@group.calendar.google.com"
+                  className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#04d9b5]"
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Zona horaria</label>
+                  <input
+                    type="text"
+                    value={calendarConfig.timezone}
+                    onChange={(e) => setCalendarConfig((prev) => ({ ...prev, timezone: e.target.value }))}
+                    placeholder="America/Mexico_City"
+                    className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#04d9b5]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Duración (minutos)</label>
+                  <input
+                    type="number"
+                    min={15}
+                    max={180}
+                    value={calendarConfig.duration_minutes}
+                    onChange={(e) => setCalendarConfig((prev) => ({ ...prev, duration_minutes: Number(e.target.value || 30) }))}
+                    className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm focus:outline-none focus:ring-1 focus:ring-[#04d9b5]"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-lg bg-white/5 border border-white/10 p-3">
+              <p className="text-sm text-white font-medium mb-2">Campos a recolectar en el flujo</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {CALENDAR_FIELD_OPTIONS.map((field) => (
+                  <label key={field.key} className="flex items-center gap-2 text-sm text-gray-300">
+                    <input
+                      type="checkbox"
+                      checked={calendarConfig.collect_fields.includes(field.key)}
+                      disabled={field.key === 'date' || field.key === 'time'}
+                      onChange={() => toggleCalendarField(field.key)}
+                      className="accent-[#04d9b5]"
+                    />
+                    <span>{field.label}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 mt-2">`Fecha` y `Hora` siempre son requeridos para crear la cita.</p>
+            </div>
+
+            <div className={`rounded-lg border p-3 text-xs ${calendarConfig.service_account_configured ? 'bg-green-500/10 border-green-500/30 text-green-300' : 'bg-orange-500/10 border-orange-500/30 text-orange-300'}`}>
+              {calendarConfig.service_account_configured
+                ? 'Service account de Google detectada en backend.'
+                : 'Falta configurar GOOGLE_SERVICE_ACCOUNT_JSON o GOOGLE_SERVICE_ACCOUNT_FILE en el backend.'}
+            </div>
+
+            <button
+              onClick={handleSaveGoogleCalendar}
+              disabled={calendarLoading || !calendarConfig.calendar_id}
+              className="w-full px-4 py-2 rounded-lg bg-[#04d9b5]/20 border border-[#04d9b5]/40 text-[#04d9b5] hover:bg-[#04d9b5]/30 transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {calendarLoading ? 'Guardando...' : 'Guardar configuración de agenda'}
+            </button>
           </div>
         )}
       </div>
