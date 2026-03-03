@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, Link } from 'react-router-dom'
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
@@ -79,6 +79,11 @@ export default function Login() {
                 className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#04d9b5] focus:border-transparent transition"
                 placeholder="••••••••"
               />
+              <div className="mt-2 text-right">
+                <Link to="/forgot-password" className="text-sm text-[#04d9b5] hover:text-cyan-300 transition">
+                  ¿Olvidaste tu contraseña?
+                </Link>
+              </div>
             </div>
 
             {error && (

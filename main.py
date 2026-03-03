@@ -136,6 +136,8 @@ ADMIN_KEY      = os.getenv("ADMIN_KEY", "")
 PROXY_IP_HEADER = os.getenv("PROXY_IP_HEADER", "").lower()
 AUTH_SECRET    = os.getenv("AUTH_SECRET", "").strip()
 AUTH_TOKEN_TTL_MINUTES = env_int("AUTH_TOKEN_TTL", 60)
+PASSWORD_RESET_TOKEN_TTL_MINUTES = env_int("PASSWORD_RESET_TOKEN_TTL", 60)
+FRONTEND_BASE_URL = (os.getenv("FRONTEND_URL", "http://localhost:5173") or "http://localhost:5173").strip().rstrip("/")
 
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN  = os.getenv("TWILIO_AUTH_TOKEN", "")
@@ -912,6 +914,24 @@ async def on_startup():
                     "CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_slug)"
                 ))
                 await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                        id BIGSERIAL PRIMARY KEY,
+                        user_id INTEGER NOT NULL,
+                        email TEXT NOT NULL,
+                        token_hash TEXT NOT NULL,
+                        expires_at TIMESTAMPTZ NOT NULL,
+                        used_at TIMESTAMPTZ NULL,
+                        requested_ip TEXT,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """))
+                await conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_password_reset_token_hash ON password_reset_tokens(token_hash)"
+                ))
+                await conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_password_reset_user_id ON password_reset_tokens(user_id)"
+                ))
+                await conn.execute(text("""
                     CREATE TABLE IF NOT EXISTS messages (
                         id BIGSERIAL PRIMARY KEY,
                         tenant_slug TEXT NOT NULL,
@@ -1149,6 +1169,19 @@ class CheckoutQrIn(BaseModel):
 class LoginIn(BaseModel):
     email: str
     password: str
+
+class ForgotPasswordIn(BaseModel):
+    email: EmailStr
+
+class ResetPasswordIn(BaseModel):
+    token: str
+    new_password: str = Field(min_length=8, max_length=128)
+
+class AdminResetUsersIn(BaseModel):
+    acid_email: EmailStr
+    acid_password: str = Field(min_length=8, max_length=128)
+    acid_tenant_slug: str = "acid-ia"
+    purge_all_users: bool = True
 
 
 class AuthTokenOut(BaseModel):
@@ -1413,6 +1446,31 @@ async def fetch_user_by_id(user_id: int) -> Optional[dict]:
             {"id": int(user_id)}
         )).first()
     return dict(row._mapping) if row else None
+
+def hash_password_reset_token(raw_token: str) -> str:
+    return hashlib.sha256((raw_token or "").encode("utf-8")).hexdigest()
+
+async def create_password_reset_token(user: dict, requested_ip: str = "") -> str:
+    if not db_engine or not user:
+        return ""
+    raw = secrets.token_urlsafe(32)
+    token_hash = hash_password_reset_token(raw)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=max(5, PASSWORD_RESET_TOKEN_TTL_MINUTES))
+    async with db_engine.begin() as conn:
+        await conn.execute(
+            text("""
+                INSERT INTO password_reset_tokens (user_id, email, token_hash, expires_at, requested_ip)
+                VALUES (:user_id, :email, :token_hash, :expires_at, :requested_ip)
+            """),
+            {
+                "user_id": int(user["id"]),
+                "email": (user.get("email") or "").strip().lower(),
+                "token_hash": token_hash,
+                "expires_at": expires_at,
+                "requested_ip": (requested_ip or "")[:120],
+            }
+        )
+    return raw
 
 
 def tenant_bot_enabled(tenant: Optional[dict], page_settings: Optional[dict] = None) -> bool:
@@ -3065,6 +3123,79 @@ async def auth_login(body: LoginIn):
     return AuthTokenOut(access_token=token)
 
 
+@app.post("/auth/forgot-password")
+async def auth_forgot_password(body: ForgotPasswordIn, request: Request):
+    generic_msg = "Si el correo existe, te enviamos un enlace para recuperar tu contraseña."
+    user = await fetch_user_by_email(body.email)
+    if not user:
+        return {"ok": True, "message": generic_msg}
+
+    try:
+        reset_token = await create_password_reset_token(user, requested_ip=get_client_ip(request))
+        if not reset_token:
+            return {"ok": True, "message": generic_msg}
+
+        reset_link = f"{FRONTEND_BASE_URL}/reset-password?token={quote_plus(reset_token)}"
+        ttl = max(5, PASSWORD_RESET_TOKEN_TTL_MINUTES)
+        email_body = f"""
+        <h2>Recuperación de contraseña</h2>
+        <p>Recibimos una solicitud para restablecer tu contraseña.</p>
+        <p>Haz clic en este enlace para continuar:</p>
+        <p><a href="{reset_link}">{reset_link}</a></p>
+        <p>Este enlace expira en {ttl} minutos.</p>
+        <p>Si tú no solicitaste este cambio, puedes ignorar este correo.</p>
+        """
+        await send_email_notification(
+            to_email=(user.get("email") or body.email).strip().lower(),
+            subject="Recupera tu contraseña - Acid IA",
+            body=email_body
+        )
+    except Exception as e:
+        log.error(f"forgot-password error for {body.email}: {e}")
+
+    return {"ok": True, "message": generic_msg}
+
+
+@app.post("/auth/reset-password")
+async def auth_reset_password(body: ResetPasswordIn):
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+    raw_token = (body.token or "").strip()
+    if not raw_token:
+        raise HTTPException(400, "Token inválido")
+
+    token_hash = hash_password_reset_token(raw_token)
+    async with db_engine.begin() as conn:
+        row = (await conn.execute(
+            text("""
+                UPDATE password_reset_tokens
+                SET used_at = NOW()
+                WHERE token_hash = :token_hash
+                  AND used_at IS NULL
+                  AND expires_at > NOW()
+                RETURNING user_id, email
+            """),
+            {"token_hash": token_hash}
+        )).first()
+
+        if not row:
+            raise HTTPException(400, "Token inválido o expirado")
+
+        user_id = int(row.user_id)
+        new_password_hash = hash_password(body.new_password)
+        await conn.execute(
+            text("""
+                UPDATE users
+                SET password_hash = :password_hash,
+                    updated_at = NOW()
+                WHERE id = :id
+            """),
+            {"password_hash": new_password_hash, "id": user_id}
+        )
+
+    return {"ok": True, "message": "Contraseña actualizada correctamente."}
+
+
 @app.get("/auth/me")
 async def auth_me(current = Depends(require_user)):
     tenant = await fetch_tenant(current["tenant_slug"])
@@ -3978,6 +4109,60 @@ async def admin_create_user(body: UserCreateIn):
             {"tenant": tenant_slug, "email": body.email.strip().lower(), "hash": password_hash}
         )
     return {"ok": True}
+
+
+@app.post("/v1/admin/users/reset", dependencies=[Depends(require_admin)])
+async def admin_reset_users(body: AdminResetUsersIn):
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    tenant_slug = (body.acid_tenant_slug or "acid-ia").strip().lower()
+    if not valid_slug(tenant_slug):
+        raise HTTPException(400, "acid_tenant_slug inválido")
+
+    acid_email = body.acid_email.strip().lower()
+    acid_password_hash = hash_password(body.acid_password)
+
+    async with db_engine.begin() as conn:
+        # Garantiza que el tenant exista
+        await conn.execute(
+            text("""
+                INSERT INTO tenants (slug, name, settings)
+                VALUES (:slug, :name, '{}'::jsonb)
+                ON CONFLICT (slug) DO NOTHING
+            """),
+            {"slug": tenant_slug, "name": "Acid IA"}
+        )
+
+        deleted_users = 0
+        if body.purge_all_users:
+            deleted_users = await conn.scalar(text("SELECT COUNT(*) FROM users")) or 0
+            await conn.execute(text("DELETE FROM users"))
+
+        user_row = (await conn.execute(
+            text("""
+                INSERT INTO users (tenant_slug, email, password_hash, role)
+                VALUES (:tenant_slug, :email, :password_hash, 'admin')
+                ON CONFLICT (email) DO UPDATE SET
+                    tenant_slug = EXCLUDED.tenant_slug,
+                    password_hash = EXCLUDED.password_hash,
+                    role = 'admin',
+                    updated_at = NOW()
+                RETURNING id, email, tenant_slug, role
+            """),
+            {
+                "tenant_slug": tenant_slug,
+                "email": acid_email,
+                "password_hash": acid_password_hash
+            }
+        )).mappings().first()
+
+    return {
+        "ok": True,
+        "purged_all_users": bool(body.purge_all_users),
+        "deleted_users_count": int(deleted_users),
+        "acid_admin_user": dict(user_row) if user_row else {"email": acid_email, "tenant_slug": tenant_slug, "role": "admin"}
+    }
 
 
 # ── Tenant portal endpoints (auth required) ────────────────────────────
