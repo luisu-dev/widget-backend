@@ -6147,6 +6147,75 @@ async def create_user_manual(body: UserCreateIn, request: Request):
     }
 
 
+@app.get("/v1/admin/all-tenants")
+async def admin_list_all_tenants(request: Request):
+    """Lista todos los tenants con estado de integraciones. Solo acid-ia."""
+    current = await require_user(request)
+    if current.get("tenant_slug") != "acid-ia":
+        raise HTTPException(403, "Forbidden")
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    async with db_engine.connect() as conn:
+        result = await conn.execute(text("""
+            SELECT t.id, t.slug, t.name, t.whatsapp, t.settings, t.created_at,
+                   u.email AS owner_email
+            FROM tenants t
+            LEFT JOIN users u ON u.tenant_slug = t.slug AND u.role = 'tenant_admin'
+            ORDER BY t.created_at DESC
+        """))
+        rows = result.mappings().all()
+
+        tenants = []
+        for row in rows:
+            d = dict(row)
+            settings = d.get("settings") or {}
+            fb_result = await conn.execute(
+                text("SELECT COUNT(*) FROM facebook_pages WHERE tenant_slug = :slug"),
+                {"slug": d["slug"]}
+            )
+            fb_count = fb_result.scalar()
+            d["integrations"] = {
+                "facebook": fb_count > 0,
+                "stripe": bool(settings.get("stripe_acct")),
+                "whatsapp": bool(settings.get("twilio_whatsapp_from") or d.get("whatsapp")),
+                "catalog": bool(settings.get("catalog_url")),
+                "google_calendar": bool(settings.get("google_calendar_enabled")),
+            }
+            d["bot_enabled"] = settings.get("bot_enabled", True)
+            d["created_at"] = d["created_at"].isoformat() if d.get("created_at") else None
+            tenants.append(d)
+
+    return {"tenants": tenants}
+
+
+@app.put("/v1/admin/tenants/{slug}/bot-toggle")
+async def admin_toggle_tenant_bot(slug: str, request: Request):
+    """Activa o desactiva el bot globalmente para un tenant. Solo acid-ia."""
+    current = await require_user(request)
+    if current.get("tenant_slug") != "acid-ia":
+        raise HTTPException(403, "Forbidden")
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    async with db_engine.begin() as conn:
+        row = (await conn.execute(
+            text("SELECT settings FROM tenants WHERE slug = :slug"),
+            {"slug": slug}
+        )).first()
+        if not row:
+            raise HTTPException(404, "Tenant no encontrado")
+        settings = dict(row._mapping).get("settings") or {}
+        new_val = not settings.get("bot_enabled", True)
+        settings["bot_enabled"] = new_val
+        await conn.execute(
+            text("UPDATE tenants SET settings = CAST(:s AS JSONB), updated_at = NOW() WHERE slug = :slug"),
+            {"s": json.dumps(settings), "slug": slug}
+        )
+    log.info(f"[admin] bot_enabled={new_val} para tenant={slug} por {current.get('email')}")
+    return {"slug": slug, "bot_enabled": new_val}
+
+
 @app.post("/v1/stripe/webhook")
 async def stripe_webhook(request: Request):
     """Webhook de Stripe para manejar eventos de pagos y suscripciones."""
