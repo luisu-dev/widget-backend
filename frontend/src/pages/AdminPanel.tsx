@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+import { API_BASE } from '../config'
 
 interface CreateUserForm {
   tenantSlug: string
@@ -44,16 +44,24 @@ export default function AdminPanel() {
     setSuccess('')
     setLoading(true)
 
+    const tenantSlug = form.tenantSlug.trim().toLowerCase()
+
+    if (!tenantSlug.match(/^[a-z0-9-]+$/)) {
+      setError('El tenant slug solo puede incluir letras minúsculas, números y guiones.')
+      setLoading(false)
+      return
+    }
+
     try {
-      const response = await fetch(`${API_URL}/v1/admin/create-user-manual`, {
+      const response = await fetch(`${API_BASE}/v1/admin/create-user-manual`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          tenant: form.tenantSlug,
-          email: form.email,
+          tenant: tenantSlug,
+          email: form.email.trim(),
           password: form.password
         })
       })
@@ -61,6 +69,12 @@ export default function AdminPanel() {
       const data = await response.json()
 
       if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('Tu sesión expiró. Vuelve a iniciar sesión e intenta otra vez.')
+        }
+        if (response.status === 403) {
+          throw new Error(data.detail || 'Tu usuario no tiene permisos para crear tenants desde este panel.')
+        }
         throw new Error(data.detail || 'Error al crear el usuario')
       }
 

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'https://acidia.app';
+import { API_BASE } from '../config'
 
 interface Tenant {
   slug: string;

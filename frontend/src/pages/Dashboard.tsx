@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import BrandConfig from '../components/dashboard/BrandConfig';
 import Integrations from '../components/Integrations';
 
-const API_BASE = import.meta.env.VITE_API_BASE || '';
+import { API_BASE } from '../config'
 
 interface User {
   id: number;

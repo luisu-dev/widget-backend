@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import FacebookConnect from './dashboard/FacebookConnect';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'https://acidia.app';
+import { API_BASE } from '../config'
 
 interface IntegrationsProps {
   token: string;
@@ -31,19 +31,34 @@ const CALENDAR_FIELD_OPTIONS: Array<{ key: CalendarFieldKey; label: string }> = 
   { key: 'time', label: 'Hora de la cita' }
 ];
 
+interface GoogleCalendarItem {
+  id: string;
+  summary: string;
+  primary?: boolean;
+  access_role?: string;
+  time_zone?: string;
+}
+
 export default function Integrations({ token, onConnectionChange }: IntegrationsProps) {
   const [activeSection, setActiveSection] = useState<string | null>(null);
   const [whatsappStatus, setWhatsappStatus] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [connectedPagesCount, setConnectedPagesCount] = useState(0);
   const [calendarLoading, setCalendarLoading] = useState(false);
+  const [googleConnectionLoading, setGoogleConnectionLoading] = useState(false);
+  const [googleCalendars, setGoogleCalendars] = useState<GoogleCalendarItem[]>([]);
+  const [calendarFeedback, setCalendarFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [calendarConfig, setCalendarConfig] = useState({
     enabled: false,
     calendar_id: '',
     timezone: 'America/Mexico_City',
     duration_minutes: 30,
     collect_fields: ['name', 'email', 'service', 'date', 'time'] as CalendarFieldKey[],
+    oauth_client_configured: false,
     service_account_configured: false,
+    user_connection_configured: false,
+    auth_mode: 'none',
+    google_account_email: '',
     ready: false
   });
 
@@ -74,6 +89,29 @@ export default function Integrations({ token, onConnectionChange }: Integrations
     fetchConnectedPagesCount();
     fetchGoogleCalendarSettings();
   }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const googleConnected = params.get('google_connected') === 'true';
+    const googleError = params.get('google_error');
+
+    if (!googleConnected && !googleError) return;
+
+    if (googleConnected) {
+      setCalendarFeedback({ type: 'success', text: 'Cuenta de Google conectada correctamente.' });
+      fetchGoogleCalendarSettings();
+      fetchGoogleCalendars();
+      onConnectionChange();
+    } else if (googleError) {
+      setCalendarFeedback({ type: 'error', text: googleError });
+    }
+
+    params.delete('google_connected');
+    params.delete('google_error');
+    const nextQuery = params.toString();
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`;
+    window.history.replaceState({}, '', nextUrl);
+  }, [onConnectionChange]);
 
   const fetchConnectedPagesCount = async () => {
     try {
@@ -135,12 +173,41 @@ export default function Integrations({ token, onConnectionChange }: Integrations
           timezone: data.timezone || 'America/Mexico_City',
           duration_minutes: Number(data.duration_minutes || 30),
           collect_fields: (data.collect_fields || ['name', 'email', 'service', 'date', 'time']) as CalendarFieldKey[],
+          oauth_client_configured: Boolean(data.oauth_client_configured),
           service_account_configured: Boolean(data.service_account_configured),
+          user_connection_configured: Boolean(data.user_connection_configured),
+          auth_mode: data.auth_mode || 'none',
+          google_account_email: data.google_account_email || '',
           ready: Boolean(data.ready)
         });
+        if (data.user_connection_configured) {
+          fetchGoogleCalendars();
+        } else {
+          setGoogleCalendars([]);
+        }
       }
     } catch (error) {
       console.error('Error fetching Google Calendar settings:', error);
+    }
+  };
+
+  const fetchGoogleCalendars = async () => {
+    try {
+      setGoogleConnectionLoading(true);
+      const res = await fetch(`${API_BASE}/v1/admin/google-calendar/calendars`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'No se pudieron cargar los calendarios');
+      }
+      const data = await res.json();
+      setGoogleCalendars(data.calendars || []);
+    } catch (error) {
+      console.error('Error fetching Google calendars:', error);
+      setGoogleCalendars([]);
+    } finally {
+      setGoogleConnectionLoading(false);
     }
   };
 
@@ -189,15 +256,74 @@ export default function Integrations({ token, onConnectionChange }: Integrations
         timezone: data.timezone || 'America/Mexico_City',
         duration_minutes: Number(data.duration_minutes || 30),
         collect_fields: (data.collect_fields || prev.collect_fields) as CalendarFieldKey[],
+        oauth_client_configured: Boolean(data.oauth_client_configured),
         service_account_configured: Boolean(data.service_account_configured),
+        user_connection_configured: Boolean(data.user_connection_configured),
+        auth_mode: data.auth_mode || prev.auth_mode,
+        google_account_email: data.google_account_email || prev.google_account_email,
         ready: Boolean(data.ready)
       }));
-      alert('Configuración de Google Calendar guardada.');
+      setCalendarFeedback({ type: 'success', text: 'Configuración de Google Calendar guardada.' });
     } catch (error: any) {
       console.error('Error saving Google Calendar settings:', error);
-      alert(error.message || 'Error guardando configuración de Google Calendar.');
+      setCalendarFeedback({ type: 'error', text: error.message || 'Error guardando configuración de Google Calendar.' });
     } finally {
       setCalendarLoading(false);
+    }
+  };
+
+  const handleGoogleConnect = async () => {
+    try {
+      setGoogleConnectionLoading(true);
+      setCalendarFeedback(null);
+      const res = await fetch(`${API_BASE}/auth/google/connect`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'No se pudo iniciar la conexión con Google');
+      }
+      const data = await res.json();
+      window.location.href = data.auth_url;
+    } catch (error: any) {
+      console.error('Error starting Google OAuth:', error);
+      setCalendarFeedback({ type: 'error', text: error.message || 'No se pudo iniciar la conexión con Google.' });
+      setGoogleConnectionLoading(false);
+    }
+  };
+
+  const handleGoogleDisconnect = async () => {
+    if (!confirm('¿Deseas desconectar esta cuenta de Google Calendar?')) {
+      return;
+    }
+
+    try {
+      setGoogleConnectionLoading(true);
+      setCalendarFeedback(null);
+      const res = await fetch(`${API_BASE}/auth/google/disconnect`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'No se pudo desconectar Google');
+      }
+
+      setGoogleCalendars([]);
+      setCalendarConfig((prev) => ({
+        ...prev,
+        user_connection_configured: false,
+        auth_mode: prev.service_account_configured ? 'service_account' : 'none',
+        google_account_email: '',
+        ready: prev.enabled && Boolean(prev.calendar_id) && prev.service_account_configured
+      }));
+      setCalendarFeedback({ type: 'success', text: 'Cuenta de Google desconectada.' });
+      onConnectionChange();
+    } catch (error: any) {
+      console.error('Error disconnecting Google:', error);
+      setCalendarFeedback({ type: 'error', text: error.message || 'No se pudo desconectar Google.' });
+    } finally {
+      setGoogleConnectionLoading(false);
     }
   };
 
@@ -619,6 +745,59 @@ export default function Integrations({ token, onConnectionChange }: Integrations
 
         {activeSection === 'calendar' && (
           <div className="px-6 py-4 border-t border-white/10 bg-black/20 space-y-4">
+            {calendarFeedback && (
+              <div className={`rounded-lg border p-3 text-sm ${calendarFeedback.type === 'success' ? 'border-green-500/40 bg-green-500/10 text-green-300' : 'border-red-500/40 bg-red-500/10 text-red-200'}`}>
+                {calendarFeedback.text}
+              </div>
+            )}
+
+            <div className="rounded-lg bg-white/5 border border-white/10 p-4 space-y-3">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-sm text-white font-medium">Cuenta de Google</p>
+                  <p className="text-xs text-gray-400">
+                    {calendarConfig.user_connection_configured
+                      ? `Conectada como ${calendarConfig.google_account_email || 'cuenta sin email visible'}`
+                      : 'Conecta la cuenta del usuario para elegir calendarios sin configurar IDs manuales.'}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {calendarConfig.user_connection_configured ? (
+                    <>
+                      <button
+                        onClick={fetchGoogleCalendars}
+                        disabled={googleConnectionLoading}
+                        className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white hover:bg-white/10 transition disabled:opacity-50"
+                      >
+                        {googleConnectionLoading ? 'Actualizando...' : 'Recargar calendarios'}
+                      </button>
+                      <button
+                        onClick={handleGoogleDisconnect}
+                        disabled={googleConnectionLoading}
+                        className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-300 hover:bg-red-500/20 transition disabled:opacity-50"
+                      >
+                        Desconectar Google
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={handleGoogleConnect}
+                      disabled={googleConnectionLoading || !calendarConfig.oauth_client_configured}
+                      className="px-3 py-2 rounded-lg bg-[#04d9b5]/20 border border-[#04d9b5]/40 text-sm text-[#04d9b5] hover:bg-[#04d9b5]/30 transition disabled:opacity-50"
+                    >
+                      {googleConnectionLoading ? 'Conectando...' : 'Conectar Google'}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {!calendarConfig.oauth_client_configured && (
+                <div className="rounded-lg border border-orange-500/30 bg-orange-500/10 p-3 text-xs text-orange-300">
+                  Falta configurar `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` y `GOOGLE_REDIRECT_URI` en el backend para habilitar OAuth.
+                </div>
+              )}
+            </div>
+
             <div className="flex items-center justify-between rounded-lg bg-white/5 border border-white/10 p-3">
               <div>
                 <p className="text-sm text-white font-medium">Agendado automático</p>
@@ -633,6 +812,34 @@ export default function Integrations({ token, onConnectionChange }: Integrations
             </div>
 
             <div className="space-y-3">
+              {calendarConfig.user_connection_configured && (
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Calendario de Google</label>
+                  <select
+                    value={calendarConfig.calendar_id}
+                    onChange={(e) => {
+                      const selectedId = e.target.value;
+                      const selectedCalendar = googleCalendars.find((calendar) => calendar.id === selectedId);
+                      setCalendarConfig((prev) => ({
+                        ...prev,
+                        calendar_id: selectedId,
+                        timezone: selectedCalendar?.time_zone || prev.timezone
+                      }));
+                    }}
+                    className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm focus:outline-none focus:ring-1 focus:ring-[#04d9b5]"
+                  >
+                    <option value="">Selecciona un calendario</option>
+                    {googleCalendars.map((calendar) => (
+                      <option key={calendar.id} value={calendar.id}>
+                        {calendar.primary ? 'Principal' : calendar.summary} ({calendar.id})
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-gray-500">
+                    {googleConnectionLoading ? 'Cargando calendarios...' : 'También puedes escribir manualmente un Calendar ID si lo prefieres.'}
+                  </p>
+                </div>
+              )}
               <div>
                 <label className="block text-xs text-gray-400 mb-1">Calendar ID</label>
                 <input
@@ -687,10 +894,12 @@ export default function Integrations({ token, onConnectionChange }: Integrations
               <p className="text-xs text-gray-500 mt-2">`Fecha` y `Hora` siempre son requeridos para crear la cita.</p>
             </div>
 
-            <div className={`rounded-lg border p-3 text-xs ${calendarConfig.service_account_configured ? 'bg-green-500/10 border-green-500/30 text-green-300' : 'bg-orange-500/10 border-orange-500/30 text-orange-300'}`}>
-              {calendarConfig.service_account_configured
-                ? 'Service account de Google detectada en backend.'
-                : 'Falta configurar GOOGLE_SERVICE_ACCOUNT_JSON o GOOGLE_SERVICE_ACCOUNT_FILE en el backend.'}
+            <div className={`rounded-lg border p-3 text-xs ${calendarConfig.user_connection_configured || calendarConfig.service_account_configured ? 'bg-green-500/10 border-green-500/30 text-green-300' : 'bg-orange-500/10 border-orange-500/30 text-orange-300'}`}>
+              {calendarConfig.user_connection_configured
+                ? 'La agenda usará la cuenta conectada por el usuario.'
+                : calendarConfig.service_account_configured
+                  ? 'Service account de Google detectada en backend. Sigue disponible como respaldo.'
+                  : 'Falta configurar OAuth de usuario o GOOGLE_SERVICE_ACCOUNT_JSON / GOOGLE_SERVICE_ACCOUNT_FILE en el backend.'}
             </div>
 
             <button
