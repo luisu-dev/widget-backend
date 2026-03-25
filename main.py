@@ -31,9 +31,10 @@ import resend
 
 # ── Setup ──────────────────────────────────────────────────────────────
 load_dotenv()
-logging.basicConfig(level=logging.INFO)
+_log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+logging.basicConfig(level=_log_level)
 log = logging.getLogger("zia")
-log.setLevel(logging.INFO)
+log.setLevel(_log_level)
 
 app = FastAPI(title="ZIA Backend", version="1.1")
 client = OpenAI()  # usa OPENAI_API_KEY del entorno
@@ -163,6 +164,13 @@ SITE_URL = os.getenv("SITE_URL", "https://web-zia.vercel.app")
 GRAPH = "https://graph.facebook.com/v20.0"
 GOOGLE_CALENDAR_DEFAULT_ID = os.getenv("GOOGLE_CALENDAR_DEFAULT_ID", "").strip()
 GOOGLE_CALENDAR_DEFAULT_TZ = os.getenv("GOOGLE_CALENDAR_DEFAULT_TZ", "America/Mexico_City").strip() or "America/Mexico_City"
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
+GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "").strip()
+GOOGLE_OAUTH_SCOPES = [
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/userinfo.email",
+]
 
 stripe.api_key = STRIPE_SECRET_KEY
 
@@ -458,9 +466,27 @@ def calendar_cfg_from_tenant(t: Optional[dict]) -> dict:
         "collect_fields": fields,
     }
 
+def google_oauth_configured() -> bool:
+    return bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URI)
+
+def google_calendar_has_user_connection(t: Optional[dict]) -> bool:
+    settings = (t or {}).get("settings", {}) or {}
+    return bool(settings.get("google_refresh_token"))
+
 def google_calendar_ready_for_tenant(t: Optional[dict]) -> bool:
     cfg = calendar_cfg_from_tenant(t)
-    return bool(cfg["enabled"] and cfg["calendar_id"] and _load_google_service_account_info())
+    return bool(
+        cfg["enabled"]
+        and cfg["calendar_id"]
+        and (google_calendar_has_user_connection(t) or _load_google_service_account_info())
+    )
+
+def google_calendar_auth_mode_for_tenant(t: Optional[dict]) -> str:
+    if google_calendar_has_user_connection(t):
+        return "oauth"
+    if _load_google_service_account_info():
+        return "service_account"
+    return "none"
 
 def _load_google_service_account_info() -> Optional[dict]:
     raw_json = (os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "") or "").strip()
@@ -493,7 +519,31 @@ def _load_google_service_account_info() -> Optional[dict]:
         info["token_uri"] = "https://oauth2.googleapis.com/token"
     return info
 
-async def get_google_access_token() -> str:
+def _parse_google_token_expiry(raw: Any) -> Optional[datetime]:
+    if not raw:
+        return None
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+    if isinstance(raw, (int, float)):
+        return datetime.fromtimestamp(float(raw), tz=timezone.utc)
+    if isinstance(raw, str):
+        candidate = raw.strip()
+        if not candidate:
+            return None
+        try:
+            if candidate.endswith("Z"):
+                candidate = candidate[:-1] + "+00:00"
+            parsed = datetime.fromisoformat(candidate)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+    return None
+
+def _google_token_expiry_iso(expires_in: int) -> str:
+    exp = datetime.now(timezone.utc) + timedelta(seconds=max(60, expires_in))
+    return exp.isoformat()
+
+async def get_google_service_account_access_token() -> str:
     now = int(time.time())
     token = GOOGLE_ACCESS_TOKEN_CACHE.get("token") or ""
     exp = int(GOOGLE_ACCESS_TOKEN_CACHE.get("exp") or 0)
@@ -537,6 +587,96 @@ async def get_google_access_token() -> str:
     GOOGLE_ACCESS_TOKEN_CACHE["token"] = access_token
     GOOGLE_ACCESS_TOKEN_CACHE["exp"] = now + expires_in
     return access_token
+
+async def refresh_google_user_access_token(t: Optional[dict]) -> str:
+    settings = (t or {}).get("settings", {}) or {}
+    refresh_token = (settings.get("google_refresh_token") or "").strip()
+    tenant_slug = (t or {}).get("slug") or ""
+
+    if not refresh_token:
+        raise RuntimeError("La cuenta de Google no está conectada para este tenant")
+    if not google_oauth_configured():
+        raise RuntimeError("Google OAuth no está configurado en el backend")
+
+    async with httpx.AsyncClient(timeout=20) as hc:
+        resp = await hc.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token",
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+
+    if resp.status_code >= 400:
+        log.error(f"Google refresh token failed for tenant {tenant_slug}: {resp.text}")
+        raise RuntimeError("No se pudo refrescar la sesión de Google")
+
+    payload = resp.json()
+    access_token = (payload.get("access_token") or "").strip()
+    expires_in = int(payload.get("expires_in") or 3600)
+    if not access_token:
+        raise RuntimeError("Google no devolvió access_token")
+
+    patch = {
+        "google_access_token": access_token,
+        "google_token_expiry": _google_token_expiry_iso(expires_in),
+    }
+    await merge_tenant_settings(tenant_slug, patch)
+    return access_token
+
+async def get_google_access_token_for_tenant(t: Optional[dict]) -> str:
+    settings = (t or {}).get("settings", {}) or {}
+    access_token = (settings.get("google_access_token") or "").strip()
+    expiry = _parse_google_token_expiry(settings.get("google_token_expiry"))
+    now = datetime.now(timezone.utc)
+
+    if google_calendar_has_user_connection(t):
+        if access_token and expiry and expiry - timedelta(seconds=GOOGLE_TOKEN_REFRESH_BUFFER_SECONDS) > now:
+            return access_token
+        return await refresh_google_user_access_token(t)
+
+    return await get_google_service_account_access_token()
+
+async def fetch_google_user_email(access_token: str) -> str:
+    async with httpx.AsyncClient(timeout=20) as hc:
+        resp = await hc.get(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+    if resp.status_code >= 400:
+        raise RuntimeError("No se pudo obtener el email de la cuenta de Google")
+    return (resp.json().get("email") or "").strip()
+
+async def list_google_calendars_for_tenant(t: Optional[dict]) -> List[dict]:
+    if not google_calendar_has_user_connection(t):
+        return []
+
+    access_token = await get_google_access_token_for_tenant(t)
+    async with httpx.AsyncClient(timeout=20) as hc:
+        resp = await hc.get(
+            "https://www.googleapis.com/calendar/v3/users/me/calendarList",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"minAccessRole": "writer", "showHidden": "false"},
+        )
+    if resp.status_code >= 400:
+        log.error(f"Google calendar list failed for tenant {(t or {}).get('slug')}: {resp.text}")
+        raise RuntimeError("No se pudo cargar la lista de calendarios de Google")
+
+    items = resp.json().get("items", []) or []
+    calendars: List[dict] = []
+    for item in items:
+        calendars.append({
+            "id": item.get("id"),
+            "summary": item.get("summary") or item.get("id") or "Sin nombre",
+            "primary": bool(item.get("primary")),
+            "access_role": item.get("accessRole") or "",
+            "time_zone": item.get("timeZone") or "",
+        })
+    calendars.sort(key=lambda c: (not c["primary"], c["summary"].lower()))
+    return calendars
 
 async def create_google_calendar_event(t: Optional[dict], sid: str, booking_data: dict) -> dict:
     cfg = calendar_cfg_from_tenant(t)
@@ -583,7 +723,7 @@ async def create_google_calendar_event(t: Optional[dict], sid: str, booking_data
     if booking_data.get("email") and is_email(booking_data["email"]):
         event_payload["attendees"] = [{"email": booking_data["email"]}]
 
-    token = await get_google_access_token()
+    token = await get_google_access_token_for_tenant(t)
     calendar_id = quote(cfg["calendar_id"], safe="")
     url = f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events"
 
@@ -3248,6 +3388,11 @@ async def get_user_tenants(current = Depends(require_user)):
                 settings.get("twilio_auth_token") and
                 settings.get("twilio_whatsapp_from")
             )
+            has_google_calendar = bool(
+                settings.get("google_calendar_enabled")
+                and settings.get("google_calendar_id")
+                and (settings.get("google_refresh_token") or _load_google_service_account_info())
+            )
 
             tenant_data["has_facebook"] = fb_count > 0
             tenant_data["integrations"] = {
@@ -3255,12 +3400,171 @@ async def get_user_tenants(current = Depends(require_user)):
                 "stripe": bool(tenant_data.get("stripe_acct")),
                 "catalog": bool(tenant_data.get("catalog_url")),
                 "web": len(tenant_data.get("web_domains", [])) > 0 if tenant_data.get("web_domains") else False,
-                "whatsapp": has_twilio or bool(tenant_data.get("whatsapp"))
+                "whatsapp": has_twilio or bool(tenant_data.get("whatsapp")),
+                "google_calendar": has_google_calendar,
             }
 
             tenants.append(tenant_data)
 
     return {"tenants": tenants}
+
+
+# ── Google OAuth endpoints ─────────────────────────────────────────────
+@app.options("/auth/google/connect")
+async def options_google_connect():
+    return Response(status_code=204)
+
+@app.get("/auth/google/connect")
+async def google_oauth_connect(current = Depends(require_user)):
+    if not google_oauth_configured():
+        raise HTTPException(500, "GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET o GOOGLE_REDIRECT_URI no configurados")
+    if not AUTH_SECRET:
+        raise HTTPException(500, "AUTH_SECRET no configurado")
+
+    state = jwt.encode(
+        {
+            "tenant_slug": current["tenant_slug"],
+            "user_id": current["id"],
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=10)
+        },
+        AUTH_SECRET,
+        algorithm="HS256"
+    )
+    scope = quote_plus(" ".join(GOOGLE_OAUTH_SCOPES))
+    auth_url = (
+        "https://accounts.google.com/o/oauth2/v2/auth"
+        f"?client_id={quote_plus(GOOGLE_CLIENT_ID)}"
+        f"&redirect_uri={quote_plus(GOOGLE_REDIRECT_URI)}"
+        "&response_type=code"
+        f"&scope={scope}"
+        "&access_type=offline"
+        "&include_granted_scopes=true"
+        "&prompt=consent"
+        f"&state={quote_plus(state)}"
+    )
+    return {"auth_url": auth_url}
+
+@app.get("/auth/google/callback")
+async def google_oauth_callback(
+    code: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    error: Optional[str] = Query(None),
+    error_description: Optional[str] = Query(None),
+):
+    frontend_url = FRONTEND_BASE_URL or "http://localhost:5173"
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    if error:
+        msg = quote_plus(error_description or error)
+        return Response(
+            status_code=302,
+            headers={"Location": f"{frontend_url}/dashboard?google_error={msg}"}
+        )
+
+    if not code or not state:
+        raise HTTPException(400, "Parámetros incompletos en callback de Google")
+
+    try:
+        state_data = jwt.decode(state, AUTH_SECRET, algorithms=["HS256"])
+        tenant_slug = state_data["tenant_slug"]
+    except Exception:
+        raise HTTPException(400, "Estado OAuth inválido o expirado")
+
+    tenant = await fetch_tenant(tenant_slug)
+    if not tenant:
+        raise HTTPException(404, "Tenant no encontrado")
+    if not google_oauth_configured():
+        raise HTTPException(500, "Google OAuth no está configurado en el backend")
+
+    async with httpx.AsyncClient(timeout=20) as hc:
+        resp = await hc.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": GOOGLE_REDIRECT_URI,
+                "grant_type": "authorization_code",
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+
+    if resp.status_code >= 400:
+        log.error(f"Google token exchange failed for tenant {tenant_slug}: {resp.text}")
+        return Response(
+            status_code=302,
+            headers={"Location": f"{frontend_url}/dashboard?google_error={quote_plus('No se pudo conectar Google Calendar')}"}
+        )
+
+    payload = resp.json()
+    access_token = (payload.get("access_token") or "").strip()
+    refresh_token = (payload.get("refresh_token") or "").strip()
+    expires_in = int(payload.get("expires_in") or 3600)
+
+    if not access_token:
+        return Response(
+            status_code=302,
+            headers={"Location": f"{frontend_url}/dashboard?google_error={quote_plus('Google no devolvió access token')}"}
+        )
+
+    email = ""
+    try:
+        email = await fetch_google_user_email(access_token)
+    except Exception as e:
+        log.warning(f"No se pudo obtener email de Google para tenant {tenant_slug}: {e}")
+
+    settings = (tenant.get("settings") or {}).copy()
+    existing_refresh_token = (settings.get("google_refresh_token") or "").strip()
+    settings.update({
+        "google_access_token": access_token,
+        "google_refresh_token": refresh_token or existing_refresh_token,
+        "google_token_expiry": _google_token_expiry_iso(expires_in),
+        "google_account_email": email,
+        "google_calendar_auth_mode": "oauth",
+    })
+
+    async with db_engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE tenants SET settings = :settings, updated_at = NOW() WHERE slug = :slug"),
+            {"settings": json.dumps(settings), "slug": tenant_slug}
+        )
+
+    return Response(
+        status_code=302,
+        headers={"Location": f"{frontend_url}/dashboard?google_connected=true"}
+    )
+
+@app.options("/auth/google/disconnect")
+async def options_google_disconnect():
+    return Response(status_code=204)
+
+@app.post("/auth/google/disconnect")
+async def google_oauth_disconnect(current = Depends(require_user)):
+    tenant_slug = current["tenant_slug"]
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+    tenant = await fetch_tenant(tenant_slug)
+    if not tenant:
+        raise HTTPException(404, "Tenant no encontrado")
+
+    settings = (tenant.get("settings") or {}).copy()
+    for key in [
+        "google_access_token",
+        "google_refresh_token",
+        "google_token_expiry",
+        "google_account_email",
+        "google_calendar_auth_mode",
+    ]:
+        settings.pop(key, None)
+
+    async with db_engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE tenants SET settings = :settings, updated_at = NOW() WHERE slug = :slug"),
+            {"settings": json.dumps(settings), "slug": tenant_slug}
+        )
+
+    return {"ok": True}
 
 
 # ── Facebook OAuth endpoints ───────────────────────────────────────────
@@ -4334,13 +4638,18 @@ async def get_google_calendar_settings(current = Depends(require_user)):
     if not tenant:
         raise HTTPException(404, "Tenant no encontrado")
     cfg = calendar_cfg_from_tenant(tenant)
+    settings = (tenant.get("settings") or {}) if tenant else {}
     return {
         "enabled": cfg["enabled"],
         "calendar_id": cfg["calendar_id"],
         "timezone": cfg["timezone"],
         "duration_minutes": cfg["duration_minutes"],
         "collect_fields": cfg["collect_fields"],
+        "oauth_client_configured": google_oauth_configured(),
         "service_account_configured": bool(_load_google_service_account_info()),
+        "user_connection_configured": google_calendar_has_user_connection(tenant),
+        "auth_mode": google_calendar_auth_mode_for_tenant(tenant),
+        "google_account_email": (settings.get("google_account_email") or "").strip(),
         "ready": google_calendar_ready_for_tenant(tenant),
     }
 
@@ -4370,7 +4679,30 @@ async def put_google_calendar_settings(body: CalendarSettingsUpdate, current = D
         "duration_minutes": cfg["duration_minutes"],
         "collect_fields": cfg["collect_fields"],
         "service_account_configured": bool(_load_google_service_account_info()),
+        "oauth_client_configured": google_oauth_configured(),
+        "user_connection_configured": google_calendar_has_user_connection(updated),
+        "auth_mode": google_calendar_auth_mode_for_tenant(updated),
+        "google_account_email": (((updated or {}).get("settings") or {}).get("google_account_email") or "").strip(),
         "ready": google_calendar_ready_for_tenant(updated),
+    }
+
+
+@app.get("/v1/admin/google-calendar/calendars")
+async def get_google_calendar_list(current = Depends(require_user)):
+    tenant_slug = current["tenant_slug"]
+    tenant = await fetch_tenant(tenant_slug)
+    if not tenant:
+        raise HTTPException(404, "Tenant no encontrado")
+
+    try:
+        calendars = await list_google_calendars_for_tenant(tenant)
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+
+    return {
+        "connected": google_calendar_has_user_connection(tenant),
+        "auth_mode": google_calendar_auth_mode_for_tenant(tenant),
+        "calendars": calendars,
     }
 
 
@@ -5698,9 +6030,12 @@ async def create_user_manual(body: UserCreateIn, request: Request):
     Crea un tenant y usuario manualmente (para ventas fuera de la plataforma).
     Solo accesible por administradores (tenant acid-ia).
     """
+    log.info(f"[create-user-manual] Request recibida: tenant={body.tenant}, email={body.email}")
     # Verificar autenticación y permisos de admin
     current = await require_user(request)
+    log.info(f"[create-user-manual] Usuario autenticado: {current.get('email')} (tenant={current.get('tenant_slug')})")
     if current.get("tenant_slug") != "acid-ia":
+        log.warning(f"[create-user-manual] Acceso denegado para tenant={current.get('tenant_slug')}")
         raise HTTPException(403, "Forbidden: Solo administradores de Acid IA pueden crear usuarios manualmente")
 
     if not db_engine:
@@ -5710,9 +6045,13 @@ async def create_user_manual(body: UserCreateIn, request: Request):
     email = body.email.strip().lower()
     password = body.password
 
+    if not valid_slug(tenant_slug):
+        raise HTTPException(400, "Tenant inválido. Usa solo letras minúsculas, números y guiones.")
+
     # Validar que el tenant no exista
     tenant_exists = await fetch_tenant(tenant_slug)
     if tenant_exists:
+        log.warning(f"[create-user-manual] Tenant '{tenant_slug}' ya existe")
         raise HTTPException(400, f"El tenant '{tenant_slug}' ya existe")
 
     # Validar que el email no exista
