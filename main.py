@@ -1945,7 +1945,7 @@ async def fetch_catalog_for_tenant(t: dict | None) -> list[dict]:
         return cached.get("items", []) or []
 
     # Shopify tiene prioridad si hay credenciales
-    if s.get("shopify_domain") and s.get("shopify_storefront_token"):
+    if s.get("shopify_domain") and (s.get("shopify_storefront_token") or s.get("shopify_admin_token")):
         try:
             items = await fetch_shopify_catalog(t)
             if items:
@@ -3401,10 +3401,11 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
 
             # Tarjetas de productos si hay intención de recomendación
             rec_keywords = [
-                "recomiend", "qué tienes", "que tienes", "busco", "necesito",
+                "recomiend", "qué tienes", "que tienes", "tienes ", "busco", "necesito",
                 "qué producto", "que producto", "opciones", "sugier",
                 "catálogo", "catalogo", "para mí", "para mi",
                 "cuál sería", "cual seria", "mostrar", "ver product",
+                "hay ", "tienen ", "venden", "disponib",
                 "tienen de", "tienes algo", "qué me", "que me",
             ]
             rec_intent = any(k in text_lc for k in rec_keywords)
@@ -5990,7 +5991,7 @@ async def shopify_list_products(current = Depends(require_user)):
     if not t:
         raise HTTPException(404, "Tenant no encontrado")
     s = (t.get("settings") or {})
-    if not s.get("shopify_domain") or not s.get("shopify_storefront_token"):
+    if not s.get("shopify_domain") or not (s.get("shopify_storefront_token") or s.get("shopify_admin_token")):
         raise HTTPException(400, "Shopify no está configurado. Conecta tu tienda primero.")
     try:
         items = await fetch_shopify_catalog(t)
