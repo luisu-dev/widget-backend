@@ -122,6 +122,22 @@ export default function Integrations({ token, onConnectionChange }: Integrations
     window.history.replaceState({}, '', nextUrl);
   }, [onConnectionChange]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const shopifyConnected = params.get('shopify_connected') === 'true';
+    const shopName = params.get('shop');
+
+    if (!shopifyConnected) return;
+
+    fetchShopifyStatus();
+    setShopifyFeedback({ type: 'success', text: `Tienda${shopName ? ` "${shopName}"` : ''} conectada correctamente.` });
+
+    params.delete('shopify_connected');
+    params.delete('shop');
+    const nextQuery = params.toString();
+    window.history.replaceState({}, '', `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`);
+  }, []);
+
   const fetchConnectedPagesCount = async () => {
     try {
       const res = await fetch(`${API_BASE}/auth/facebook/pages`, {
