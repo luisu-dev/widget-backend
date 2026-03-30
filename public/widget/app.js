@@ -69,6 +69,30 @@ function __ziaInit(){
     return el;
   };
 
+  // Product cards renderer
+  function renderProductCards(products = []) {
+    if (!products || !products.length) return;
+    const wrap = document.createElement("div");
+    wrap.className = "zia-products";
+    for (const p of products) {
+      const card = document.createElement("div");
+      card.className = "zia-product-card";
+      const safe = (s) => String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+      card.innerHTML = `
+        ${p.image ? `<img src="${safe(p.image)}" class="zia-product-img" alt="${safe(p.name)}" loading="lazy" onerror="this.style.display='none'">` : ""}
+        <div class="zia-product-info">
+          <div class="zia-product-name">${safe(p.name)}</div>
+          ${p.description ? `<div class="zia-product-desc">${safe(p.description)}</div>` : ""}
+          ${p.price ? `<div class="zia-product-price">${safe(p.price)}</div>` : ""}
+          ${p.url ? `<a href="${safe(p.url)}" target="_blank" rel="noopener" class="zia-product-btn">Ver producto</a>` : ""}
+        </div>
+      `;
+      wrap.appendChild(card);
+    }
+    thread?.appendChild(wrap);
+    autoscroll();
+  }
+
   // CTA renderer (botón de pago, chips y link a WhatsApp)
   function renderZiaCTA(payload = {}){
     if (!ctaBox) return;
@@ -292,6 +316,11 @@ function __ziaInit(){
           }else if(evType==="ui"){
             try{
               const ui = JSON.parse(data);
+
+              // Tarjetas de productos (Shopify / catálogo)
+              if (Array.isArray(ui.products) && ui.products.length) {
+                renderProductCards(ui.products);
+              }
 
               // botón fijo en la zona CTA (y chips / WhatsApp si aplica)
               renderZiaCTA(ui);

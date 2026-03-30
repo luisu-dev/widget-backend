@@ -60,6 +60,42 @@
 :where([data-zia]) .chip{ border:1px solid var(--cw-border); background:transparent; color:var(--cw-text); border-radius:999px; padding:6px 10px; font-size:13px; cursor:pointer; }
 :where([data-zia]) .chip:hover{ border-color:var(--cw-primary); }
 
+/* --- Product cards --- */
+:where([data-zia]) .zia-products{
+  display:flex; flex-direction:column; gap:10px;
+  padding:8px 12px; width:100%;
+}
+:where([data-zia]) .zia-product-card{
+  display:flex; gap:10px; align-items:flex-start;
+  background:var(--cw-bubble,#f3f4f6); border:1px solid var(--cw-border);
+  border-radius:12px; overflow:hidden; padding:10px;
+}
+:where([data-zia]) .zia-product-img{
+  width:72px; height:72px; object-fit:cover; border-radius:8px;
+  flex-shrink:0; background:var(--cw-border);
+}
+:where([data-zia]) .zia-product-info{
+  display:flex; flex-direction:column; gap:3px; min-width:0; flex:1;
+}
+:where([data-zia]) .zia-product-name{
+  font-weight:600; font-size:13px; color:var(--cw-text);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+:where([data-zia]) .zia-product-desc{
+  font-size:11px; color:var(--cw-muted); line-height:1.35;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+:where([data-zia]) .zia-product-price{
+  font-size:13px; font-weight:700; color:var(--cw-primary); margin-top:2px;
+}
+:where([data-zia]) .zia-product-btn{
+  display:inline-block; margin-top:5px; padding:4px 10px;
+  border:1px solid var(--cw-primary); border-radius:999px;
+  font-size:11px; font-weight:600; color:var(--cw-primary);
+  text-decoration:none; width:fit-content;
+}
+:where([data-zia]) .zia-product-btn:hover{ background:var(--cw-primary); color:#fff; }
+
 /* --- Input --- */
 :where([data-zia]) .cw-footer{ display:grid; grid-template-columns:1fr auto; gap:8px;
   padding:12px; border-top:1px solid var(--cw-border);

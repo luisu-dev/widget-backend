@@ -147,6 +147,9 @@ TWILIO_SMS_FROM       = os.getenv("TWILIO_SMS_FROM", "")
 TWILIO_VALIDATE_SIGNATURE = as_bool(os.getenv("TWILIO_VALIDATE_SIGNATURE"), False)
 
 # Resend (Email Service)
+SHOPIFY_CLIENT_ID     = os.getenv("SHOPIFY_CLIENT_ID", "").strip()
+SHOPIFY_CLIENT_SECRET = os.getenv("SHOPIFY_CLIENT_SECRET", "").strip()
+
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
 if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
@@ -1933,14 +1936,27 @@ CATALOG_TTL_SECONDS = 300  # 5 minutos
 
 async def fetch_catalog_for_tenant(t: dict | None) -> list[dict]:
     s = (t or {}).get("settings", {}) or {}
-    url = s.get("catalog_url")
     slug = (t or {}).get("slug", "")
-    if not url or not slug:
+    if not slug:
         return []
     now = time.time()
     cached = CATALOG_CACHE.get(slug)
     if cached and (now - cached.get("at", 0)) < CATALOG_TTL_SECONDS:
         return cached.get("items", []) or []
+
+    # Shopify tiene prioridad si hay credenciales
+    if s.get("shopify_domain") and s.get("shopify_storefront_token"):
+        try:
+            items = await fetch_shopify_catalog(t)
+            if items:
+                CATALOG_CACHE[slug] = {"at": now, "items": items}
+                return items
+        except Exception as e:
+            log.warning(f"shopify catalog failed for {slug}: {e}")
+
+    url = s.get("catalog_url")
+    if not url:
+        return []
     try:
         async with httpx.AsyncClient(timeout=6.0) as cx:
             r = await cx.get(str(url))
@@ -2046,6 +2062,158 @@ def _match_catalog_item(user_text: str, items: list[dict]) -> dict | None:
             best_score = score
             best = it
     return best if best_score >= 1.2 else None
+
+
+def _find_top_products(query: str, items: list[dict], top_n: int = 3) -> list[dict]:
+    """Devuelve hasta top_n productos del catálogo más relevantes para la query."""
+    q = (query or "").lower()
+    words = [w for w in re.split(r"[^a-z0-9ñáéíóúü]+", q) if len(w) >= 3]
+    scored: list[tuple[float, dict]] = []
+    for it in items:
+        name = (it.get("name") or "").lower()
+        desc = (it.get("description") or "").lower()
+        score = 0.0
+        for w in words:
+            if w in name:
+                score += 1.5
+            elif w in desc:
+                score += 0.5
+        scored.append((score, it))
+    scored.sort(key=lambda x: -x[0])
+    top = [it for _, it in scored[:top_n]]
+    # Si ninguno matcheó, devolver simplemente los primeros
+    return top if top else items[:top_n]
+
+
+def _format_product_card(item: dict) -> dict:
+    """Convierte un item del catálogo al formato de tarjeta para el widget."""
+    raw = item.get("raw") or {}
+    return {
+        "id": item.get("product_id", ""),
+        "name": item.get("name", ""),
+        "description": (item.get("description") or "")[:150],
+        "price": item.get("price_display", ""),
+        "image": item.get("image") or raw.get("image"),
+        "url": item.get("url") or raw.get("url"),
+    }
+
+
+async def fetch_shopify_catalog(tenant: dict) -> list[dict]:
+    """
+    Obtiene productos desde Shopify.
+    Soporta Admin REST API (shopify_admin_token) y Storefront GraphQL API (shopify_storefront_token).
+    """
+    s = (tenant or {}).get("settings", {}) or {}
+    domain = (s.get("shopify_domain") or "").strip()
+    if not domain:
+        return []
+
+    store_url = (s.get("shopify_store_url") or f"https://{domain}").rstrip("/")
+
+    # ── Admin REST API (token de app instalada en la tienda) ──────────────────
+    admin_token = (s.get("shopify_admin_token") or "").strip()
+    if admin_token:
+        api_url = f"https://{domain}/admin/api/2024-01/products.json?limit=50&fields=id,title,body_html,handle,images,variants"
+        async with httpx.AsyncClient(timeout=8.0) as cx:
+            r = await cx.get(api_url, headers={"X-Shopify-Access-Token": admin_token})
+            r.raise_for_status()
+            raw_products = r.json().get("products") or []
+
+        products: list[dict] = []
+        for p in raw_products:
+            variant = (p.get("variants") or [{}])[0] or {}
+            price_raw = variant.get("price", "")
+            try:
+                price_display = f"${float(price_raw):,.2f} MXN" if price_raw else ""
+            except (ValueError, TypeError):
+                price_display = price_raw
+            image = ((p.get("images") or [{}])[0] or {}).get("src")
+            handle = p.get("handle", "")
+            import re as _re
+            desc = _re.sub(r"<[^>]+>", " ", p.get("body_html") or "").strip()[:200]
+            products.append({
+                "name": p.get("title", ""),
+                "description": desc,
+                "product_id": str(p.get("id", "")),
+                "price_id": "",
+                "price_display": price_display,
+                "image": image,
+                "url": f"{store_url}/products/{handle}" if handle else None,
+                "metadata": {"handle": handle, "source": "shopify_admin"},
+                "raw": p,
+            })
+        return products
+
+    # ── Storefront GraphQL API (token público) ────────────────────────────────
+    token = (s.get("shopify_storefront_token") or "").strip()
+    if not token:
+        return []
+
+    query = """
+    {
+      products(first: 50) {
+        edges {
+          node {
+            id
+            title
+            description
+            handle
+            images(first: 1) { edges { node { url altText } } }
+            variants(first: 1) {
+              edges { node { price { amount currencyCode } } }
+            }
+          }
+        }
+      }
+    }
+    """
+    api_url = f"https://{domain}/api/2024-01/graphql.json"
+    async with httpx.AsyncClient(timeout=8.0) as cx:
+        r = await cx.post(
+            api_url,
+            json={"query": query},
+            headers={
+                "X-Shopify-Storefront-Access-Token": token,
+                "Content-Type": "application/json",
+            },
+        )
+        r.raise_for_status()
+        data = r.json()
+
+    products = []
+    edges = (data.get("data") or {}).get("products", {}).get("edges") or []
+
+    for edge in edges:
+        node = edge.get("node") or {}
+        var_edges = (node.get("variants") or {}).get("edges") or []
+        variant = ((var_edges[0] or {}).get("node") or {}) if var_edges else {}
+        price_info = variant.get("price") or {}
+        amount = price_info.get("amount", "")
+        currency = price_info.get("currencyCode", "MXN")
+        try:
+            price_display = f"${float(amount):,.2f} {currency}" if amount else ""
+        except (ValueError, TypeError):
+            price_display = f"{amount} {currency}".strip() if amount else ""
+
+        img_edges = (node.get("images") or {}).get("edges") or []
+        image = (img_edges[0].get("node") or {}).get("url") if img_edges else None
+
+        handle = node.get("handle", "")
+        product_url = f"{store_url}/products/{handle}" if handle else None
+
+        products.append({
+            "name": node.get("title", ""),
+            "description": (node.get("description") or "")[:200],
+            "product_id": node.get("id", ""),
+            "price_id": "",
+            "price_display": price_display,
+            "image": image,
+            "url": product_url,
+            "metadata": {"handle": handle, "source": "shopify"},
+            "raw": node,
+        })
+
+    return products
 
 async def _create_checkout_for_item(t: dict | None, item: dict, qty: int = 1, mode: str = "payment") -> dict:
     acct = _tenant_stripe_acct(t)
@@ -3230,6 +3398,22 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
             asyncio.create_task(store_event(tenant or "public", sid, "msg_out", {"text": final_text[:MAX_TEXT_LENGTH]}))
             asyncio.create_task(log_message(tenant or "public", sid, "web", "out", final_text, author="assistant"))
             ui = suggest_ui_for_text(input.message, t)
+
+            # Tarjetas de productos si hay intención de recomendación
+            rec_keywords = [
+                "recomiend", "qué tienes", "que tienes", "busco", "necesito",
+                "qué producto", "que producto", "opciones", "sugier",
+                "catálogo", "catalogo", "para mí", "para mi",
+                "cuál sería", "cual seria", "mostrar", "ver product",
+                "tienen de", "tienes algo", "qué me", "que me",
+            ]
+            rec_intent = any(k in text_lc for k in rec_keywords)
+            if rec_intent and catalog_items:
+                combined_query = f"{input.message} {final_text}"
+                top_products = _find_top_products(combined_query, catalog_items, top_n=3)
+                if top_products:
+                    ui["products"] = [_format_product_card(p) for p in top_products]
+
             yield sse_event(json.dumps(ui), event="ui")
             yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
 
@@ -5607,6 +5791,215 @@ async def twilio_test_connection(body: dict, current = Depends(require_user)):
             "error": str(e),
             "message": "Error al enviar mensaje de prueba. Verifica tus credenciales."
         }
+
+
+# In-memory nonce store: state → tenant_slug  (TTL 10 min)
+_SHOPIFY_OAUTH_STATE: dict[str, tuple[str, float]] = {}
+
+@app.get("/v1/admin/shopify/oauth/start")
+async def shopify_oauth_start(shop: str = Query(...), current = Depends(require_user)):
+    """Inicia el flujo OAuth de Shopify. Devuelve la URL de autorización."""
+    if not SHOPIFY_CLIENT_ID:
+        raise HTTPException(500, "SHOPIFY_CLIENT_ID no configurado en el servidor.")
+
+    domain = shop.strip().lower()
+    if not domain.endswith(".myshopify.com"):
+        domain = f"{domain}.myshopify.com"
+
+    import secrets as _secrets
+    state = _secrets.token_urlsafe(16)
+    _SHOPIFY_OAUTH_STATE[state] = (current["tenant_slug"], time.time())
+
+    backend_url = os.getenv("SITE_URL", "https://widget-backend-1-pip5.onrender.com").rstrip("/")
+    redirect_uri = f"{backend_url}/v1/admin/shopify/callback"
+    scopes = "read_products"
+
+    auth_url = (
+        f"https://{domain}/admin/oauth/authorize"
+        f"?client_id={SHOPIFY_CLIENT_ID}"
+        f"&scope={scopes}"
+        f"&redirect_uri={redirect_uri}"
+        f"&state={state}"
+    )
+    return {"auth_url": auth_url, "domain": domain}
+
+
+@app.get("/v1/admin/shopify/callback")
+async def shopify_oauth_callback(
+    code: str = Query(...),
+    shop: str = Query(...),
+    state: str = Query(...),
+    hmac: str = Query(default=""),
+):
+    """Callback OAuth de Shopify — intercambia el code por un access token."""
+    from starlette.responses import RedirectResponse
+
+    # Verificar state
+    entry = _SHOPIFY_OAUTH_STATE.pop(state, None)
+    if not entry:
+        raise HTTPException(400, "State inválido o expirado. Intenta de nuevo.")
+    tenant_slug, issued_at = entry
+    if time.time() - issued_at > 600:
+        raise HTTPException(400, "State expirado. Intenta de nuevo.")
+
+    if not SHOPIFY_CLIENT_SECRET:
+        raise HTTPException(500, "SHOPIFY_CLIENT_SECRET no configurado.")
+
+    # Intercambiar code por token
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as cx:
+            r = await cx.post(
+                f"https://{shop}/admin/oauth/access_token",
+                json={
+                    "client_id": SHOPIFY_CLIENT_ID,
+                    "client_secret": SHOPIFY_CLIENT_SECRET,
+                    "code": code,
+                },
+            )
+            r.raise_for_status()
+            data = r.json()
+    except Exception as e:
+        raise HTTPException(502, f"Error al obtener token de Shopify: {e}")
+
+    access_token = data.get("access_token", "")
+    if not access_token:
+        raise HTTPException(502, "Shopify no devolvió un token válido.")
+
+    # Obtener nombre de la tienda
+    shop_name = shop
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as cx:
+            r2 = await cx.get(
+                f"https://{shop}/admin/api/2024-01/shop.json",
+                headers={"X-Shopify-Access-Token": access_token},
+            )
+            shop_name = r2.json().get("shop", {}).get("name", shop)
+    except Exception:
+        pass
+
+    # Guardar token en settings del tenant
+    CATALOG_CACHE.pop(tenant_slug, None)
+    await merge_tenant_settings(tenant_slug, {
+        "shopify_domain": shop,
+        "shopify_admin_token": access_token,
+        "shopify_storefront_token": None,
+        "shopify_store_url": f"https://{shop}",
+    })
+
+    # Redirigir al dashboard con mensaje de éxito
+    frontend_url = os.getenv("FRONTEND_URL", "https://acidia.app").rstrip("/")
+    return RedirectResponse(url=f"{frontend_url}/dashboard?shopify_connected=true&shop={shop_name}")
+
+
+@app.post("/v1/admin/shopify/connect")
+async def shopify_connect(body: dict, current = Depends(require_user)):
+    """
+    Guarda y valida las credenciales de Shopify.
+    Soporta Admin token (shopify_admin_token) o Storefront token (shopify_storefront_token).
+    Body: { shopify_domain, shopify_admin_token | shopify_storefront_token, shopify_store_url? }
+    """
+    tenant_slug = current["tenant_slug"]
+    domain = (body.get("shopify_domain") or "").strip().lower()
+    admin_token = (body.get("shopify_admin_token") or "").strip()
+    storefront_token = (body.get("shopify_storefront_token") or "").strip()
+    store_url = (body.get("shopify_store_url") or "").strip()
+
+    if not domain:
+        raise HTTPException(400, "shopify_domain es requerido")
+    if not admin_token and not storefront_token:
+        raise HTTPException(400, "Debes proveer shopify_admin_token o shopify_storefront_token")
+
+    if not domain.endswith(".myshopify.com") and "." not in domain:
+        domain = f"{domain}.myshopify.com"
+
+    shop_name = domain
+    # Validar con Admin REST API
+    if admin_token:
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as cx:
+                r = await cx.get(
+                    f"https://{domain}/admin/api/2024-01/shop.json",
+                    headers={"X-Shopify-Access-Token": admin_token},
+                )
+                if r.status_code == 401:
+                    raise HTTPException(400, "Token de Admin inválido. Verifica que la app esté instalada y el token sea correcto.")
+                if r.status_code != 200:
+                    raise HTTPException(400, f"Shopify respondió con HTTP {r.status_code}. Verifica el dominio y el token.")
+                shop_name = r.json().get("shop", {}).get("name", domain)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(400, f"No se pudo conectar con Shopify: {e}")
+    else:
+        # Validar con Storefront API
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as cx:
+                r = await cx.post(
+                    f"https://{domain}/api/2024-01/graphql.json",
+                    json={"query": "{ shop { name } }"},
+                    headers={"X-Shopify-Storefront-Access-Token": storefront_token, "Content-Type": "application/json"},
+                )
+                if r.status_code != 200:
+                    raise HTTPException(400, f"Shopify rechazó el token (HTTP {r.status_code}).")
+                shop_name = (r.json().get("data") or {}).get("shop", {}).get("name", domain)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(400, f"No se pudo conectar con Shopify: {e}")
+
+    CATALOG_CACHE.pop(tenant_slug, None)
+
+    patch: dict = {"shopify_domain": domain}
+    if admin_token:
+        patch["shopify_admin_token"] = admin_token
+        patch["shopify_storefront_token"] = None  # limpiar el otro
+    else:
+        patch["shopify_storefront_token"] = storefront_token
+        patch["shopify_admin_token"] = None
+    if store_url:
+        patch["shopify_store_url"] = store_url
+
+    await merge_tenant_settings(tenant_slug, patch)
+
+    return {
+        "success": True,
+        "shop_name": shop_name,
+        "domain": domain,
+        "message": f"Tienda '{shop_name}' conectada correctamente.",
+    }
+
+
+@app.delete("/v1/admin/shopify/disconnect")
+async def shopify_disconnect(current = Depends(require_user)):
+    """Desconecta la integración de Shopify."""
+    tenant_slug = current["tenant_slug"]
+    CATALOG_CACHE.pop(tenant_slug, None)
+    await merge_tenant_settings(tenant_slug, {
+        "shopify_domain": None,
+        "shopify_storefront_token": None,
+        "shopify_store_url": None,
+    })
+    return {"success": True, "message": "Shopify desconectado."}
+
+
+@app.get("/v1/admin/shopify/products")
+async def shopify_list_products(current = Depends(require_user)):
+    """Retorna los productos de Shopify para previsualizar la conexión."""
+    tenant_slug = current["tenant_slug"]
+    t = await fetch_tenant(tenant_slug)
+    if not t:
+        raise HTTPException(404, "Tenant no encontrado")
+    s = (t.get("settings") or {})
+    if not s.get("shopify_domain") or not s.get("shopify_storefront_token"):
+        raise HTTPException(400, "Shopify no está configurado. Conecta tu tienda primero.")
+    try:
+        items = await fetch_shopify_catalog(t)
+    except Exception as e:
+        raise HTTPException(502, f"Error al obtener productos de Shopify: {e}")
+    return {
+        "total": len(items),
+        "products": [_format_product_card(p) for p in items],
+    }
 
 
 @app.get("/v1/admin/twilio/webhook-url")

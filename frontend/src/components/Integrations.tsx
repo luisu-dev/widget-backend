@@ -80,6 +80,14 @@ export default function Integrations({ token, onConnectionChange }: Integrations
     whatsapp_from: ''
   });
 
+  // Shopify integration
+  const [shopifyForm, setShopifyForm] = useState({ domain: '', adminToken: '', storefrontToken: '', storeUrl: '', tokenType: 'admin' as 'admin' | 'storefront' });
+  const [shopifyStatus, setShopifyStatus] = useState<{ connected: boolean; shopName?: string; domain?: string } | null>(null);
+  const [shopifyLoading, setShopifyLoading] = useState(false);
+  const [shopifyFeedback, setShopifyFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [shopifyProducts, setShopifyProducts] = useState<any[]>([]);
+  const [shopifyProductsLoading, setShopifyProductsLoading] = useState(false);
+
   // Tenants/brands for multi-brand integrations
   const [tenants, setTenants] = useState<any[]>([]);
 
@@ -88,6 +96,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
     fetchTenants();
     fetchConnectedPagesCount();
     fetchGoogleCalendarSettings();
+    fetchShopifyStatus();
   }, []);
 
   useEffect(() => {
@@ -157,6 +166,112 @@ export default function Integrations({ token, onConnectionChange }: Integrations
       }
     } catch (error) {
       console.error('Error fetching WhatsApp status:', error);
+    }
+  };
+
+  const fetchShopifyStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/v1/admin/tenant/settings`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const settings = data.settings || {};
+        if (settings.shopify_domain && settings.shopify_storefront_token) {
+          setShopifyStatus({ connected: true, domain: settings.shopify_domain });
+        } else {
+          setShopifyStatus({ connected: false });
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching Shopify status:', error);
+    }
+  };
+
+  const handleShopifyOAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setShopifyLoading(true);
+    setShopifyFeedback(null);
+    try {
+      const domain = shopifyForm.domain.trim();
+      if (!domain) throw new Error('Ingresa el dominio de tu tienda');
+      const res = await fetch(`${API_BASE}/v1/admin/shopify/oauth/start?shop=${encodeURIComponent(domain)}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Error al iniciar conexión');
+      window.location.href = data.auth_url;
+    } catch (err: any) {
+      setShopifyFeedback({ type: 'error', text: err.message });
+      setShopifyLoading(false);
+    }
+  };
+
+  const handleShopifyConnect = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setShopifyLoading(true);
+    setShopifyFeedback(null);
+    try {
+      const payload: any = {
+        shopify_domain: shopifyForm.domain.trim(),
+        shopify_store_url: shopifyForm.storeUrl.trim() || undefined,
+      };
+      if (shopifyForm.tokenType === 'admin') {
+        payload.shopify_admin_token = shopifyForm.adminToken.trim();
+      } else {
+        payload.shopify_storefront_token = shopifyForm.storefrontToken.trim();
+      }
+      const res = await fetch(`${API_BASE}/v1/admin/shopify/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Error al conectar con Shopify');
+      setShopifyFeedback({ type: 'success', text: data.message });
+      setShopifyStatus({ connected: true, shopName: data.shop_name, domain: data.domain });
+      setShopifyForm({ domain: '', adminToken: '', storefrontToken: '', storeUrl: '', tokenType: 'admin' });
+      onConnectionChange();
+    } catch (err: any) {
+      setShopifyFeedback({ type: 'error', text: err.message });
+    } finally {
+      setShopifyLoading(false);
+    }
+  };
+
+  const handleShopifyDisconnect = async () => {
+    if (!confirm('¿Desconectar Shopify? El bot dejará de acceder a tu catálogo de productos.')) return;
+    setShopifyLoading(true);
+    try {
+      await fetch(`${API_BASE}/v1/admin/shopify/disconnect`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setShopifyStatus({ connected: false });
+      setShopifyProducts([]);
+      setShopifyFeedback({ type: 'success', text: 'Shopify desconectado.' });
+      onConnectionChange();
+    } catch {
+      setShopifyFeedback({ type: 'error', text: 'Error al desconectar.' });
+    } finally {
+      setShopifyLoading(false);
+    }
+  };
+
+  const handleShopifyPreview = async () => {
+    setShopifyProductsLoading(true);
+    setShopifyProducts([]);
+    try {
+      const res = await fetch(`${API_BASE}/v1/admin/shopify/products`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Error');
+      setShopifyProducts(data.products || []);
+    } catch (err: any) {
+      setShopifyFeedback({ type: 'error', text: err.message });
+    } finally {
+      setShopifyProductsLoading(false);
     }
   };
 
@@ -1114,6 +1229,145 @@ export default function Integrations({ token, onConnectionChange }: Integrations
             <button className="px-4 py-2 rounded-lg bg-[#04d9b5]/20 border border-[#04d9b5]/40 text-[#04d9b5] hover:bg-[#04d9b5]/30 transition text-sm">
               + Agregar Sitio Web
             </button>
+          </div>
+        )}
+      </div>
+
+      {/* ── Shopify ── */}
+      <div className="border border-white/10 rounded-xl overflow-hidden bg-white/5">
+        <button
+          onClick={() => toggleSection('shopify')}
+          className="w-full px-6 py-5 flex items-center justify-between hover:bg-white/5 transition group"
+        >
+          <div className="flex items-center space-x-4">
+            <h3 className="text-base font-medium text-white group-hover:text-[#04d9b5] transition">
+              Shopify
+            </h3>
+            <span className="text-xs text-gray-400">Catálogo de productos para el bot</span>
+          </div>
+          <div className="flex items-center space-x-3">
+            {shopifyStatus?.connected
+              ? <span className="text-xs text-green-400">● Conectado</span>
+              : <span className="text-xs text-gray-500">No conectado</span>}
+            <svg
+              className={`w-4 h-4 text-[#04d9b5] transition-transform ${activeSection === 'shopify' ? 'rotate-180' : ''}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
+        </button>
+
+        {activeSection === 'shopify' && (
+          <div className="px-6 py-5 border-t border-white/10 bg-black/20 space-y-5">
+
+            {shopifyFeedback && (
+              <div className={`p-3 rounded-lg text-sm ${shopifyFeedback.type === 'success' ? 'bg-green-500/20 border border-green-500/40 text-green-300' : 'bg-red-500/20 border border-red-500/40 text-red-300'}`}>
+                {shopifyFeedback.text}
+              </div>
+            )}
+
+            {shopifyStatus?.connected ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between p-4 rounded-xl bg-green-500/10 border border-green-500/20">
+                  <div>
+                    <p className="text-white font-medium text-sm">{shopifyStatus.shopName || shopifyStatus.domain}</p>
+                    <p className="text-gray-400 text-xs mt-0.5">{shopifyStatus.domain}</p>
+                  </div>
+                  <button
+                    onClick={handleShopifyDisconnect}
+                    disabled={shopifyLoading}
+                    className="text-red-400 hover:text-red-300 text-xs disabled:opacity-50"
+                  >
+                    Desconectar
+                  </button>
+                </div>
+
+                <div>
+                  <button
+                    onClick={handleShopifyPreview}
+                    disabled={shopifyProductsLoading}
+                    className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white text-sm hover:bg-white/15 transition disabled:opacity-50"
+                  >
+                    {shopifyProductsLoading ? 'Cargando...' : 'Ver productos sincronizados'}
+                  </button>
+                </div>
+
+                {shopifyProducts.length > 0 && (
+                  <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                    {shopifyProducts.map((p, i) => (
+                      <div key={p.id || i} className="flex items-center gap-3 p-2 rounded-lg bg-white/5 border border-white/10">
+                        {p.image && <img src={p.image} alt={p.name} className="w-10 h-10 rounded object-cover flex-shrink-0" />}
+                        <div className="min-w-0">
+                          <p className="text-white text-xs font-medium truncate">{p.name}</p>
+                          <p className="text-[#04d9b5] text-xs">{p.price || '—'}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <p className="text-gray-400 text-xs">
+                  Conecta tu tienda Shopify para que el bot pueda recomendar productos y mostrar tarjetas interactivas.
+                </p>
+
+                {/* Opción principal: OAuth (un clic) */}
+                <form onSubmit={handleShopifyOAuth} className="space-y-3 p-4 rounded-xl bg-[#04d9b5]/5 border border-[#04d9b5]/20">
+                  <p className="text-[#04d9b5] text-xs font-semibold">Recomendado — Autorización automática</p>
+                  <div>
+                    <input
+                      type="text"
+                      required
+                      placeholder="mi-tienda.myshopify.com"
+                      value={shopifyForm.domain}
+                      onChange={e => setShopifyForm(prev => ({ ...prev, domain: e.target.value }))}
+                      className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-[#04d9b5]/60"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={shopifyLoading}
+                    className="w-full py-2.5 rounded-lg bg-[#04d9b5] text-black font-semibold text-sm hover:bg-[#04d9b5]/90 transition disabled:opacity-50"
+                  >
+                    {shopifyLoading ? 'Redirigiendo...' : 'Autorizar con Shopify →'}
+                  </button>
+                  <p className="text-gray-500 text-xs">Te redirige a Shopify para aprobar el acceso. Sin copiar tokens.</p>
+                </form>
+
+                {/* Opción avanzada: token manual */}
+                <details className="group">
+                  <summary className="text-gray-500 text-xs cursor-pointer hover:text-gray-300">
+                    Opción avanzada: ingresar token manualmente
+                  </summary>
+                  <form onSubmit={handleShopifyConnect} className="space-y-3 mt-3">
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => setShopifyForm(prev => ({ ...prev, tokenType: 'admin' }))}
+                        className={`flex-1 py-1.5 rounded text-xs border ${shopifyForm.tokenType === 'admin' ? 'bg-[#04d9b5]/20 border-[#04d9b5]/50 text-[#04d9b5]' : 'bg-white/5 border-white/10 text-gray-500'}`}>
+                        Admin Token
+                      </button>
+                      <button type="button" onClick={() => setShopifyForm(prev => ({ ...prev, tokenType: 'storefront' }))}
+                        className={`flex-1 py-1.5 rounded text-xs border ${shopifyForm.tokenType === 'storefront' ? 'bg-[#04d9b5]/20 border-[#04d9b5]/50 text-[#04d9b5]' : 'bg-white/5 border-white/10 text-gray-500'}`}>
+                        Storefront Token
+                      </button>
+                    </div>
+                    <input type="password" required
+                      placeholder={shopifyForm.tokenType === 'admin' ? 'shpat_...' : 'Token de Storefront API'}
+                      value={shopifyForm.tokenType === 'admin' ? shopifyForm.adminToken : shopifyForm.storefrontToken}
+                      onChange={e => setShopifyForm(prev => shopifyForm.tokenType === 'admin'
+                        ? { ...prev, adminToken: e.target.value }
+                        : { ...prev, storefrontToken: e.target.value })}
+                      className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-[#04d9b5]/60"
+                    />
+                    <button type="submit" disabled={shopifyLoading}
+                      className="w-full py-2 rounded-lg bg-white/10 border border-white/20 text-white text-sm hover:bg-white/15 transition disabled:opacity-50">
+                      {shopifyLoading ? 'Guardando...' : 'Guardar token'}
+                    </button>
+                  </form>
+                </details>
+              </div>
+            )}
           </div>
         )}
       </div>
