@@ -1952,7 +1952,7 @@ async def fetch_catalog_for_tenant(t: dict | None) -> list[dict]:
                 CATALOG_CACHE[slug] = {"at": now, "items": items}
                 return items
         except Exception as e:
-            log.warning(f"shopify catalog failed for {slug}: {e}")
+            log.error(f"shopify catalog failed for {slug}: {type(e).__name__}: {e}")
 
     url = s.get("catalog_url")
     if not url:
@@ -2116,6 +2116,8 @@ async def fetch_shopify_catalog(tenant: dict) -> list[dict]:
         api_url = f"https://{domain}/admin/api/2024-01/products.json?limit=50&fields=id,title,body_html,handle,images,variants"
         async with httpx.AsyncClient(timeout=8.0) as cx:
             r = await cx.get(api_url, headers={"X-Shopify-Access-Token": admin_token})
+            if r.status_code != 200:
+                log.error(f"Shopify Admin API error {r.status_code} for {domain}: {r.text[:300]}")
             r.raise_for_status()
             raw_products = r.json().get("products") or []
 
