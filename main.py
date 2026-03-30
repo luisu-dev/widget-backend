@@ -5810,7 +5810,7 @@ async def shopify_oauth_start(shop: str = Query(...), current = Depends(require_
     state = _secrets.token_urlsafe(16)
     _SHOPIFY_OAUTH_STATE[state] = (current["tenant_slug"], time.time())
 
-    backend_url = os.getenv("SITE_URL", "https://widget-backend-1-pip5.onrender.com").rstrip("/")
+    backend_url = os.getenv("BACKEND_URL", os.getenv("RENDER_EXTERNAL_URL", "https://widget-backend-1-pip5.onrender.com")).rstrip("/")
     redirect_uri = f"{backend_url}/v1/admin/shopify/callback"
     scopes = "read_products"
 
