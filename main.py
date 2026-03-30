@@ -5885,6 +5885,7 @@ async def shopify_oauth_callback(
         "shopify_admin_token": access_token,
         "shopify_storefront_token": None,
         "shopify_store_url": f"https://{shop}",
+        "shopify_shop_name": shop_name,
     })
 
     # Redirigir al dashboard con mensaje de éxito
@@ -5978,6 +5979,7 @@ async def shopify_disconnect(current = Depends(require_user)):
     await merge_tenant_settings(tenant_slug, {
         "shopify_domain": None,
         "shopify_storefront_token": None,
+        "shopify_admin_token": None,
         "shopify_store_url": None,
     })
     return {"success": True, "message": "Shopify desconectado."}

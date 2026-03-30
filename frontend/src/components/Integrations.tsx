@@ -193,8 +193,8 @@ export default function Integrations({ token, onConnectionChange }: Integrations
       if (res.ok) {
         const data = await res.json();
         const settings = data.settings || {};
-        if (settings.shopify_domain && settings.shopify_storefront_token) {
-          setShopifyStatus({ connected: true, domain: settings.shopify_domain });
+        if (settings.shopify_domain && (settings.shopify_storefront_token || settings.shopify_admin_token)) {
+          setShopifyStatus({ connected: true, domain: settings.shopify_domain, shopName: settings.shopify_shop_name });
         } else {
           setShopifyStatus({ connected: false });
         }
