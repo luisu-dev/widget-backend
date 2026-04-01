@@ -5485,7 +5485,11 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
             # si falla, sigue al comportamiento normal con LLM
 
 
+    catalog_items = await fetch_catalog_for_tenant(t)
+    catalog_summary = summarize_catalog_for_prompt(catalog_items)
     system_prompt = build_system_for_tenant(t)
+    if catalog_summary:
+        system_prompt = f"{system_prompt}\n\n{catalog_summary}"
     messages = build_messages_with_history(sid, system_prompt)
     answer = generate_answer(messages)
     add_message(sid, "assistant", answer)
@@ -5807,6 +5811,43 @@ async def twilio_test_connection(body: dict, current = Depends(require_user)):
 # In-memory nonce store: state → tenant_slug  (TTL 10 min)
 _SHOPIFY_OAUTH_STATE: dict[str, tuple[str, float]] = {}
 
+async def _save_shopify_state(state: str, tenant_slug: str):
+    """Guarda el state de OAuth en settings del tenant para sobrevivir reinicios."""
+    try:
+        t = await fetch_tenant(tenant_slug)
+        if t:
+            s = (t.get("settings") or {}).copy()
+            s[f"_shopify_oauth_{state}"] = time.time()
+            await merge_tenant_settings(tenant_slug, s)
+    except Exception:
+        pass
+    _SHOPIFY_OAUTH_STATE[state] = (tenant_slug, time.time())
+
+async def _pop_shopify_state(state: str) -> tuple[str, float] | None:
+    """Lee y elimina el state de OAuth de DB o memoria."""
+    # Buscar en memoria primero
+    entry = _SHOPIFY_OAUTH_STATE.pop(state, None)
+    if entry:
+        return entry
+    # Buscar en settings de todos los tenants (fallback para reinicios)
+    try:
+        async with db_engine.connect() as conn:
+            rows = await conn.execute(text(
+                "SELECT slug, settings FROM tenants WHERE settings::text LIKE :pat"
+            ), {"pat": f"%_shopify_oauth_{state}%"})
+            row = rows.fetchone()
+            if row:
+                slug = row[0]
+                s = row[1] if isinstance(row[1], dict) else {}
+                issued_at = s.get(f"_shopify_oauth_{state}", time.time())
+                # Limpiar el state guardado
+                s.pop(f"_shopify_oauth_{state}", None)
+                await merge_tenant_settings(slug, s)
+                return (slug, issued_at)
+    except Exception:
+        pass
+    return None
+
 @app.get("/v1/admin/shopify/oauth/start")
 async def shopify_oauth_start(shop: str = Query(...), current = Depends(require_user)):
     """Inicia el flujo OAuth de Shopify. Devuelve la URL de autorización."""
@@ -5819,6 +5860,7 @@ async def shopify_oauth_start(shop: str = Query(...), current = Depends(require_
 
     import secrets as _secrets
     state = _secrets.token_urlsafe(16)
+    await _save_shopify_state(state, current["tenant_slug"])
     _SHOPIFY_OAUTH_STATE[state] = (current["tenant_slug"], time.time())
 
     backend_url = os.getenv("BACKEND_URL", os.getenv("RENDER_EXTERNAL_URL", "https://widget-backend-1-pip5.onrender.com")).rstrip("/")
@@ -5845,8 +5887,8 @@ async def shopify_oauth_callback(
     """Callback OAuth de Shopify — intercambia el code por un access token."""
     from starlette.responses import RedirectResponse
 
-    # Verificar state
-    entry = _SHOPIFY_OAUTH_STATE.pop(state, None)
+    # Verificar state (DB primero, fallback a memoria)
+    entry = await _pop_shopify_state(state)
     if not entry:
         raise HTTPException(400, "State inválido o expirado. Intenta de nuevo.")
     tenant_slug, issued_at = entry
