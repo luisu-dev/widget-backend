@@ -1157,8 +1157,16 @@ def _twilio_req_is_valid(request: Request, auth_token: str) -> bool:
             log.warning("Solicitud Twilio sin X-Twilio-Signature header")
             return False
 
-        # Construir URL completa
-        url = str(request.url)
+        # Construir URL completa usando BACKEND_URL para coincidir con lo que Twilio firmó
+        backend_url = os.getenv("BACKEND_URL", "").rstrip("/")
+        if backend_url:
+            path_with_query = str(request.url).split(request.headers.get("host", ""), 1)[-1]
+            # Reconstruir con scheme+host del BACKEND_URL
+            from urllib.parse import urlparse as _urlparse
+            _parsed = _urlparse(str(request.url))
+            url = backend_url + _parsed.path + (f"?{_parsed.query}" if _parsed.query else "")
+        else:
+            url = str(request.url)
 
         # Obtener parámetros del form body
         validator = RequestValidator(auth_token)
