@@ -5433,6 +5433,79 @@ async def admin_run_migrations():
         "migrations": results
     }
 
+async def handle_booking_flow_wa(sid: str, message: str, t: Optional[dict], tenant_slug: str) -> Optional[str]:
+    """
+    Maneja el flujo de citas para WhatsApp.
+    Retorna el texto de respuesta si hay flujo activo, o None para continuar con el LLM.
+    """
+    booking_cfg = calendar_cfg_from_tenant(t)
+    flow = get_flow(sid)
+    text_lc = (message or "").lower()
+
+    # Reset si el usuario quiere salir del flujo
+    if flow.get("stage") and any(k in text_lc for k in ["cancelar", "cancel", "salir", "reiniciar", "otro tema"]):
+        reset_contact_flow(sid)
+        return "Entendido, cancelé el proceso de agendado. ¿En qué más te puedo ayudar?"
+
+    # Iniciar flujo de citas
+    if flow["stage"] is None and wants_booking(message):
+        if not google_calendar_ready_for_tenant(t):
+            return "Me encantaría agendarte, pero el calendario aún no está configurado. Puedes escribirnos directamente por WhatsApp o correo para coordinar."
+        flow["stage"] = "booking_collect"
+        flow["booking_fields"] = booking_cfg["collect_fields"]
+        flow["booking_answers"] = {}
+        flow["booking_index"] = 0
+        first_field = flow["booking_fields"][0]
+        return f"Perfecto, vamos a agendar tu cita. {booking_question_for_field(first_field)}"
+
+    # Recopilar datos del flujo
+    if flow["stage"] == "booking_collect":
+        fields = flow.get("booking_fields") or booking_cfg["collect_fields"]
+        idx = int(flow.get("booking_index") or 0)
+        if idx < 0 or idx >= len(fields):
+            idx = 0
+        current_field = fields[idx]
+        ok, normalized, error_msg = validate_booking_field_value(current_field, message or "")
+        if not ok:
+            return f"{error_msg}\n{booking_question_for_field(current_field)}"
+
+        answers = flow.setdefault("booking_answers", {})
+        answers[current_field] = normalized
+        if current_field == "name" and not flow.get("name"):
+            flow["name"] = normalized.title()
+        if current_field in {"email", "whatsapp", "phone"} and not flow.get("method"):
+            flow["method"] = "email" if current_field == "email" else "whatsapp"
+            flow["contact"] = normalized
+
+        next_idx = idx + 1
+        flow["booking_index"] = next_idx
+
+        # Aún quedan campos
+        if next_idx < len(fields):
+            return booking_question_for_field(fields[next_idx])
+
+        # Todos los datos recopilados — crear evento
+        try:
+            event_data = await create_google_calendar_event(t, sid, answers)
+            lead_contact = answers.get("email") or answers.get("whatsapp") or answers.get("phone") or "n/a"
+            lead_method = "email" if answers.get("email") else "whatsapp" if answers.get("whatsapp") else "llamada"
+            await save_lead(tenant_slug, sid, answers.get("name") or "Prospecto", lead_method, str(lead_contact),
+                            meta={"source": "whatsapp", "booking": answers, "calendar_event_id": event_data.get("id")})
+            confirm = f"✅ ¡Listo! Tu cita quedó agendada para el {answers.get('date')} a las {answers.get('time')}."
+            if event_data.get("html_link"):
+                confirm += f"\n📅 Ver en Google Calendar: {event_data['html_link']}"
+            if event_data.get("hangout_link"):
+                confirm += f"\n🎥 Meet: {event_data['hangout_link']}"
+        except Exception as e:
+            log.warning(f"WA booking calendar error: {e}")
+            confirm = "Ya tengo tus datos. No pude crear el evento automáticamente, pero te contactamos para confirmar el horario. ✅"
+
+        reset_contact_flow(sid)
+        return confirm
+
+    return None
+
+
 @app.post("/v1/twilio/whatsapp/webhook")
 async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default="")):
     if tenant and not valid_slug(tenant):
@@ -5489,6 +5562,15 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
             log.warning(f"WA fast-path checkout falló: {e}")
             # si falla, sigue al comportamiento normal con LLM
 
+
+    # Flujo de citas (tiene prioridad sobre el LLM)
+    booking_reply = await handle_booking_flow_wa(sid, body_txt, t, tenant or "public")
+    if booking_reply is not None:
+        add_message(sid, "assistant", booking_reply)
+        asyncio.create_task(log_message(tenant or "public", sid, "whatsapp", "out", booking_reply, author="bot"))
+        twiml = MessagingResponse()
+        twiml.message(booking_reply)
+        return Response(str(twiml), media_type="application/xml")
 
     catalog_items = await fetch_catalog_for_tenant(t)
     catalog_summary = summarize_catalog_for_prompt(catalog_items)
