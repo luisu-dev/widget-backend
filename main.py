@@ -2778,7 +2778,7 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                                 "", answer, flags=_re.IGNORECASE,
                             ).strip()
 
-                            if obj == "facebook":
+                            if obj != "instagram":  # Facebook Messenger (obj == "page")
                                 # Messenger: carrusel con imagen, precio y botones
                                 for p in mentioned[:10]:
                                     raw = p.get("raw") or {}
@@ -2860,7 +2860,7 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                         await meta_send_text_with_refresh(tenant_slug, participant_id, answer, platform=platform, page_token=page_token)
                         log.info(f"[{rid}] Message sent successfully to {participant_id}")
                         # Messenger: carrusel de productos
-                        if platform == "facebook" and carousel_elements:
+                        if obj != "instagram" and carousel_elements:
                             try:
                                 await meta_send_carousel(page_token, participant_id, carousel_elements)
                                 log.info(f"[{rid}] Carousel ({len(carousel_elements)} cards) sent to {participant_id}")
