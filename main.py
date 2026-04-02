@@ -2276,7 +2276,7 @@ def suggest_ui_for_text(user_text: str, tenant: Optional[dict]) -> dict:
     if any(w in text_ for w in ["precio", "tarifa", "cotiza", "costo"]):
         chips += ["Ver tarifas", "Solicitar cotización"]
     if not chips:
-        chips = ["Solicitar cotización", "Agendar una demo", "Ver catálogo", "Quiero suscribirme", "Contactar por WhatsApp"]
+        chips = ["Probar funciones", "Integraciones", "Contactar por WhatsApp"]
     wa_num = clean_phone_for_wa((tenant or {}).get("whatsapp"))
     wa_link = f"https://wa.me/{wa_num}" if wa_num else None
     show_bubble = any(w in text_ for w in ["whatsapp", "wasap", "contacto", "contact"])
@@ -2347,7 +2347,7 @@ async def widget_bootstrap(tenant: str):
         # Modo sin DB: entregar algo básico
         return {
             "tenant": {"slug": tenant, "name": tenant or "zIA", "whatsapp": None, "settings": {}},
-            "ui": {"suggestions": ["Solicitar cotización","Agendar una demo","Ver catálogo","Quiero suscribirme","Contactar por WhatsApp"]}
+            "ui": {"suggestions": ["Probar funciones","Integraciones","Contactar por WhatsApp"]}
         }
     async with db_engine.connect() as conn:
         t = (await conn.execute(
@@ -2366,7 +2366,7 @@ async def widget_bootstrap(tenant: str):
     return {
         "tenant": tenant_obj,
         "ui": {
-            "suggestions": ["Solicitar cotización","Agendar una demo","Ver catálogo","Quiero suscribirme","Contactar por WhatsApp"]
+            "suggestions": ["Probar funciones","Integraciones","Contactar por WhatsApp"]
         },
         "catalog": {"present": has_catalog}
     }
@@ -3046,6 +3046,64 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 add_message(sid, "assistant", off_msg)
                 asyncio.create_task(log_message(tenant or "public", sid, "web", "out", off_msg, author="assistant"))
                 yield sse_event(json.dumps({"content": off_msg}), event="delta")
+                yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
+                return
+
+            # ——— Menú interactivo de pruebas e integraciones ———
+            _stripped = text_lc.strip()
+
+            if _stripped in {"probar funciones", "probar función", "probar funcion"}:
+                _msg = "¿En qué canal quieres probarlo?"
+                add_message(sid, "assistant", _msg)
+                asyncio.create_task(log_message(tenant or "public", sid, "web", "out", _msg, author="assistant"))
+                yield sse_event(json.dumps({"content": _msg}), event="delta")
+                yield sse_event(json.dumps({"chips": ["En Meta / Acid IA", "Por WhatsApp", "Aquí en la web"], "whatsapp": None, "showWhatsAppBubble": False}), event="ui")
+                yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
+                return
+
+            if _stripped in {"en meta / acid ia", "en meta/acid ia", "meta / acid ia", "meta/acid ia"}:
+                _msg = "En Meta (Facebook e Instagram) el bot puede responder DMs y comentarios con IA.\n\nPuedes simular cualquiera de estos flujos aquí en la web:"
+                add_message(sid, "assistant", _msg)
+                asyncio.create_task(log_message(tenant or "public", sid, "web", "out", _msg, author="assistant"))
+                yield sse_event(json.dumps({"content": _msg}), event="delta")
+                yield sse_event(json.dumps({"chips": ["Solicitar cotización", "Agendar una demo", "Ver catálogo"], "whatsapp": None, "showWhatsAppBubble": False}), event="ui")
+                yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
+                return
+
+            if _stripped in {"por whatsapp", "probar por whatsapp"}:
+                _wa_num = clean_phone_for_wa((t or {}).get("whatsapp")) if t else None
+                _wa_link = f"https://wa.me/{_wa_num}" if _wa_num else None
+                _msg = "Por WhatsApp el bot puede:\n\n🗓 Agendar citas con Google Calendar\n🛍 Mostrar catálogo y recibir pedidos\n💳 Generar links de pago (Stripe)\n🔔 Enviar notificaciones proactivas (ej. órdenes Shopify)\n💬 Responder consultas con IA\n\nEscríbenos directamente para probarlo:"
+                add_message(sid, "assistant", _msg)
+                asyncio.create_task(log_message(tenant or "public", sid, "web", "out", _msg, author="assistant"))
+                yield sse_event(json.dumps({"content": _msg}), event="delta")
+                yield sse_event(json.dumps({"chips": [], "whatsapp": _wa_link, "showWhatsAppBubble": bool(_wa_link)}), event="ui")
+                yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
+                return
+
+            if _stripped in {"aquí en la web", "aqui en la web", "probar aquí (web)", "probar aqui (web)", "probar aqui"}:
+                _msg = "Aquí puedes probar todos los flujos del widget web. Elige uno:"
+                add_message(sid, "assistant", _msg)
+                asyncio.create_task(log_message(tenant or "public", sid, "web", "out", _msg, author="assistant"))
+                yield sse_event(json.dumps({"content": _msg}), event="delta")
+                yield sse_event(json.dumps({"chips": ["Solicitar cotización", "Agendar una demo", "Ver catálogo", "Quiero suscribirme"], "whatsapp": None, "showWhatsAppBubble": False}), event="ui")
+                yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
+                return
+
+            if _stripped in {"integraciones", "ver integraciones"}:
+                _msg = (
+                    "Trabajamos con las siguientes integraciones:\n\n"
+                    "🛍 *Shopify* — catálogo de productos, links de compra directa y notificaciones de pedidos por WhatsApp\n"
+                    "💳 *Stripe* — pagos únicos y suscripciones recurrentes con checkout seguro\n"
+                    "📅 *Google Calendar* — agenda de citas automática con invitaciones por email\n"
+                    "📘 *Meta (Facebook & Instagram)* — responde DMs y comentarios con IA\n"
+                    "📱 *WhatsApp Business* via Twilio — bot conversacional y notificaciones proactivas\n"
+                    "🔗 *API abierta* — conecta cualquier sistema externo via webhooks"
+                )
+                add_message(sid, "assistant", _msg)
+                asyncio.create_task(log_message(tenant or "public", sid, "web", "out", _msg, author="assistant"))
+                yield sse_event(json.dumps({"content": _msg}), event="delta")
+                yield sse_event(json.dumps({"chips": ["Probar funciones", "Solicitar cotización", "Contactar por WhatsApp"], "whatsapp": None, "showWhatsAppBubble": False}), event="ui")
                 yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
                 return
 
@@ -6325,6 +6383,110 @@ async def shopify_list_products(current = Depends(require_user)):
     return {
         "total": len(items),
         "products": [_format_product_card(p) for p in items],
+    }
+
+
+def _verify_shopify_hmac(body: bytes, hmac_header: str, secret: str) -> bool:
+    """Valida la firma HMAC-SHA256 que Shopify envía en X-Shopify-Hmac-SHA256."""
+    import hmac as _hmac, hashlib, base64
+    computed = base64.b64encode(
+        _hmac.new(secret.encode("utf-8"), body, hashlib.sha256).digest()
+    ).decode()
+    return _hmac.compare_digest(computed, hmac_header)
+
+
+@app.post("/v1/shopify/orders/webhook")
+async def shopify_orders_webhook(request: Request, tenant: str = Query(...)):
+    """
+    Webhook de Shopify para órdenes nuevas.
+    Shopify → POST /v1/shopify/orders/webhook?tenant={slug}
+    Al recibir una orden, envía notificación por WhatsApp al cliente.
+    """
+    if not valid_slug(tenant):
+        raise HTTPException(400, "Invalid tenant")
+
+    raw = await request.body()
+    hmac_header = request.headers.get("X-Shopify-Hmac-SHA256", "")
+
+    # Validar firma: usa shopify_webhook_secret del tenant o SHOPIFY_CLIENT_SECRET global
+    t = await fetch_tenant(tenant)
+    if not t:
+        raise HTTPException(404, "Tenant no encontrado")
+
+    secret = ((t.get("settings") or {}).get("shopify_webhook_secret") or "").strip()
+    if not secret:
+        secret = (os.getenv("SHOPIFY_CLIENT_SECRET") or "").strip()
+    if not secret:
+        log.warning(f"[shopify-webhook] tenant={tenant} sin shopify_webhook_secret configurado")
+        raise HTTPException(500, "Webhook secret no configurado para este tenant")
+
+    if hmac_header and not _verify_shopify_hmac(raw, hmac_header, secret):
+        log.warning(f"[shopify-webhook] firma inválida para tenant={tenant}")
+        raise HTTPException(403, "Invalid HMAC signature")
+
+    try:
+        order = json.loads(raw)
+    except Exception:
+        raise HTTPException(400, "Payload inválido")
+
+    order_number = order.get("order_number") or order.get("id", "")
+    total = order.get("total_price", "0.00")
+    currency = order.get("currency", "")
+    customer = order.get("customer") or {}
+    first_name = customer.get("first_name") or order.get("contact_email", "cliente")
+    phone_raw = (
+        customer.get("phone")
+        or order.get("phone")
+        or order.get("billing_address", {}).get("phone")
+        or ""
+    )
+    items = order.get("line_items", [])
+    items_txt = ", ".join(
+        f"{i.get('title', '?')} x{i.get('quantity', 1)}" for i in items[:3]
+    )
+    if len(items) > 3:
+        items_txt += f" y {len(items) - 3} más"
+
+    to_phone = norm_phone(phone_raw)
+    if not to_phone or len(to_phone) < 8:
+        log.info(f"[shopify-webhook] orden #{order_number} sin teléfono de cliente — sin notificación WA")
+        asyncio.create_task(store_event(tenant, f"shopify:{order_number}", "shopify_order_in", {"order_number": order_number, "total": total}))
+        return {"ok": True, "notified": False, "reason": "no_phone"}
+
+    msg = (
+        f"🛒 ¡Hola {first_name}! Tu pedido #{order_number} fue confirmado.\n"
+        f"📦 {items_txt}\n"
+        f"💰 Total: {total} {currency}\n\n"
+        f"¿Tienes alguna pregunta? Responde este mensaje y te ayudamos."
+    )
+
+    try:
+        await twilio_send_whatsapp(tenant, f"+{to_phone}", msg)
+        asyncio.create_task(store_event(tenant, f"shopify:{order_number}", "shopify_order_wa_out", {"to": to_phone, "order_number": order_number}))
+        asyncio.create_task(log_message(tenant, f"shopify:{order_number}", "whatsapp", "out", msg, author="bot"))
+        log.info(f"[shopify-webhook] notificación WA enviada → +{to_phone} (orden #{order_number})")
+        return {"ok": True, "notified": True, "to": f"+{to_phone}"}
+    except Exception as e:
+        log.error(f"[shopify-webhook] error enviando WA: {e}")
+        return {"ok": True, "notified": False, "reason": str(e)}
+
+
+@app.get("/v1/admin/shopify/order-webhook-url")
+async def shopify_order_webhook_url(current = Depends(require_user)):
+    """Devuelve la URL del webhook de órdenes de Shopify y las instrucciones de configuración."""
+    tenant_slug = current["tenant_slug"]
+    backend_url = os.getenv("BACKEND_URL", "https://acidia.app")
+    webhook_url = f"{backend_url}/v1/shopify/orders/webhook?tenant={tenant_slug}"
+    return {
+        "webhook_url": webhook_url,
+        "topic": "orders/create",
+        "instructions": [
+            "1. Ve a tu admin de Shopify → Configuración → Notificaciones → Webhooks",
+            "2. Crea un nuevo webhook con el evento 'Creación de pedido' (orders/create)",
+            f"3. URL: {webhook_url}",
+            "4. Formato: JSON",
+            "5. Copia el 'Signing secret' que Shopify genera y guárdalo en la configuración del tenant como 'shopify_webhook_secret'",
+        ],
     }
 
 
