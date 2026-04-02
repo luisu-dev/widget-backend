@@ -5504,13 +5504,48 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
         top_products = _find_top_products(f"{body_txt} {answer}", catalog_items, top_n=2)
         mentioned = [p for p in top_products if (p.get("name") or "").lower() in answer_lc]
         if mentioned:
+            # Quitar sugerencias de demo/cotización cuando hay producto concreto
+            import re as _re
+            answer = _re.sub(
+                r"[.!]?\s*(también\s+puedo\s+ayudarte\s+a\s+(cotizarlo|agendar\s+una?\s+demo)[^.!?]*[.!?]?)",
+                "",
+                answer,
+                flags=_re.IGNORECASE
+            ).strip()
+
             extra_lines = []
             for p in mentioned:
-                line = f"\n\n*{p.get('name','')}*"
-                if p.get("price_display"):
-                    line += f"\nPrecio: {p['price_display']}"
+                raw = p.get("raw") or {}
+                variants = (raw.get("variants") or [])[:3]
+                store_url = (p.get("url") or "").rsplit("/products/", 1)[0]
+
+                line = f"\n\n*{p.get('name', '')}*"
                 if p.get("url"):
-                    line += f"\n{p['url']}"
+                    line += f"\n🛍 Ver producto: {p['url']}"
+
+                if len(variants) > 1:
+                    # Mostrar hasta 3 presentaciones con precio y carrito
+                    for v in variants:
+                        v_title = v.get("title", "")
+                        v_price_raw = v.get("price", "")
+                        try:
+                            v_price = f"${float(v_price_raw):,.2f} MXN" if v_price_raw else ""
+                        except (ValueError, TypeError):
+                            v_price = v_price_raw
+                        v_id = v.get("id")
+                        cart_url = f"{store_url}/cart/{v_id}:1" if v_id and store_url else None
+                        line += f"\n\n• *{v_title}* — {v_price}"
+                        if cart_url:
+                            line += f"\n  🛒 {cart_url}"
+                else:
+                    # Producto de una sola presentación
+                    variant_id = (variants[0] if variants else {}).get("id")
+                    cart_url = f"{store_url}/cart/{variant_id}:1" if variant_id and store_url else None
+                    if p.get("price_display"):
+                        line += f"\nPrecio: {p['price_display']}"
+                    if cart_url:
+                        line += f"\n🛒 Agregar al carrito: {cart_url}"
+
                 extra_lines.append(line)
             answer += "".join(extra_lines)
 
