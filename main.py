@@ -2724,53 +2724,98 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                     log.debug(f"[{rid}] bot off, no auto-reply slug={tenant_slug}")
                     continue
 
-                # Use page-specific settings if available
-                system_prompt = build_system_for_tenant(t, page_settings=page_settings)
-                messages = build_messages_with_history(sid, system_prompt)
-                answer = "Gracias por escribir. Te atiendo enseguida."
-                wa_url = tenant_whatsapp_url(t)
+                # ── Flujos completos (mismo comportamiento que WhatsApp) ──────────
                 text_dm = text_in.lower()
-                phone_in_msg = None
-                digits_in = norm_phone(text_in)
-                if digits_in and 8 <= len(digits_in) <= 15:
-                    phone_in_msg = digits_in
-                want_wa = any(k in text_dm for k in ["whats", "whatsapp", "contact", "hablar", "vende", "comunicar", "cotiza"])
-                if phone_in_msg:
-                    want_wa = True
-                try:
-                    if want_wa and wa_url:
-                        if phone_in_msg:
-                            answer = (
-                                "Gracias por compartir tus datos. Para resguardar tu privacidad, "
-                                f"tú inicias la conversación desde aquí 👉 {wa_url} y seguimos por WhatsApp cuando nos escribas."
-                            )
-                        else:
-                            answer = (
-                                "Claro. Aquí tienes el enlace directo para hablar con nosotros por WhatsApp: "
-                                f"{wa_url}. Escríbenos ahí y seguimos la conversación."
-                            )
-                    else:
+                wa_url = tenant_whatsapp_url(t)
+                answer = None
+
+                # 1) Fast-path: intención de compra por plan (starter/meta)
+                if any(k in text_dm for k in ["compr", "compra", "pagar", "pago", "checkout", "suscrib"]) and \
+                        ("starter" in text_dm or "meta" in text_dm):
+                    plan = "starter" if "starter" in text_dm else "meta"
+                    try:
+                        prices = _tenant_stripe_prices(t)
+                        if plan not in prices:
+                            prices = await ensure_prices_for_tenant(t)
+                        price_id = prices[plan]
+                        _sess = await _create_checkout_for_any(t, price_id=price_id, qty=1, mode="subscription")
+                        answer = f"Listo ✅ Aquí tienes tu enlace para suscribirte al plan {plan.title()}: {_sess['url']}"
+                        asyncio.create_task(store_event(tenant_slug, sid, "checkout_link_out", {"plan": plan, "url": _sess["url"]}))
+                    except Exception as e:
+                        log.warning(f"[{rid}] meta checkout plan falló: {e}")
+
+                # 2) Flujo de citas (Google Calendar)
+                if answer is None:
+                    answer = await handle_booking_flow_wa(sid, text_in, t, tenant_slug)
+
+                # 3) Catálogo + LLM + detalles de producto
+                if answer is None:
+                    catalog_items = await fetch_catalog_for_tenant(t)
+                    catalog_summary = summarize_catalog_for_prompt(catalog_items)
+                    system_prompt = build_system_for_tenant(t, page_settings=page_settings)
+                    if catalog_summary:
+                        system_prompt = f"{system_prompt}\n\n{catalog_summary}"
+                    messages_ctx = build_messages_with_history(sid, system_prompt)
+                    try:
                         client_rt = client.with_options(timeout=12.0)
-                        resp = client_rt.chat.completions.create(model=OPENAI_MODEL, messages=messages)
-                        answer = resp.choices[0].message.content or answer
-                        if want_wa and wa_url and "whats" in text_dm:
-                            answer += (
-                                " Recuerda que para avanzar debes iniciar tú la conversación en "
-                                f"WhatsApp desde este enlace 👉 {wa_url}."
-                            )
-                except Exception as e:
-                    log.warning(f"[{rid}] meta fallback LLM: {e}")
-                    if want_wa and wa_url:
-                        if phone_in_msg:
-                            answer = (
-                                "Para continuar, inicia tú la conversación por WhatsApp en este enlace: "
-                                f"{wa_url}. Cuando nos escribas podremos darte seguimiento al instante."
-                            )
-                        else:
-                            answer = (
-                                "Aquí tienes el enlace directo a nuestro WhatsApp: "
-                                f"{wa_url}. Escríbenos y seguimos por ahí."
-                            )
+                        resp = client_rt.chat.completions.create(model=OPENAI_MODEL, messages=messages_ctx)
+                        answer = resp.choices[0].message.content or "Gracias por escribir. Te atiendo enseguida."
+                    except Exception as e:
+                        log.warning(f"[{rid}] meta LLM error: {e}")
+                        answer = "Gracias por escribir. Te atiendo enseguida."
+
+                    # Adjuntar detalles de productos mencionados (igual que WhatsApp)
+                    if catalog_items:
+                        answer_lc = answer.lower()
+                        top_products = _find_top_products(f"{text_in} {answer}", catalog_items, top_n=2)
+                        mentioned = [p for p in top_products if (p.get("name") or "").lower() in answer_lc]
+                        if mentioned:
+                            import re as _re
+                            answer = _re.sub(
+                                r"[.!]?\s*(también\s+puedo\s+ayudarte\s+a\s+(cotizarlo|agendar\s+una?\s+demo)[^.!?]*[.!?]?)",
+                                "", answer, flags=_re.IGNORECASE,
+                            ).strip()
+                            extra_lines = []
+                            for p in mentioned:
+                                raw = p.get("raw") or {}
+                                variants = (raw.get("variants") or [])[:3]
+                                store_url = (p.get("url") or "").rsplit("/products/", 1)[0]
+                                line = f"\n\n*{p.get('name', '')}*"
+                                if p.get("url"):
+                                    line += f"\n🛍 Ver: {p['url']}"
+                                if len(variants) > 1:
+                                    for v in variants:
+                                        v_price_raw = v.get("price", "")
+                                        try:
+                                            v_price = f"${float(v_price_raw):,.2f}" if v_price_raw else ""
+                                        except (ValueError, TypeError):
+                                            v_price = v_price_raw
+                                        v_id = v.get("id")
+                                        cart_url = f"{store_url}/cart/{v_id}:1" if v_id and store_url else None
+                                        line += f"\n• *{v.get('title','')}* — {v_price}"
+                                        if cart_url:
+                                            line += f"\n  🛒 {cart_url}"
+                                else:
+                                    variant_id = (variants[0] if variants else {}).get("id")
+                                    cart_url = f"{store_url}/cart/{variant_id}:1" if variant_id and store_url else None
+                                    if p.get("price_display"):
+                                        line += f"\nPrecio: {p['price_display']}"
+                                    if cart_url:
+                                        line += f"\n🛒 Agregar al carrito: {cart_url}"
+                                extra_lines.append(line)
+                            answer += "".join(extra_lines)
+
+                # 4) Agregar link de WhatsApp si el usuario lo solicita explícitamente
+                if wa_url and any(k in text_dm for k in ["whats", "whatsapp"]):
+                    digits_in = norm_phone(text_in)
+                    if digits_in and 8 <= len(digits_in) <= 15:
+                        # Usuario compartió su número: redirigir con privacidad
+                        answer = (
+                            "Gracias por compartir tus datos. Para resguardar tu privacidad, "
+                            f"tú inicias la conversación desde aquí 👉 {wa_url}"
+                        )
+                    else:
+                        answer += f"\n\n📱 WhatsApp: {wa_url}"
 
                 add_message(sid, "assistant", answer)
                 asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_out", {"to": sender_id, "text": answer[:MAX_TEXT_LENGTH]}))
