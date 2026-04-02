@@ -2749,6 +2749,7 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                     answer = await handle_booking_flow_wa(sid, text_in, t, tenant_slug)
 
                 product_image_url: str | None = None
+                carousel_elements: list = []
 
                 # 3) Catálogo + LLM + detalles de producto
                 if answer is None:
@@ -2766,10 +2767,9 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                         log.warning(f"[{rid}] meta LLM error: {e}")
                         answer = "Gracias por escribir. Te atiendo enseguida."
 
-                    # Adjuntar detalles de productos mencionados (igual que WhatsApp)
                     if catalog_items:
                         answer_lc = answer.lower()
-                        top_products = _find_top_products(f"{text_in} {answer}", catalog_items, top_n=2)
+                        top_products = _find_top_products(f"{text_in} {answer}", catalog_items, top_n=5)
                         mentioned = [p for p in top_products if (p.get("name") or "").lower() in answer_lc]
                         if mentioned:
                             import re as _re
@@ -2777,40 +2777,61 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                                 r"[.!]?\s*(también\s+puedo\s+ayudarte\s+a\s+(cotizarlo|agendar\s+una?\s+demo)[^.!?]*[.!?]?)",
                                 "", answer, flags=_re.IGNORECASE,
                             ).strip()
-                            extra_lines = []
-                            for p in mentioned:
-                                raw = p.get("raw") or {}
-                                variants = (raw.get("variants") or [])[:3]
-                                store_url = (p.get("url") or "").rsplit("/products/", 1)[0]
-                                line = f"\n\n*{p.get('name', '')}*"
-                                if p.get("url"):
-                                    line += f"\n🛍 Ver: {p['url']}"
-                                if len(variants) > 1:
-                                    for v in variants:
-                                        v_price_raw = v.get("price", "")
-                                        try:
-                                            v_price = f"${float(v_price_raw):,.2f}" if v_price_raw else ""
-                                        except (ValueError, TypeError):
-                                            v_price = v_price_raw
-                                        v_id = v.get("id")
-                                        cart_url = f"{store_url}/cart/{v_id}:1" if v_id and store_url else None
-                                        line += f"\n• *{v.get('title','')}* — {v_price}"
-                                        if cart_url:
-                                            line += f"\n  🛒 {cart_url}"
-                                else:
+
+                            if obj == "facebook":
+                                # Messenger: carrusel con imagen, precio y botones
+                                for p in mentioned[:10]:
+                                    raw = p.get("raw") or {}
+                                    variants = (raw.get("variants") or [])[:1]
+                                    store_url = (p.get("url") or "").rsplit("/products/", 1)[0]
                                     variant_id = (variants[0] if variants else {}).get("id")
                                     cart_url = f"{store_url}/cart/{variant_id}:1" if variant_id and store_url else None
-                                    if p.get("price_display"):
-                                        line += f"\nPrecio: {p['price_display']}"
+                                    subtitle = (p.get("price_display") or "")[:80]
+                                    elem: dict = {"title": (p.get("name") or "")[:80]}
+                                    if subtitle:
+                                        elem["subtitle"] = subtitle
+                                    if p.get("image"):
+                                        elem["image_url"] = p["image"]
+                                    buttons = []
+                                    if p.get("url"):
+                                        buttons.append({"type": "web_url", "url": p["url"], "title": "Ver producto"})
                                     if cart_url:
-                                        line += f"\n🛒 Agregar al carrito: {cart_url}"
-                                extra_lines.append(line)
-                            answer += "".join(extra_lines)
-                            product_image_url = mentioned[0].get("image") if mentioned else None
-                        else:
-                            product_image_url = None
-                    else:
-                        product_image_url = None
+                                        buttons.append({"type": "web_url", "url": cart_url, "title": "🛒 Agregar al carrito"})
+                                    if buttons:
+                                        elem["buttons"] = buttons[:3]
+                                    carousel_elements.append(elem)
+                            else:
+                                # Instagram DMs: texto + imagen (no soporta Generic Template)
+                                extra_lines = []
+                                for p in mentioned:
+                                    raw = p.get("raw") or {}
+                                    variants = (raw.get("variants") or [])[:3]
+                                    store_url = (p.get("url") or "").rsplit("/products/", 1)[0]
+                                    line = f"\n\n*{p.get('name', '')}*"
+                                    if p.get("url"):
+                                        line += f"\n🛍 Ver: {p['url']}"
+                                    if len(variants) > 1:
+                                        for v in variants:
+                                            v_price_raw = v.get("price", "")
+                                            try:
+                                                v_price = f"${float(v_price_raw):,.2f}" if v_price_raw else ""
+                                            except (ValueError, TypeError):
+                                                v_price = v_price_raw
+                                            v_id = v.get("id")
+                                            cart_url = f"{store_url}/cart/{v_id}:1" if v_id and store_url else None
+                                            line += f"\n• *{v.get('title','')}* — {v_price}"
+                                            if cart_url:
+                                                line += f"\n  🛒 {cart_url}"
+                                    else:
+                                        variant_id = (variants[0] if variants else {}).get("id")
+                                        cart_url = f"{store_url}/cart/{variant_id}:1" if variant_id and store_url else None
+                                        if p.get("price_display"):
+                                            line += f"\nPrecio: {p['price_display']}"
+                                        if cart_url:
+                                            line += f"\n🛒 Agregar al carrito: {cart_url}"
+                                    extra_lines.append(line)
+                                answer += "".join(extra_lines)
+                                product_image_url = mentioned[0].get("image") if mentioned else None
 
                 # 4) Agregar link de WhatsApp si el usuario lo solicita explícitamente
                 if wa_url and any(k in text_dm for k in ["whats", "whatsapp"]):
@@ -2838,8 +2859,15 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                         log.info(f"[{rid}] Sending message - platform={platform}, participant_id={participant_id}, page_token={(page_token or '')[:20]}...")
                         await meta_send_text_with_refresh(tenant_slug, participant_id, answer, platform=platform, page_token=page_token)
                         log.info(f"[{rid}] Message sent successfully to {participant_id}")
-                        # Enviar imagen del producto si hay una disponible
-                        if product_image_url:
+                        # Messenger: carrusel de productos
+                        if platform == "facebook" and carousel_elements:
+                            try:
+                                await meta_send_carousel(page_token, participant_id, carousel_elements)
+                                log.info(f"[{rid}] Carousel ({len(carousel_elements)} cards) sent to {participant_id}")
+                            except Exception as ce:
+                                log.warning(f"[{rid}] meta carousel error: {ce}")
+                        # Instagram: imagen del primer producto
+                        elif product_image_url:
                             try:
                                 await meta_send_image(page_token, participant_id, product_image_url)
                                 log.info(f"[{rid}] Product image sent to {participant_id}")
@@ -3030,6 +3058,39 @@ async def rotate_page_token(tenant: str = Query(...)):
     except Exception as e:
         raise HTTPException(400, str(e))
     
+async def meta_send_carousel(page_token: str, recipient_id: str, elements: list) -> dict:
+    """
+    Envía un carrusel de productos via Generic Template de Messenger.
+    Solo funciona en Facebook Messenger (no en Instagram DMs).
+    Cada elemento: title, subtitle, image_url, buttons (max 3).
+    """
+    if not page_token or not elements:
+        return {}
+    payload = {
+        "recipient": {"id": recipient_id},
+        "message": {
+            "attachment": {
+                "type": "template",
+                "payload": {
+                    "template_type": "generic",
+                    "elements": elements[:10],  # máximo 10 tarjetas
+                },
+            }
+        },
+        "messaging_type": "RESPONSE",
+    }
+    async with httpx.AsyncClient(timeout=10.0) as cx:
+        r = await cx.post(
+            "https://graph.facebook.com/v20.0/me/messages",
+            params=_graph_params(page_token),
+            json=payload,
+        )
+        if r.status_code >= 400:
+            log.warning(f"[META][CAROUSEL] error {r.status_code}: {r.text[:200]}")
+            return {}
+        return r.json()
+
+
 async def meta_send_image(page_token: str, recipient_id: str, image_url: str) -> dict:
     """Envía una imagen como attachment via Meta Send API (Messenger/Instagram)."""
     if not page_token or not image_url:
