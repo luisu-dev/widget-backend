@@ -5433,6 +5433,87 @@ async def admin_run_migrations():
         "migrations": results
     }
 
+async def get_available_slots(t: Optional[dict], days_ahead: int = 5, slot_duration_min: int = 60, max_slots: int = 6) -> list[dict]:
+    """
+    Consulta Google Calendar freebusy y devuelve hasta max_slots horarios libres
+    en los próximos days_ahead días hábiles, dentro del horario laboral del tenant.
+    """
+    cfg = calendar_cfg_from_tenant(t)
+    calendar_id = cfg.get("calendar_id")
+    if not calendar_id:
+        return []
+
+    try:
+        access_token = await get_google_access_token_for_tenant(t)
+    except Exception:
+        return []
+
+    tz_name = cfg.get("timezone") or GOOGLE_CALENDAR_DEFAULT_TZ
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("America/Mexico_City")
+
+    # Horario laboral configurable desde settings del tenant
+    settings = (t or {}).get("settings", {}) or {}
+    work_start_h = int(settings.get("booking_work_start_hour", 9))
+    work_end_h   = int(settings.get("booking_work_end_hour", 18))
+
+    now_local = datetime.now(tz)
+    slots: list[dict] = []
+    day = now_local.date()
+    days_checked = 0
+
+    while len(slots) < max_slots and days_checked < days_ahead + 7:
+        days_checked += 1
+        day = day + timedelta(days=1)
+        # Saltar fines de semana
+        if day.weekday() >= 5:
+            continue
+
+        day_start = datetime(day.year, day.month, day.day, work_start_h, 0, tzinfo=tz)
+        day_end   = datetime(day.year, day.month, day.day, work_end_h,   0, tzinfo=tz)
+
+        # Consultar freebusy para este día
+        try:
+            async with httpx.AsyncClient(timeout=10) as hc:
+                resp = await hc.post(
+                    "https://www.googleapis.com/calendar/v3/freeBusy",
+                    headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+                    json={
+                        "timeMin": day_start.isoformat(),
+                        "timeMax": day_end.isoformat(),
+                        "items": [{"id": calendar_id}],
+                    },
+                )
+            if resp.status_code != 200:
+                continue
+            busy_periods = resp.json().get("calendars", {}).get(calendar_id, {}).get("busy", [])
+        except Exception:
+            continue
+
+        # Generar slots libres
+        cursor = day_start
+        while cursor + timedelta(minutes=slot_duration_min) <= day_end and len(slots) < max_slots:
+            slot_end = cursor + timedelta(minutes=slot_duration_min)
+            overlap = any(
+                cursor < datetime.fromisoformat(b["end"]).astimezone(tz) and
+                slot_end > datetime.fromisoformat(b["start"]).astimezone(tz)
+                for b in busy_periods
+            )
+            if not overlap:
+                slots.append({
+                    "start": cursor.isoformat(),
+                    "end": slot_end.isoformat(),
+                    "label": cursor.strftime("%-d %b, %H:%M"),
+                    "date": cursor.strftime("%Y-%m-%d"),
+                    "time": cursor.strftime("%H:%M"),
+                })
+            cursor = slot_end
+
+    return slots
+
+
 async def handle_booking_flow_wa(sid: str, message: str, t: Optional[dict], tenant_slug: str) -> Optional[str]:
     """
     Maneja el flujo de citas para WhatsApp.
@@ -5451,12 +5532,55 @@ async def handle_booking_flow_wa(sid: str, message: str, t: Optional[dict], tena
     if flow["stage"] is None and wants_booking(message):
         if not google_calendar_ready_for_tenant(t):
             return "Me encantaría agendarte, pero el calendario aún no está configurado. Puedes escribirnos directamente por WhatsApp o correo para coordinar."
-        flow["stage"] = "booking_collect"
-        flow["booking_fields"] = booking_cfg["collect_fields"]
-        flow["booking_answers"] = {}
-        flow["booking_index"] = 0
-        first_field = flow["booking_fields"][0]
-        return f"Perfecto, vamos a agendar tu cita. {booking_question_for_field(first_field)}"
+
+        # Obtener slots disponibles
+        slots = await get_available_slots(t)
+        if slots:
+            flow["stage"] = "pick_slot"
+            flow["available_slots"] = slots
+            flow["booking_answers"] = {}
+            lines = ["Perfecto, aquí tienes los horarios disponibles:\n"]
+            for i, s in enumerate(slots, 1):
+                lines.append(f"{i}. {s['label']}")
+            lines.append("\nResponde con el número de tu preferencia.")
+            return "\n".join(lines)
+        else:
+            # Sin slots o sin Google Calendar → flujo manual
+            flow["stage"] = "booking_collect"
+            flow["booking_fields"] = booking_cfg["collect_fields"]
+            flow["booking_answers"] = {}
+            flow["booking_index"] = 0
+            first_field = flow["booking_fields"][0]
+            return f"Perfecto, vamos a agendar tu cita. {booking_question_for_field(first_field)}"
+
+    # Usuario eligió un slot
+    if flow["stage"] == "pick_slot":
+        slots = flow.get("available_slots", [])
+        try:
+            choice = int(message.strip()) - 1
+            assert 0 <= choice < len(slots)
+            chosen = slots[choice]
+        except (ValueError, AssertionError):
+            lines = ["Por favor responde con un número de la lista:\n"]
+            for i, s in enumerate(slots, 1):
+                lines.append(f"{i}. {s['label']}")
+            return "\n".join(lines)
+
+        flow["booking_answers"]["date"] = chosen["date"]
+        flow["booking_answers"]["time"] = chosen["time"]
+        # Remover date/time de los campos a recolectar si ya los tenemos
+        fields = [f for f in booking_cfg["collect_fields"] if f not in ("date", "time")]
+        if fields:
+            flow["stage"] = "booking_collect"
+            flow["booking_fields"] = fields
+            flow["booking_index"] = 0
+            return f"Perfecto, el *{chosen['label']}*. {booking_question_for_field(fields[0])}"
+        else:
+            # Solo necesitaban fecha/hora, crear evento directo
+            flow["stage"] = "booking_collect"
+            flow["booking_fields"] = []
+            flow["booking_index"] = 0
+            return f"Perfecto, reservado el *{chosen['label']}*. ¿Cuál es tu nombre completo?"
 
     # Recopilar datos del flujo
     if flow["stage"] == "booking_collect":
