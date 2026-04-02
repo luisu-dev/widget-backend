@@ -6395,12 +6395,40 @@ def _verify_shopify_hmac(body: bytes, hmac_header: str, secret: str) -> bool:
     return _hmac.compare_digest(computed, hmac_header)
 
 
+async def _acidia_send_whatsapp(to_e164: str, text: str) -> dict:
+    """
+    Envía WA desde el número global de Acidia (conmutador),
+    independiente del tenant. Usa TWILIO_ACCOUNT_SID / TWILIO_WHATSAPP_FROM del entorno.
+    """
+    client_global = getattr(app.state, "twilio", None)
+    if not client_global:
+        raise RuntimeError("Twilio global de Acidia no configurado (TWILIO_ACCOUNT_SID)")
+    wa_from = os.getenv("TWILIO_WHATSAPP_FROM", "").strip()
+    if not wa_from:
+        raise RuntimeError("TWILIO_WHATSAPP_FROM no configurado")
+    if not wa_from.startswith("whatsapp:"):
+        wa_from = f"whatsapp:{wa_from}"
+    to_fmt = f"whatsapp:{to_e164}" if not to_e164.startswith("whatsapp:") else to_e164
+    msg = await asyncio.to_thread(
+        client_global.messages.create,
+        from_=wa_from,
+        to=to_fmt,
+        body=text,
+    )
+    return {"sid": msg.sid}
+
+
 @app.post("/v1/shopify/orders/webhook")
 async def shopify_orders_webhook(request: Request, tenant: str = Query(...)):
     """
-    Webhook de Shopify para órdenes nuevas.
+    Webhook de Shopify para órdenes nuevas (orders/create).
     Shopify → POST /v1/shopify/orders/webhook?tenant={slug}
-    Al recibir una orden, envía notificación por WhatsApp al cliente.
+
+    Ejecuta DOS flujos de notificación independientes:
+      1. Acidia (conmutador global) → número de notificaciones del tenant
+         (orders_notify_phone en settings del tenant)
+      2. Bot del tenant (su propio Twilio/WA Business) → cliente final
+         (teléfono en la orden de Shopify)
     """
     if not valid_slug(tenant):
         raise HTTPException(400, "Invalid tenant")
@@ -6408,18 +6436,17 @@ async def shopify_orders_webhook(request: Request, tenant: str = Query(...)):
     raw = await request.body()
     hmac_header = request.headers.get("X-Shopify-Hmac-SHA256", "")
 
-    # Validar firma: usa shopify_webhook_secret del tenant o SHOPIFY_CLIENT_SECRET global
     t = await fetch_tenant(tenant)
     if not t:
         raise HTTPException(404, "Tenant no encontrado")
 
+    # Validar firma HMAC
     secret = ((t.get("settings") or {}).get("shopify_webhook_secret") or "").strip()
     if not secret:
         secret = (os.getenv("SHOPIFY_CLIENT_SECRET") or "").strip()
     if not secret:
-        log.warning(f"[shopify-webhook] tenant={tenant} sin shopify_webhook_secret configurado")
+        log.warning(f"[shopify-webhook] tenant={tenant} sin shopify_webhook_secret")
         raise HTTPException(500, "Webhook secret no configurado para este tenant")
-
     if hmac_header and not _verify_shopify_hmac(raw, hmac_header, secret):
         log.warning(f"[shopify-webhook] firma inválida para tenant={tenant}")
         raise HTTPException(403, "Invalid HMAC signature")
@@ -6429,46 +6456,83 @@ async def shopify_orders_webhook(request: Request, tenant: str = Query(...)):
     except Exception:
         raise HTTPException(400, "Payload inválido")
 
+    # Datos comunes de la orden
     order_number = order.get("order_number") or order.get("id", "")
-    total = order.get("total_price", "0.00")
-    currency = order.get("currency", "")
-    customer = order.get("customer") or {}
-    first_name = customer.get("first_name") or order.get("contact_email", "cliente")
-    phone_raw = (
+    total        = order.get("total_price", "0.00")
+    currency     = order.get("currency", "")
+    tenant_name  = (t.get("name") or tenant).title()
+    customer     = order.get("customer") or {}
+    first_name   = customer.get("first_name") or "Cliente"
+    customer_phone_raw = (
         customer.get("phone")
         or order.get("phone")
-        or order.get("billing_address", {}).get("phone")
+        or (order.get("billing_address") or {}).get("phone")
         or ""
     )
-    items = order.get("line_items", [])
-    items_txt = ", ".join(
-        f"{i.get('title', '?')} x{i.get('quantity', 1)}" for i in items[:3]
-    )
+    items     = order.get("line_items", [])
+    items_txt = ", ".join(f"{i.get('title','?')} x{i.get('quantity',1)}" for i in items[:3])
     if len(items) > 3:
         items_txt += f" y {len(items) - 3} más"
 
-    to_phone = norm_phone(phone_raw)
-    if not to_phone or len(to_phone) < 8:
-        log.info(f"[shopify-webhook] orden #{order_number} sin teléfono de cliente — sin notificación WA")
-        asyncio.create_task(store_event(tenant, f"shopify:{order_number}", "shopify_order_in", {"order_number": order_number, "total": total}))
-        return {"ok": True, "notified": False, "reason": "no_phone"}
+    asyncio.create_task(store_event(
+        tenant, f"shopify:{order_number}", "shopify_order_in",
+        {"order_number": order_number, "total": total, "currency": currency},
+    ))
 
-    msg = (
-        f"🛒 ¡Hola {first_name}! Tu pedido #{order_number} fue confirmado.\n"
-        f"📦 {items_txt}\n"
-        f"💰 Total: {total} {currency}\n\n"
-        f"¿Tienes alguna pregunta? Responde este mensaje y te ayudamos."
-    )
+    result: dict = {"ok": True, "order_number": order_number}
 
-    try:
-        await twilio_send_whatsapp(tenant, f"+{to_phone}", msg)
-        asyncio.create_task(store_event(tenant, f"shopify:{order_number}", "shopify_order_wa_out", {"to": to_phone, "order_number": order_number}))
-        asyncio.create_task(log_message(tenant, f"shopify:{order_number}", "whatsapp", "out", msg, author="bot"))
-        log.info(f"[shopify-webhook] notificación WA enviada → +{to_phone} (orden #{order_number})")
-        return {"ok": True, "notified": True, "to": f"+{to_phone}"}
-    except Exception as e:
-        log.error(f"[shopify-webhook] error enviando WA: {e}")
-        return {"ok": True, "notified": False, "reason": str(e)}
+    # ── Flujo 1: Acidia (conmutador) → número de notificaciones del tenant ──────
+    notify_phone_raw = ((t.get("settings") or {}).get("orders_notify_phone") or "").strip()
+    notify_phone = norm_phone(notify_phone_raw)
+    if notify_phone and len(notify_phone) >= 8:
+        msg_tenant = (
+            f"🔔 Nueva orden en *{tenant_name}*\n"
+            f"📦 Orden #{order_number}\n"
+            f"👤 Cliente: {first_name}\n"
+            f"🛍 {items_txt}\n"
+            f"💰 Total: {total} {currency}"
+        )
+        try:
+            await _acidia_send_whatsapp(f"+{notify_phone}", msg_tenant)
+            asyncio.create_task(log_message(tenant, f"shopify:{order_number}", "whatsapp", "out", msg_tenant, author="acidia-bot"))
+            result["tenant_notified"] = True
+            result["tenant_to"] = f"+{notify_phone}"
+            log.info(f"[shopify-webhook] notificación tenant → +{notify_phone} (orden #{order_number})")
+        except Exception as e:
+            log.error(f"[shopify-webhook] error notificando tenant: {e}")
+            result["tenant_notified"] = False
+            result["tenant_error"] = str(e)
+    else:
+        result["tenant_notified"] = False
+        result["tenant_reason"] = "orders_notify_phone no configurado"
+        log.info(f"[shopify-webhook] tenant={tenant} sin orders_notify_phone — sin notificación al tenant")
+
+    # ── Flujo 2: Bot del tenant → cliente final ──────────────────────────────────
+    customer_phone = norm_phone(customer_phone_raw)
+    if customer_phone and len(customer_phone) >= 8:
+        msg_customer = (
+            f"🛒 ¡Hola {first_name}! Tu pedido #{order_number} fue confirmado.\n"
+            f"📦 {items_txt}\n"
+            f"💰 Total: {total} {currency}\n\n"
+            f"¿Tienes alguna pregunta? Responde este mensaje y te ayudamos."
+        )
+        try:
+            await twilio_send_whatsapp(tenant, f"+{customer_phone}", msg_customer)
+            asyncio.create_task(store_event(tenant, f"shopify:{order_number}", "shopify_order_wa_out", {"to": customer_phone, "order_number": order_number}))
+            asyncio.create_task(log_message(tenant, f"shopify:{order_number}", "whatsapp", "out", msg_customer, author="bot"))
+            result["customer_notified"] = True
+            result["customer_to"] = f"+{customer_phone}"
+            log.info(f"[shopify-webhook] notificación cliente → +{customer_phone} (orden #{order_number})")
+        except Exception as e:
+            log.error(f"[shopify-webhook] error notificando cliente: {e}")
+            result["customer_notified"] = False
+            result["customer_error"] = str(e)
+    else:
+        result["customer_notified"] = False
+        result["customer_reason"] = "teléfono del cliente no disponible en la orden"
+        log.info(f"[shopify-webhook] orden #{order_number} sin teléfono de cliente")
+
+    return result
 
 
 @app.get("/v1/admin/shopify/order-webhook-url")
@@ -6482,11 +6546,16 @@ async def shopify_order_webhook_url(current = Depends(require_user)):
         "topic": "orders/create",
         "instructions": [
             "1. Ve a tu admin de Shopify → Configuración → Notificaciones → Webhooks",
-            "2. Crea un nuevo webhook con el evento 'Creación de pedido' (orders/create)",
-            f"3. URL: {webhook_url}",
-            "4. Formato: JSON",
-            "5. Copia el 'Signing secret' que Shopify genera y guárdalo en la configuración del tenant como 'shopify_webhook_secret'",
+            "2. Crea un nuevo webhook: evento 'Creación de pedido' (orders/create), formato JSON",
+            f"3. URL del webhook: {webhook_url}",
+            "4. Copia el 'Signing secret' que Shopify genera y guárdalo en settings del tenant como 'shopify_webhook_secret'",
+            "5. Para recibir notificaciones como dueño/admin: guarda tu número en settings del tenant como 'orders_notify_phone' (ej. +521234567890) — Acidia te enviará un WA por cada orden nueva",
+            "6. Para notificar al cliente final: asegúrate de que tu Twilio esté configurado (el bot del tenant es quien envía ese mensaje)",
         ],
+        "flows": {
+            "tenant_alert": "Acidia (conmutador global) → orders_notify_phone del tenant",
+            "customer_confirmation": "Bot del tenant (su Twilio/WA Business) → teléfono del cliente en la orden",
+        },
     }
 
 
