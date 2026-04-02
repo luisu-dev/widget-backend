@@ -5497,6 +5497,23 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
         system_prompt = f"{system_prompt}\n\n{catalog_summary}"
     messages = build_messages_with_history(sid, system_prompt)
     answer = generate_answer(messages)
+
+    # Si el bot mencionó algún producto del catálogo, adjuntar detalles como texto
+    if catalog_items:
+        answer_lc = answer.lower()
+        top_products = _find_top_products(f"{body_txt} {answer}", catalog_items, top_n=2)
+        mentioned = [p for p in top_products if (p.get("name") or "").lower() in answer_lc]
+        if mentioned:
+            extra_lines = []
+            for p in mentioned:
+                line = f"\n\n*{p.get('name','')}*"
+                if p.get("price_display"):
+                    line += f"\nPrecio: {p['price_display']}"
+                if p.get("url"):
+                    line += f"\n{p['url']}"
+                extra_lines.append(line)
+            answer += "".join(extra_lines)
+
     add_message(sid, "assistant", answer)
     asyncio.create_task(store_event(tenant or "public", sid, "wa_out", {"to": from_raw, "text": answer[:MAX_TEXT_LENGTH]}))
     asyncio.create_task(log_message(tenant or "public", sid, "whatsapp", "out", answer, author="bot"))
