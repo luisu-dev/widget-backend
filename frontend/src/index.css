@@ -3,3 +3,7 @@
 /* Evitamos scroll suave global en Android/equipos modestos */
 html { scroll-behavior: auto; }
 html.smooth-scroll { scroll-behavior: smooth; }
+
+/* Ocultar scrollbar en nav horizontal móvil */
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }

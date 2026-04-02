@@ -393,17 +393,18 @@ function Dashboard() {
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
       {/* Header */}
       <header className="border-b border-white/10 bg-black/20 backdrop-blur-lg">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-white">{profile.tenant.name || 'Dashboard'}</h1>
-              <p className="text-sm text-gray-400">{profile.user.email}</p>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 sm:py-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h1 className="text-lg sm:text-2xl font-bold text-white truncate">{profile.tenant.name || 'Dashboard'}</h1>
+              <p className="text-xs sm:text-sm text-gray-400 truncate">{profile.user.email}</p>
             </div>
             <button
               onClick={handleLogout}
-              className="px-4 py-2 rounded-lg border border-white/20 text-white hover:bg-white/10 transition"
+              className="shrink-0 px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-white/20 text-white text-sm hover:bg-white/10 transition"
             >
-              Cerrar sesión
+              <span className="sm:hidden">Salir</span>
+              <span className="hidden sm:inline">Cerrar sesión</span>
             </button>
           </div>
         </div>
@@ -412,17 +413,18 @@ function Dashboard() {
       {/* Navigation Tabs */}
       <div className="border-b border-white/10 bg-black/10 backdrop-blur">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <nav className="flex space-x-4 py-4">
+          {/* Tabs row — scrollable on mobile */}
+          <nav className="flex items-center gap-1 py-2 sm:py-3 overflow-x-auto scrollbar-hide">
             {[
               { id: 'integrations', label: 'Integraciones' },
               { id: 'messages', label: 'Conversaciones' },
               { id: 'metrics', label: 'Métricas' },
-              { id: 'settings', label: 'Configuración' }
+              { id: 'settings', label: 'Config' }
             ].map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`px-4 py-2 rounded-lg transition ${
+                className={`shrink-0 px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-sm transition ${
                   activeTab === tab.id
                     ? 'bg-[#04d9b5] text-black font-medium'
                     : 'text-white/70 hover:text-white hover:bg-white/10'
@@ -435,48 +437,46 @@ function Dashboard() {
             {profile.tenant.slug === 'acid-ia' && (
               <button
                 onClick={() => navigate('/admin')}
-                className="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 text-white font-medium hover:from-purple-700 hover:to-pink-700 transition"
+                className="shrink-0 px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 text-white text-sm font-medium hover:from-purple-700 hover:to-pink-700 transition"
               >
-                🔧 Admin Panel
+                🔧 Admin
               </button>
             )}
-
-            {/* Indicador de página activa */}
-            {facebookPages.length > 0 && selectedPage && (
-              <div className="ml-auto flex items-center space-x-2">
-                <span className="text-white/70 text-sm font-medium">Página:</span>
-                {facebookPages.length === 1 ? (
-                  // Si solo hay una página, mostrar un badge fijo
-                  <div className="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600/30 to-pink-600/30 border-2 border-purple-500/60 shadow-lg">
-                    <span className="text-white text-sm font-bold">
-                      {selectedPage.page_name} {selectedPage.ig_user_id ? '📷' : '👥'}
-                    </span>
-                  </div>
-                ) : (
-                  // Si hay múltiples páginas, mostrar dropdown
-                  <select
-                    value={selectedPage.page_id}
-                    onChange={(e) => {
-                      const page = facebookPages.find(p => p.page_id === e.target.value);
-                      if (page) setSelectedPage(page);
-                    }}
-                    className="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600/20 to-pink-600/20 border-2 border-purple-500/50 text-white text-sm font-medium focus:outline-none focus:border-[#04d9b5] hover:border-purple-400 transition shadow-lg cursor-pointer"
-                  >
-                    {facebookPages.map((page) => (
-                      <option key={page.page_id} value={page.page_id} className="bg-gray-900 text-white font-medium">
-                        {page.page_name} {page.ig_user_id ? '📷' : '👥'}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-            )}
           </nav>
+
+          {/* Selector de página — fila propia en móvil */}
+          {facebookPages.length > 0 && selectedPage && (
+            <div className="flex items-center gap-2 pb-2 sm:pb-3">
+              <span className="text-white/60 text-xs font-medium shrink-0">Página:</span>
+              {facebookPages.length === 1 ? (
+                <div className="px-3 py-1 rounded-lg bg-gradient-to-r from-purple-600/30 to-pink-600/30 border border-purple-500/60">
+                  <span className="text-white text-xs font-bold">
+                    {selectedPage.page_name} {selectedPage.ig_user_id ? '📷' : '👥'}
+                  </span>
+                </div>
+              ) : (
+                <select
+                  value={selectedPage.page_id}
+                  onChange={(e) => {
+                    const page = facebookPages.find(p => p.page_id === e.target.value);
+                    if (page) setSelectedPage(page);
+                  }}
+                  className="px-3 py-1 rounded-lg bg-gradient-to-r from-purple-600/20 to-pink-600/20 border border-purple-500/50 text-white text-xs font-medium focus:outline-none focus:border-[#04d9b5] transition cursor-pointer"
+                >
+                  {facebookPages.map((page) => (
+                    <option key={page.page_id} value={page.page_id} className="bg-gray-900 text-white">
+                      {page.page_name} {page.ig_user_id ? '📷' : '👥'}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
       {/* Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8">
         {error && (
           <div className="mb-6 p-4 rounded-lg bg-red-500/20 border border-red-500/50 text-red-200">
             {error}
