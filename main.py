@@ -737,6 +737,7 @@ async def create_google_calendar_event(t: Optional[dict], sid: str, booking_data
             json=event_payload,
         )
     if resp.status_code >= 400:
+        log.error(f"Google Calendar create event error {resp.status_code}: {resp.text}")
         raise RuntimeError(f"Google Calendar respondió {resp.status_code}")
     out = resp.json()
     return {
