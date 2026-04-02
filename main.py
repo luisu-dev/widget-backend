@@ -3409,21 +3409,26 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
             asyncio.create_task(log_message(tenant or "public", sid, "web", "out", final_text, author="assistant"))
             ui = suggest_ui_for_text(input.message, t)
 
-            # Tarjetas de productos si hay intención de recomendación
-            rec_keywords = [
-                "recomiend", "qué tienes", "que tienes", "tienes ", "busco", "necesito",
-                "qué producto", "que producto", "opciones", "sugier",
-                "catálogo", "catalogo", "para mí", "para mi",
-                "cuál sería", "cual seria", "mostrar", "ver product",
-                "hay ", "tienen ", "venden", "disponib",
-                "tienen de", "tienes algo", "qué me", "que me",
-            ]
-            rec_intent = any(k in text_lc for k in rec_keywords)
-            if rec_intent and catalog_items:
+            # Tarjetas de productos: mostrar si el bot mencionó algún producto del catálogo
+            if catalog_items:
                 combined_query = f"{input.message} {final_text}"
                 top_products = _find_top_products(combined_query, catalog_items, top_n=3)
-                if top_products:
-                    ui["products"] = [_format_product_card(p) for p in top_products]
+                # Mostrar tarjetas si algún producto del top aparece mencionado en la respuesta
+                final_lc = final_text.lower()
+                mentioned = [p for p in top_products if (p.get("name") or "").lower() in final_lc]
+                if not mentioned:
+                    # Fallback: mostrar si hay intención explícita del usuario
+                    rec_keywords = [
+                        "recomiend", "qué tienes", "que tienes", "tienes", "busco", "necesito",
+                        "qué producto", "que producto", "opciones", "sugier",
+                        "catálogo", "catalogo", "para mí", "para mi",
+                        "cuál sería", "cual seria", "mostrar", "ver product",
+                        "hay ", "tienen", "venden", "disponib",
+                    ]
+                    if any(k in text_lc for k in rec_keywords):
+                        mentioned = top_products
+                if mentioned:
+                    ui["products"] = [_format_product_card(p) for p in mentioned]
 
             yield sse_event(json.dumps(ui), event="ui")
             yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
