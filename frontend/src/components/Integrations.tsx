@@ -984,13 +984,40 @@ export default function Integrations({ token, onConnectionChange }: Integrations
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">Zona horaria</label>
-                  <input
-                    type="text"
+                  <select
                     value={calendarConfig.timezone}
                     onChange={(e) => setCalendarConfig((prev) => ({ ...prev, timezone: e.target.value }))}
-                    placeholder="America/Mexico_City"
-                    className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#04d9b5]"
-                  />
+                    className="w-full px-3 py-2 rounded-lg bg-[#0f0f17] border border-white/10 text-white text-sm focus:outline-none focus:ring-1 focus:ring-[#04d9b5]"
+                  >
+                    <optgroup label="México / Centroamérica">
+                      <option value="America/Mexico_City">Ciudad de México (CST/CDT)</option>
+                      <option value="America/Cancun">Cancún (EST)</option>
+                      <option value="America/Monterrey">Monterrey (CST/CDT)</option>
+                      <option value="America/Chihuahua">Chihuahua (MST/MDT)</option>
+                      <option value="America/Tijuana">Tijuana (PST/PDT)</option>
+                      <option value="America/Guatemala">Guatemala (CST)</option>
+                    </optgroup>
+                    <optgroup label="Sudamérica">
+                      <option value="America/Bogota">Bogotá (COT)</option>
+                      <option value="America/Lima">Lima (PET)</option>
+                      <option value="America/Santiago">Santiago (CLT)</option>
+                      <option value="America/Buenos_Aires">Buenos Aires (ART)</option>
+                      <option value="America/Sao_Paulo">São Paulo (BRT)</option>
+                      <option value="America/Caracas">Caracas (VET)</option>
+                    </optgroup>
+                    <optgroup label="España">
+                      <option value="Europe/Madrid">Madrid (CET/CEST)</option>
+                    </optgroup>
+                    <optgroup label="EE.UU.">
+                      <option value="America/New_York">Nueva York (EST/EDT)</option>
+                      <option value="America/Chicago">Chicago (CST/CDT)</option>
+                      <option value="America/Denver">Denver (MST/MDT)</option>
+                      <option value="America/Los_Angeles">Los Ángeles (PST/PDT)</option>
+                    </optgroup>
+                    <optgroup label="Otros">
+                      <option value="UTC">UTC</option>
+                    </optgroup>
+                  </select>
                 </div>
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">Duración (minutos)</label>

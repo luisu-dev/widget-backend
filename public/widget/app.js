@@ -337,6 +337,14 @@ function __ziaInit(){
                 makeBubble("bot", `Listo, puedes completar tu compra aquí: <a href="${ui.checkout_url}" target="_blank" rel="noopener">${label}</a>`);
               }
 
+              if (ui?.booking?.event_link) {
+                const calBubble = makeBubble("bot", "");
+                calBubble.innerHTML = `<a href="${ui.booking.event_link}" target="_blank" rel="noopener" class="zia-cal-btn">📅 Ver en Google Calendar</a>`;
+                if (ui?.booking?.meet_link) {
+                  calBubble.innerHTML += ` <a href="${ui.booking.meet_link}" target="_blank" rel="noopener" class="zia-cal-btn">🎥 Unirse a Meet</a>`;
+                }
+              }
+
               // chips del cuerpo (filtremos redundancias con WhatsApp si hay burbuja)
               const chips = (ui?.chips || []).filter(c => !(shouldBubble && /whats\s*app|whatsapp|wasap/i.test(c)));
               renderChips(chips);

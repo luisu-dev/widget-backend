@@ -3217,9 +3217,7 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
 
                     confirm_date = answers.get("date")
                     confirm_time = answers.get("time")
-                    confirmation = f"Listo, tu cita quedó agendada para {confirm_date} a las {confirm_time}."
-                    if event_data.get("html_link"):
-                        confirmation += f" Puedes verla aquí: {event_data['html_link']}"
+                    confirmation = f"✅ Listo, tu cita quedó agendada para el {confirm_date} a las {confirm_time}."
                     yield sse_event(json.dumps({"content": confirmation}), event="delta")
                     yield sse_event(json.dumps({
                         "booking": {
