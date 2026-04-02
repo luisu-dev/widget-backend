@@ -2748,6 +2748,8 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                 if answer is None:
                     answer = await handle_booking_flow_wa(sid, text_in, t, tenant_slug)
 
+                product_image_url: str | None = None
+
                 # 3) Catálogo + LLM + detalles de producto
                 if answer is None:
                     catalog_items = await fetch_catalog_for_tenant(t)
@@ -2804,6 +2806,11 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                                         line += f"\n🛒 Agregar al carrito: {cart_url}"
                                 extra_lines.append(line)
                             answer += "".join(extra_lines)
+                            product_image_url = mentioned[0].get("image") if mentioned else None
+                        else:
+                            product_image_url = None
+                    else:
+                        product_image_url = None
 
                 # 4) Agregar link de WhatsApp si el usuario lo solicita explícitamente
                 if wa_url and any(k in text_dm for k in ["whats", "whatsapp"]):
@@ -2829,10 +2836,15 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                     try:
                         platform = "instagram" if obj == "instagram" else "facebook"
                         log.info(f"[{rid}] Sending message - platform={platform}, participant_id={participant_id}, page_token={(page_token or '')[:20]}...")
-                        # Usa envío con auto-refresh del page_token si expira
-                        # Pasar el page_token correcto de la página que recibió el mensaje
                         await meta_send_text_with_refresh(tenant_slug, participant_id, answer, platform=platform, page_token=page_token)
                         log.info(f"[{rid}] Message sent successfully to {participant_id}")
+                        # Enviar imagen del producto si hay una disponible
+                        if product_image_url:
+                            try:
+                                await meta_send_image(page_token, participant_id, product_image_url)
+                                log.info(f"[{rid}] Product image sent to {participant_id}")
+                            except Exception as img_err:
+                                log.warning(f"[{rid}] meta image send error: {img_err}")
                     except Exception as e:
                         log.error(f"[{rid}] meta send error to participant={participant_id}, platform={platform}: {e}")
 
@@ -3018,6 +3030,32 @@ async def rotate_page_token(tenant: str = Query(...)):
     except Exception as e:
         raise HTTPException(400, str(e))
     
+async def meta_send_image(page_token: str, recipient_id: str, image_url: str) -> dict:
+    """Envía una imagen como attachment via Meta Send API (Messenger/Instagram)."""
+    if not page_token or not image_url:
+        return {}
+    payload = {
+        "recipient": {"id": recipient_id},
+        "message": {
+            "attachment": {
+                "type": "image",
+                "payload": {"url": image_url, "is_reusable": True}
+            }
+        },
+        "messaging_type": "RESPONSE",
+    }
+    async with httpx.AsyncClient(timeout=10.0) as cx:
+        r = await cx.post(
+            "https://graph.facebook.com/v20.0/me/messages",
+            params=_graph_params(page_token),
+            json=payload,
+        )
+        if r.status_code >= 400:
+            log.warning(f"[META][IMG] error {r.status_code}: {r.text[:200]}")
+            return {}
+        return r.json()
+
+
 async def meta_send_text_with_refresh(tenant_slug: str, recipient_id: str, text: str, platform: str, page_token: str = None):
     # Si no se proporciona page_token, obtener página activa (multi-tenant)
     if not page_token:

@@ -413,27 +413,29 @@ function Dashboard() {
       {/* Navigation Tabs */}
       <div className="border-b border-white/10 bg-black/10 backdrop-blur">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          {/* Tabs row — scrollable on mobile */}
-          <nav className="flex items-center gap-1 py-2 sm:py-3 overflow-x-auto scrollbar-hide">
-            {[
-              { id: 'integrations', label: 'Integraciones' },
-              { id: 'messages', label: 'Conversaciones' },
-              { id: 'metrics', label: 'Métricas' },
-              { id: 'settings', label: 'Config' }
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`shrink-0 px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-sm transition ${
-                  activeTab === tab.id
-                    ? 'bg-[#04d9b5] text-black font-medium'
-                    : 'text-white/70 hover:text-white hover:bg-white/10'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-            {/* Panel de Admin - solo para acid-ia */}
+          {/* Tabs row: scrollable area + admin button siempre visible */}
+          <div className="flex items-center gap-1 py-2 sm:py-3">
+            <nav className="flex items-center gap-1 overflow-x-auto scrollbar-hide flex-1 min-w-0">
+              {[
+                { id: 'integrations', label: 'Integraciones' },
+                { id: 'messages', label: 'Conversaciones' },
+                { id: 'metrics', label: 'Métricas' },
+                { id: 'settings', label: 'Config' }
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`shrink-0 px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-sm transition ${
+                    activeTab === tab.id
+                      ? 'bg-[#04d9b5] text-black font-medium'
+                      : 'text-white/70 hover:text-white hover:bg-white/10'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
+            {/* Panel de Admin - fuera del scroll, siempre visible */}
             {profile.tenant.slug === 'acid-ia' && (
               <button
                 onClick={() => navigate('/admin')}
@@ -442,7 +444,7 @@ function Dashboard() {
                 🔧 Admin
               </button>
             )}
-          </nav>
+          </div>
 
           {/* Selector de página — fila propia en móvil */}
           {facebookPages.length > 0 && selectedPage && (
