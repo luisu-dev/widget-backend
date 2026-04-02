@@ -5549,12 +5549,21 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
                 extra_lines.append(line)
             answer += "".join(extra_lines)
 
+            # Imagen del primer producto mencionado
+            product_image_url = mentioned[0].get("image") if mentioned else None
+        else:
+            product_image_url = None
+    else:
+        product_image_url = None
+
     add_message(sid, "assistant", answer)
     asyncio.create_task(store_event(tenant or "public", sid, "wa_out", {"to": from_raw, "text": answer[:MAX_TEXT_LENGTH]}))
     asyncio.create_task(log_message(tenant or "public", sid, "whatsapp", "out", answer, author="bot"))
 
     twiml = MessagingResponse()
-    twiml.message(answer)
+    msg = twiml.message(answer)
+    if product_image_url:
+        msg.media(product_image_url)
     return Response(str(twiml), media_type="application/xml")
 
 @app.options("/v1/admin/export/leads.csv")
