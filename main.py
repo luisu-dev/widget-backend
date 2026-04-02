@@ -720,8 +720,8 @@ async def create_google_calendar_event(t: Optional[dict], sid: str, booking_data
     event_payload: Dict[str, Any] = {
         "summary": summary,
         "description": description,
-        "start": {"dateTime": dt_start.isoformat(), "timeZone": cfg["timezone"]},
-        "end": {"dateTime": dt_end.isoformat(), "timeZone": cfg["timezone"]},
+        "start": {"dateTime": dt_start.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": cfg["timezone"]},
+        "end": {"dateTime": dt_end.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": cfg["timezone"]},
     }
     if booking_data.get("email") and is_email(booking_data["email"]):
         event_payload["attendees"] = [{"email": booking_data["email"]}]
