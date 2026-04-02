@@ -436,7 +436,7 @@ function Dashboard() {
               ))}
             </nav>
             {/* Panel de Admin - fuera del scroll, siempre visible */}
-            {profile.tenant.slug === 'acid-ia' && (
+            {(['acid-ia', 'acidia', 'acidium'].includes(profile.tenant.slug) || profile.user.email?.endsWith('@acidia.app')) && (
               <button
                 onClick={() => navigate('/admin')}
                 className="shrink-0 px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 text-white text-sm font-medium hover:from-purple-700 hover:to-pink-700 transition"
