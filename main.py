@@ -2276,7 +2276,7 @@ def suggest_ui_for_text(user_text: str, tenant: Optional[dict]) -> dict:
     if any(w in text_ for w in ["precio", "tarifa", "cotiza", "costo"]):
         chips += ["Ver tarifas", "Solicitar cotización"]
     if not chips:
-        chips = ["Solicitar cotización", "Ver tarifas", "Contactar por WhatsApp"]
+        chips = ["Solicitar cotización", "Agendar una demo", "Ver catálogo", "Quiero suscribirme", "Contactar por WhatsApp"]
     wa_num = clean_phone_for_wa((tenant or {}).get("whatsapp"))
     wa_link = f"https://wa.me/{wa_num}" if wa_num else None
     show_bubble = any(w in text_ for w in ["whatsapp", "wasap", "contacto", "contact"])
@@ -2347,7 +2347,7 @@ async def widget_bootstrap(tenant: str):
         # Modo sin DB: entregar algo básico
         return {
             "tenant": {"slug": tenant, "name": tenant or "zIA", "whatsapp": None, "settings": {}},
-            "ui": {"suggestions": ["Solicitar cotización","Ver tarifas","Contactar por WhatsApp"]}
+            "ui": {"suggestions": ["Solicitar cotización","Agendar una demo","Ver catálogo","Quiero suscribirme","Contactar por WhatsApp"]}
         }
     async with db_engine.connect() as conn:
         t = (await conn.execute(
@@ -2366,7 +2366,7 @@ async def widget_bootstrap(tenant: str):
     return {
         "tenant": tenant_obj,
         "ui": {
-            "suggestions": ["Solicitar cotización","Ver tarifas","Contactar por WhatsApp"]
+            "suggestions": ["Solicitar cotización","Agendar una demo","Ver catálogo","Quiero suscribirme","Contactar por WhatsApp"]
         },
         "catalog": {"present": has_catalog}
     }
