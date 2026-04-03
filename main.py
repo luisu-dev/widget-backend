@@ -779,6 +779,14 @@ def validate_booking_field_value(field_key: str, raw_value: str) -> tuple[bool, 
 def valid_slug(slug: str) -> bool:
     return bool(re.fullmatch(r"[a-z0-9\-]{1,40}", (slug or "")))
 
+_ACIDIA_SLUGS = {"acid-ia", "acidia", "acidium"}
+
+def is_acidia_admin(current: dict) -> bool:
+    """Devuelve True si el usuario pertenece al tenant administrador de Acidia."""
+    slug = (current.get("tenant_slug") or "").lower()
+    email = (current.get("email") or "").lower()
+    return slug in _ACIDIA_SLUGS or email.endswith("@acidia.app")
+
 #---- Modelos de Checkout 
 
 class CheckoutItemIn(BaseModel):
@@ -4607,7 +4615,7 @@ async def facebook_list_tenants(current = Depends(require_user)):
     user_role = current.get("role", "user")
 
     # Solo permitir a usuarios con rol admin o si es acid-ia (tenant principal)
-    if user_role != "admin" and current["tenant_slug"] != "acid-ia":
+    if user_role != "admin" and not is_acidia_admin(current):
         # Usuario normal solo ve su propio tenant
         if not db_engine:
             return {"tenants": []}
@@ -4646,7 +4654,7 @@ async def facebook_assign_page_to_tenant(
     user_role = current.get("role", "user")
 
     # Verificar que el usuario tenga permiso
-    if user_role != "admin" and current["tenant_slug"] not in [tenant_slug, "acid-ia"]:
+    if user_role != "admin" and current["tenant_slug"] != tenant_slug and not is_acidia_admin(current):
         raise HTTPException(403, "No tienes permiso para asignar páginas a este tenant")
 
     if not db_engine:
@@ -7128,7 +7136,7 @@ async def create_user_manual(body: UserCreateIn, request: Request):
     # Verificar autenticación y permisos de admin
     current = await require_user(request)
     log.info(f"[create-user-manual] Usuario autenticado: {current.get('email')} (tenant={current.get('tenant_slug')})")
-    if current.get("tenant_slug") != "acid-ia":
+    if not is_acidia_admin(current):
         log.warning(f"[create-user-manual] Acceso denegado para tenant={current.get('tenant_slug')}")
         raise HTTPException(403, "Forbidden: Solo administradores de Acid IA pueden crear usuarios manualmente")
 
@@ -7245,7 +7253,7 @@ async def create_user_manual(body: UserCreateIn, request: Request):
 async def admin_list_all_tenants(request: Request):
     """Lista todos los tenants con estado de integraciones. Solo acid-ia."""
     current = await require_user(request)
-    if current.get("tenant_slug") != "acid-ia":
+    if not is_acidia_admin(current):
         raise HTTPException(403, "Forbidden")
     if not db_engine:
         raise HTTPException(503, "Database not configured")
@@ -7287,7 +7295,7 @@ async def admin_list_all_tenants(request: Request):
 async def admin_toggle_tenant_bot(slug: str, request: Request):
     """Activa o desactiva el bot globalmente para un tenant. Solo acid-ia."""
     current = await require_user(request)
-    if current.get("tenant_slug") != "acid-ia":
+    if not is_acidia_admin(current):
         raise HTTPException(403, "Forbidden")
     if not db_engine:
         raise HTTPException(503, "Database not configured")
