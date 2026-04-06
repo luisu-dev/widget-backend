@@ -7329,7 +7329,7 @@ async def admin_toggle_tenant_bot(slug: str, request: Request):
 async def admin_delete_tenant(slug: str, request: Request):
     """Elimina un tenant y su usuario. Solo acid-ia."""
     current = await require_user(request)
-    if current.get("tenant_slug") != "acid-ia":
+    if not is_acidia_admin(current):
         raise HTTPException(403, "Forbidden")
     if not db_engine:
         raise HTTPException(503, "Database not configured")
