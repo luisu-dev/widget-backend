@@ -7201,7 +7201,8 @@ async def create_user_manual(body: UserCreateIn, request: Request):
     login_url = f"{SITE_URL}/login"
     
     # Email al nuevo usuario con sus credenciales
-    widget_snippet = f'&lt;script src="{BACKEND_URL}/widget/loader.js" data-tenant="{tenant_slug}"&gt;&lt;/script&gt;'
+    _backend_url = os.getenv("BACKEND_URL", "https://widget-backend-1-pip5.onrender.com").rstrip("/")
+    widget_snippet = f'&lt;script src="{_backend_url}/widget/loader.js" data-tenant="{tenant_slug}"&gt;&lt;/script&gt;'
     user_email_body = f"""
     <h2>Bienvenido a Acid IA</h2>
     <p>Tu cuenta ha sido creada exitosamente. Aquí están tus credenciales de acceso:</p>
