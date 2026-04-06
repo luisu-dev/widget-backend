@@ -1409,10 +1409,6 @@ class ConversationBotToggle(BaseModel):
     enabled: bool = True
 
 
-class TenantSettingsUpdate(BaseModel):
-    settings: Dict[str, Any]
-
-
 class CalendarSettingsUpdate(BaseModel):
     enabled: bool = False
     calendar_id: Optional[str] = None
