@@ -7201,6 +7201,7 @@ async def create_user_manual(body: UserCreateIn, request: Request):
     login_url = f"{SITE_URL}/login"
     
     # Email al nuevo usuario con sus credenciales
+    widget_snippet = f'&lt;script src="{BACKEND_URL}/widget/loader.js" data-tenant="{tenant_slug}"&gt;&lt;/script&gt;'
     user_email_body = f"""
     <h2>Bienvenido a Acid IA</h2>
     <p>Tu cuenta ha sido creada exitosamente. Aquí están tus credenciales de acceso:</p>
@@ -7209,6 +7210,12 @@ async def create_user_manual(body: UserCreateIn, request: Request):
     <p><strong>Tenant:</strong> {tenant_slug}</p>
     <br>
     <p>Puedes iniciar sesión en: <a href="{login_url}">{login_url}</a></p>
+    <br>
+    <h3>Instalar el widget en tu sitio web</h3>
+    <p>Copia y pega esta línea justo antes del cierre de la etiqueta <code>&lt;/body&gt;</code> en tu sitio web:</p>
+    <div style="background:#f4f4f4;padding:12px 16px;border-radius:6px;font-family:monospace;font-size:13px;word-break:break-all;">
+      {widget_snippet}
+    </div>
     <br>
     <p>Te recomendamos cambiar tu contraseña después de iniciar sesión por primera vez.</p>
     <p>Saludos,<br>El equipo de Acid IA</p>
@@ -7316,6 +7323,31 @@ async def admin_toggle_tenant_bot(slug: str, request: Request):
         )
     log.info(f"[admin] bot_enabled={new_val} para tenant={slug} por {current.get('email')}")
     return {"slug": slug, "bot_enabled": new_val}
+
+
+@app.delete("/v1/admin/tenants/{slug}")
+async def admin_delete_tenant(slug: str, request: Request):
+    """Elimina un tenant y su usuario. Solo acid-ia."""
+    current = await require_user(request)
+    if current.get("tenant_slug") != "acid-ia":
+        raise HTTPException(403, "Forbidden")
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+    if slug == "acid-ia":
+        raise HTTPException(400, "No puedes eliminar el tenant principal")
+
+    async with db_engine.begin() as conn:
+        row = (await conn.execute(
+            text("SELECT id FROM tenants WHERE slug = :slug"),
+            {"slug": slug}
+        )).first()
+        if not row:
+            raise HTTPException(404, "Tenant no encontrado")
+        await conn.execute(text("DELETE FROM users WHERE tenant_slug = :slug"), {"slug": slug})
+        await conn.execute(text("DELETE FROM tenants WHERE slug = :slug"), {"slug": slug})
+
+    log.info(f"[admin] tenant={slug} eliminado por {current.get('email')}")
+    return {"ok": True, "deleted": slug}
 
 
 @app.post("/v1/stripe/webhook")

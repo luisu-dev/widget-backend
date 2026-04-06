@@ -29,6 +29,8 @@ export default function AdminPanel() {
   const [error, setError] = useState('')
   const [showModal, setShowModal] = useState(false)
   const [togglingSlug, setTogglingSlug] = useState<string | null>(null)
+  const [deletingSlug, setDeletingSlug] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
 
   const [form, setForm] = useState({ tenantSlug: '', email: '', password: '' })
   const [formLoading, setFormLoading] = useState(false)
@@ -109,6 +111,26 @@ export default function AdminPanel() {
       setFormError(err.message)
     } finally {
       setFormLoading(false)
+    }
+  }
+
+  const deleteTenant = async (slug: string) => {
+    setDeletingSlug(slug)
+    try {
+      const res = await fetch(`${API_BASE}/v1/admin/tenants/${slug}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.detail || 'Error al eliminar')
+      }
+      setTenants(prev => prev.filter(t => t.slug !== slug))
+      setConfirmDelete(null)
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setDeletingSlug(null)
     }
   }
 
@@ -195,6 +217,7 @@ export default function AdminPanel() {
                     <th className="text-left px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Integraciones</th>
                     <th className="text-left px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Suscripción</th>
                     <th className="text-center px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Bot</th>
+                    <th className="text-center px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-700/50">
@@ -225,6 +248,35 @@ export default function AdminPanel() {
                           busy={togglingSlug === t.slug}
                           onChange={() => toggleBot(t.slug)}
                         />
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        {t.slug !== 'acid-ia' && (
+                          confirmDelete === t.slug ? (
+                            <div className="flex items-center justify-center gap-2">
+                              <button
+                                onClick={() => deleteTenant(t.slug)}
+                                disabled={deletingSlug === t.slug}
+                                className="px-2 py-1 bg-red-600 hover:bg-red-500 text-white text-xs rounded transition disabled:opacity-50"
+                              >
+                                {deletingSlug === t.slug ? '...' : 'Confirmar'}
+                              </button>
+                              <button
+                                onClick={() => setConfirmDelete(null)}
+                                className="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setConfirmDelete(t.slug)}
+                              className="p-1.5 text-gray-500 hover:text-red-400 transition rounded"
+                              title="Eliminar tenant"
+                            >
+                              🗑
+                            </button>
+                          )
+                        )}
                       </td>
                     </tr>
                   ))}
