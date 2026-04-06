@@ -2367,10 +2367,21 @@ async def widget_bootstrap(tenant: str):
         has_catalog = bool(items)
     except Exception:
         has_catalog = False
+    settings = tenant_obj.get("settings") or {}
+    widget_chips = settings.get("widget_chips")
+    if not widget_chips:
+        widget_chips = []
+        if has_catalog:
+            widget_chips.append("Ver catálogo")
+        widget_chips.append("Solicitar cotización")
+        if tenant_obj.get("whatsapp"):
+            widget_chips.append("Contactar por WhatsApp")
+        if not widget_chips:
+            widget_chips = ["Solicitar cotización", "Más información"]
     return {
         "tenant": tenant_obj,
         "ui": {
-            "suggestions": ["Probar funciones","Integraciones","Contactar por WhatsApp"]
+            "suggestions": widget_chips
         },
         "catalog": {"present": has_catalog}
     }
@@ -3251,7 +3262,9 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 add_message(sid, "assistant", _msg)
                 asyncio.create_task(log_message(tenant or "public", sid, "web", "out", _msg, author="assistant"))
                 yield sse_event(json.dumps({"content": _msg}), event="delta")
-                yield sse_event(json.dumps({"chips": ["Probar funciones", "Solicitar cotización", "Contactar por WhatsApp"], "whatsapp": None, "showWhatsAppBubble": False}), event="ui")
+                _t_settings = (t or {}).get("settings") or {}
+                _wchips = _t_settings.get("widget_chips") or ["Solicitar cotización", "Contactar por WhatsApp"]
+                yield sse_event(json.dumps({"chips": _wchips, "whatsapp": None, "showWhatsAppBubble": False}), event="ui")
                 yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
                 return
 

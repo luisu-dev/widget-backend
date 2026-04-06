@@ -19,8 +19,9 @@ interface Tenant {
   settings?: {
     bot_enabled?: boolean;
     whatsapp_link?: string;
+    orders_notify_phone?: string;
+    widget_chips?: string[];
     bot_off_message?: string;
-    // Facebook/Instagram credentials (multi-tenant)
     fb_page_id?: string;
     fb_page_token?: string;
     fb_page_name?: string;
@@ -53,6 +54,9 @@ function Dashboard() {
   const [sendingReply, setSendingReply] = useState(false);
   const [conversationBotEnabled, setConversationBotEnabled] = useState(true);
   const [togglingConversationBot, setTogglingConversationBot] = useState(false);
+  const [contactForm, setContactForm] = useState({ whatsapp: '', whatsapp_notifications: '', widget_chips: '' });
+  const [savingContact, setSavingContact] = useState(false);
+  const [contactSuccess, setContactSuccess] = useState('');
 
   const fetchProfile = async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -147,6 +151,13 @@ function Dashboard() {
   useEffect(() => {
     if (profile?.tenant?.settings?.bot_enabled !== undefined) {
       setBotEnabled(profile.tenant.settings.bot_enabled);
+    }
+    if (profile?.tenant) {
+      setContactForm({
+        whatsapp: profile.tenant.whatsapp || '',
+        whatsapp_notifications: profile.tenant.settings?.orders_notify_phone || '',
+        widget_chips: (profile.tenant.settings?.widget_chips || []).join(', '),
+      });
     }
   }, [profile]);
 
@@ -368,6 +379,36 @@ function Dashboard() {
       setError('Error al cambiar estado del bot');
     } finally {
       setSavingBotState(false);
+    }
+  };
+
+  const saveContactSettings = async () => {
+    setSavingContact(true);
+    try {
+      const chips = contactForm.widget_chips
+        .split(',')
+        .map(c => c.trim())
+        .filter(Boolean);
+      const res = await fetch(`${API_BASE}/v1/admin/tenant/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          whatsapp: contactForm.whatsapp.trim() || null,
+          settings: {
+            orders_notify_phone: contactForm.whatsapp_notifications.trim() || null,
+            widget_chips: chips.length ? chips : null,
+          }
+        })
+      });
+      if (!res.ok) throw new Error('Error al guardar');
+      setContactSuccess('Guardado correctamente');
+      setTimeout(() => setContactSuccess(''), 3000);
+      const profileRes = await fetch(`${API_BASE}/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
+      if (profileRes.ok) setProfile(await profileRes.json());
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSavingContact(false);
     }
   };
 
@@ -754,14 +795,11 @@ function Dashboard() {
             </div>
 
             {/* Brand Configuration */}
-            {selectedPage && (
-              <div className="mb-6 p-4 rounded-lg bg-blue-500/10 border border-blue-500/30">
-                <p className="text-sm text-blue-200">
-                  📄 Configurando: <strong>{selectedPage.page_name}</strong>
-                  {selectedPage.ig_user_id && <span className="ml-2">📷 Instagram conectado</span>}
-                </p>
-              </div>
-            )}
+            <div className="mb-6 p-4 rounded-lg bg-blue-500/10 border border-blue-500/30">
+              <p className="text-sm text-blue-200">
+                Esta configuración aplica a todos tus canales: widget web, WhatsApp, Facebook e Instagram.
+              </p>
+            </div>
             <BrandConfig
               token={token}
               tenant={profile.tenant}
@@ -771,6 +809,60 @@ function Dashboard() {
                 fetchFacebookPages();
               }}
             />
+
+            {/* WhatsApp & Widget chips */}
+            <div className="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl p-6 space-y-4">
+              <h3 className="text-xl font-semibold text-white mb-1">Contacto y Widget</h3>
+              <p className="text-gray-400 text-sm mb-4">Números de WhatsApp y botones del chat</p>
+
+              {contactSuccess && (
+                <div className="p-3 rounded-lg bg-green-500/20 border border-green-500/50 text-green-200 text-sm">{contactSuccess}</div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">WhatsApp para redirecciones</label>
+                <input
+                  type="text"
+                  value={contactForm.whatsapp}
+                  onChange={e => setContactForm(p => ({ ...p, whatsapp: e.target.value }))}
+                  placeholder="525512345678 (sin + ni espacios)"
+                  className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#04d9b5]"
+                />
+                <p className="text-xs text-gray-500 mt-1">El bot enviará aquí el link "Contactar por WhatsApp" en el widget</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">WhatsApp para notificaciones (Shopify)</label>
+                <input
+                  type="text"
+                  value={contactForm.whatsapp_notifications}
+                  onChange={e => setContactForm(p => ({ ...p, whatsapp_notifications: e.target.value }))}
+                  placeholder="525512345678 (sin + ni espacios)"
+                  className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#04d9b5]"
+                />
+                <p className="text-xs text-gray-500 mt-1">Recibe aquí las alertas de nuevas órdenes de Shopify</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Botones del widget (chips)</label>
+                <input
+                  type="text"
+                  value={contactForm.widget_chips}
+                  onChange={e => setContactForm(p => ({ ...p, widget_chips: e.target.value }))}
+                  placeholder="Ver catálogo, Solicitar cotización, Contactar por WhatsApp"
+                  className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#04d9b5]"
+                />
+                <p className="text-xs text-gray-500 mt-1">Separados por coma. Se muestran como botones rápidos en el chat (máx. 4 recomendado)</p>
+              </div>
+
+              <button
+                onClick={saveContactSettings}
+                disabled={savingContact}
+                className="w-full py-3 bg-gradient-to-r from-[#04d9b5] to-[#02a88a] hover:from-[#02a88a] hover:to-[#04d9b5] text-black font-semibold rounded-lg transition disabled:opacity-50"
+              >
+                {savingContact ? 'Guardando...' : 'Guardar'}
+              </button>
+            </div>
 
             {/* Killswitch */}
             <div className="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl p-6">
