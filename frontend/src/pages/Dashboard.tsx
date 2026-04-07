@@ -692,34 +692,42 @@ function Dashboard() {
                   ))}
                 </div>
                 {/* Reply Input */}
-                <div className="p-4 border-t border-white/10">
-                  <div className="flex space-x-2">
-                    <input
-                      type="text"
-                      value={replyMessage}
-                      onChange={(e) => setReplyMessage(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          sendReply();
-                        }
-                      }}
-                      placeholder="Escribe tu respuesta..."
-                      className="flex-1 px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#04d9b5]"
-                      disabled={sendingReply}
-                    />
-                    <button
-                      onClick={sendReply}
-                      disabled={sendingReply || !replyMessage.trim()}
-                      className="px-4 py-2 rounded-lg bg-[#04d9b5] text-black font-medium hover:bg-[#04d9b5]/80 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {sendingReply ? 'Enviando...' : 'Enviar'}
-                    </button>
-                  </div>
-                  <p className="text-xs text-gray-500 mt-2">
-                    Presiona Enter para enviar. Este mensaje se enviará directamente al usuario.
-                  </p>
-                </div>
+                {(() => {
+                  const platform = selectedSession?.split(':')[0];
+                  const canReply = platform === 'fb' || platform === 'ig' || platform === 'wa';
+                  const channelLabel = platform === 'wa' ? '💬 WhatsApp (Twilio)' : platform === 'ig' ? '📷 Instagram DM' : platform === 'fb' ? '📘 Facebook Messenger' : null;
+                  if (!canReply) return (
+                    <div className="p-4 border-t border-white/10 text-xs text-gray-500">
+                      Este canal no soporta respuesta manual desde el dashboard.
+                    </div>
+                  );
+                  return (
+                    <div className="p-4 border-t border-white/10">
+                      {channelLabel && <p className="text-xs text-gray-400 mb-2">Respondiendo por {channelLabel}</p>}
+                      <div className="flex space-x-2">
+                        <input
+                          type="text"
+                          value={replyMessage}
+                          onChange={(e) => setReplyMessage(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(); }
+                          }}
+                          placeholder="Escribe tu respuesta..."
+                          className="flex-1 px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#04d9b5]"
+                          disabled={sendingReply}
+                        />
+                        <button
+                          onClick={sendReply}
+                          disabled={sendingReply || !replyMessage.trim()}
+                          className="px-4 py-2 rounded-lg bg-[#04d9b5] text-black font-medium hover:bg-[#04d9b5]/80 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {sendingReply ? 'Enviando...' : 'Enviar'}
+                        </button>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-2">Presiona Enter para enviar. El bot queda pausado en esta conversación.</p>
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>

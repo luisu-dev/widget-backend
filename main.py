@@ -5140,12 +5140,35 @@ async def admin_send_message(
         raise HTTPException(400, "session_id y message son requeridos")
 
     # Parsear session_id para extraer información
-    # Formato: fb:{tenant_slug}:{participant_id} o ig:{tenant_slug}:{participant_id}
+    # Formatos: fb:{tenant}:{psid} | ig:{tenant}:{psid} | wa:{phone}
     parts = session_id.split(":")
-    if len(parts) < 3:
+    if len(parts) < 2:
         raise HTTPException(400, f"session_id inválido: {session_id}")
 
-    platform = parts[0]  # fb o ig
+    platform = parts[0]  # fb, ig o wa
+    tenant_slug = current["tenant_slug"]
+
+    # ── WhatsApp: responder vía Twilio ─────────────────────────────────
+    if platform == "wa":
+        phone_part = parts[1] if len(parts) > 1 else ""
+        to_e164 = f"+{phone_part}" if not phone_part.startswith("+") else phone_part
+        try:
+            await twilio_send_whatsapp(tenant_slug, to_e164, message)
+        except Exception as e:
+            raise HTTPException(500, f"Error enviando WhatsApp: {e}")
+        if db_engine:
+            async with db_engine.begin() as conn:
+                await conn.execute(
+                    text("""INSERT INTO messages (tenant_slug, session_id, channel, direction, author, content, payload)
+                            VALUES (:tenant, :sid, 'whatsapp', 'out', 'admin', :content, :payload)"""),
+                    {"tenant": tenant_slug, "sid": session_id, "content": message,
+                     "payload": json.dumps({"admin_reply": True})}
+                )
+        return {"ok": True, "platform": "wa", "to": to_e164}
+
+    # ── Facebook / Instagram ───────────────────────────────────────────
+    if len(parts) < 3:
+        raise HTTPException(400, f"session_id inválido: {session_id}")
     tenant_slug = parts[1]
     recipient_id = parts[2]
 
