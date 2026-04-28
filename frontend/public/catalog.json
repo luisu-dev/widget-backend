@@ -73,11 +73,11 @@
       "image": "/images/whatsaddon.png",
       "priceId": "price_1S9MD59ubUUr929zlSL7ku4q",
       "features": [
-        "Mis respuestas del chat web en WhatsApp",
-        "Leads calificados y links de pago",
+        "100 mensajes/mes incluidos",
+        "Leads calificados y links de pago por WhatsApp",
         "Detección de intención de compra"
       ],
-      "price": "$500 MXN/mes (+IVA)",
+      "price": "$500 MXN/mes (+IVA) · 100 mensajes incluidos",
       "sections": [
         {
           "title": "Características destacadas",
@@ -88,8 +88,13 @@
           ]
         },
         {
-          "title": "Detalles",
-          "body": "Compatible con plantillas proactivas (según políticas de Meta/Twilio/BSP)."
+          "title": "Precio y mensajes",
+          "body": "El plan incluye 100 mensajes salientes por mes.",
+          "items": [
+            "$500 MXN/mes (+IVA) — 100 mensajes incluidos",
+            "Add-on mensajes adicionales: +$500 MXN/mes por bloque extra",
+            "Renta del número de WhatsApp: $6.25 USD/mes a cargo del cliente (cobrado por Twilio/Meta, no incluido en este plan)"
+          ]
         },
         {
           "title": "Qué incluye",
@@ -106,11 +111,18 @@
           ]
         },
         {
+          "title": "Costos adicionales del cliente",
+          "items": [
+            "Renta de número Twilio: ~$6.25 USD/mes (facturado directamente por Twilio)",
+            "Mensajes fuera del plan: add-on de $500 MXN/mes disponible",
+            "Plantillas proactivas preaprobadas por Meta (si aplica)"
+          ]
+        },
+        {
           "title": "Requisitos",
           "items": [
-            "Cuenta WhatsApp Business API aprobada",
-            "Plantillas preaprobadas por el cliente (si se usarán mensajes proactivos)",
-            "Costos del proveedor (Meta/Twilio/BSP) a cargo del cliente"
+            "Cuenta WhatsApp Business API aprobada (Meta Cloud API o Twilio)",
+            "Plan Starter activo (este add-on se suma al chat web)"
           ]
         }
       ]

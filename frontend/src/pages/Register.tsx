@@ -29,13 +29,13 @@ const PLANS = [
   {
     id: 'addon-whatsapp',
     name: 'Add-on WhatsApp',
-    subtitle: 'Canal Conversacional',
-    price: '$500 MXN/mes',
+    subtitle: '100 mensajes/mes incluidos',
+    price: '$500 MXN/mes · +$6.25 USD renta núm.',
     features: [
-      'Respuestas del chat web en WhatsApp',
-      'Leads calificados y links de pago',
+      '100 mensajes salientes incluidos/mes',
+      'Leads calificados y links de pago por WhatsApp',
       'Detección de intención de compra',
-      'Se suma al Plan Starter',
+      'Renta de número: $6.25 USD/mes a cargo del cliente',
     ],
   },
 ] as const
