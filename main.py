@@ -7515,8 +7515,8 @@ async def create_checkout_session_public(body: dict):
     if not line_items or not isinstance(line_items, list):
         raise HTTPException(400, "lineItems debe ser un array con al menos un item")
 
-    # Por defecto usar tenant "acid-ia" (tu cuenta principal)
-    tenant_slug = "acid-ia"
+    # Por defecto usar tenant "acidia" (tu cuenta principal)
+    tenant_slug = "acidia"
     t = await fetch_tenant(tenant_slug)
     if not t:
         raise HTTPException(404, f"Tenant {tenant_slug} no encontrado")
