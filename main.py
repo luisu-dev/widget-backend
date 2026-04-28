@@ -873,7 +873,7 @@ def _tenant_stripe_prices(t: Optional[dict]) -> dict:
 
 # Precios por plan en centavos MXN (para la cuenta de la plataforma)
 _PLATFORM_PLAN_CENTS: dict = {
-    "starter":          150_000,  # $1,500 MXN/mes
+    "starter":           50_000,  # $500 MXN/mes
     "addon-whatsapp":    50_000,  # $500 MXN/mes
     "addon-ecommerce":   50_000,  # $500 MXN/mes
     "meta":             100_000,  # $1,000 MXN/mes (alias legacy)
@@ -888,12 +888,24 @@ _PLATFORM_PLAN_NAMES: dict = {
 
 
 async def ensure_platform_prices(t: dict) -> dict:
-    """Crea/recupera precios en la cuenta de la plataforma (sin Stripe Connect)."""
+    """Crea/recupera precios en la cuenta de la plataforma (sin Stripe Connect).
+    Si el monto esperado cambió, crea un nuevo precio (Stripe no permite editar amounts)."""
     prices = _tenant_stripe_prices(t).copy()
     changed = False
 
     for plan_key, cents in _PLATFORM_PLAN_CENTS.items():
-        if plan_key not in prices:
+        existing_id = prices.get(plan_key)
+        needs_new = not existing_id
+
+        if existing_id and not needs_new:
+            try:
+                existing_price = stripe.Price.retrieve(existing_id)
+                if existing_price.unit_amount != cents:
+                    needs_new = True
+            except Exception:
+                needs_new = True
+
+        if needs_new:
             p = stripe.Price.create(
                 currency="mxn",
                 unit_amount=cents,
@@ -7413,6 +7425,19 @@ async def admin_delete_tenant(slug: str, request: Request):
 
     log.info(f"[admin] tenant={slug} eliminado por {current.get('email')}")
     return {"ok": True, "deleted": slug}
+
+
+@app.post("/v1/admin/stripe/refresh-platform-prices")
+async def admin_refresh_platform_prices(request: Request):
+    """Recrea los precios de la plataforma en Stripe si el monto cambió. Devuelve los nuevos IDs."""
+    current = await require_user(request)
+    if not is_acidia_admin(current):
+        raise HTTPException(403, "Forbidden")
+    t = await fetch_tenant("acidia")
+    if not t:
+        raise HTTPException(404, "Tenant acidia no encontrado")
+    prices = await ensure_platform_prices(t)
+    return {"ok": True, "prices": prices}
 
 
 @app.post("/v1/stripe/webhook")

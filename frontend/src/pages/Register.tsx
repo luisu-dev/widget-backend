@@ -18,11 +18,11 @@ const PLANS = [
     id: 'starter',
     name: 'Plan Starter',
     subtitle: 'Chat Web',
-    price: '$1,500 MXN/mes',
+    price: '$500 MXN/mes',
     features: [
       'Widget de chat web embebible',
       'FAQs con tono de marca',
-      'Leads calificados',
+      'Calificación de leads (nombre, contacto, presupuesto)',
       'Redirecciones a WhatsApp o URLs',
     ],
   },

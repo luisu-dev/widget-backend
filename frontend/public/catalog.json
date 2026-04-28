@@ -11,26 +11,35 @@
         "Leads calificados con 1 flujo preconfigurado",
         "Redirecciones a WhatsApp o URLs"
       ],
-      "price": "$1,500 MXN/mes (+IVA)",
+      "price": "$500 MXN/mes (+IVA)",
       "sections": [
         {
           "title": "Características destacadas",
           "items": [
             "Widget de chat web personalizable",
             "FAQs ajustadas al tono de la marca",
-            "Flujos automatizados para calificar leads",
+            "Calificación de leads: el bot pregunta nombre, contacto, presupuesto e intención",
             "Redirecciones inteligentes a WhatsApp o páginas clave"
           ]
         },
         {
-          "title": "Detalles",
-          "body": "Plantillas de flujo sugeridas (elige una y la afinamos a tu operación):",
+          "title": "Cómo funciona la calificación de leads",
+          "body": "El widget hace preguntas conversacionales al visitante y guarda los datos como prospecto:",
           "items": [
-            "Calificar lead: capturamos datos de contacto, presupuesto y prioridad para tu equipo comercial",
-            "Cotización básica: recogemos alcance, integraciones y urgencia del proyecto",
-            "Soporte pre-venta: identificamos el motivo, producto de interés y datos de contacto",
-            "Límites de uso mensuales: 1M tokens de entrada + 1M tokens de salida",
-            "Métricas: aperturas, primera interacción, clics a WhatsApp y export de leads a CSV"
+            "Captura: nombre, teléfono/email, qué busca, presupuesto y urgencia",
+            "Notificación inmediata a tu equipo (correo o WhatsApp)",
+            "Registro en tu dashboard con historial de conversación",
+            "Export a CSV para tu CRM o equipo comercial",
+            "Límites de uso mensuales: 1M tokens de entrada + 1M tokens de salida"
+          ]
+        },
+        {
+          "title": "Plantillas de flujo disponibles",
+          "body": "Elige una al contratar y la afinamos a tu operación:",
+          "items": [
+            "Calificar lead: datos de contacto, presupuesto y prioridad",
+            "Cotización básica: alcance, integraciones y urgencia del proyecto",
+            "Soporte pre-venta: motivo de consulta, producto de interés y contacto"
           ]
         },
         {
@@ -45,7 +54,7 @@
           "title": "Qué se entrega",
           "items": [
             "Snippet para insertar en tu sitio",
-            "Acceso a export de leads/eventos",
+            "Dashboard con leads capturados y export a CSV",
             "Notificaciones por correo y WhatsApp"
           ]
         },
