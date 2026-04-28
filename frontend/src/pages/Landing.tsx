@@ -508,6 +508,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const anyOpen = !!(activePlan || showCart);
+    document.body.style.overflow = anyOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [activePlan, showCart]);
+
+  useEffect(() => {
     if (!activePlan) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -669,137 +675,156 @@ export default function App() {
       <CartFab cart={cart} onClick={() => setShowCart(true)} visible={navVisible} isDark={isDark} />
 
       {activePlan && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center px-4">
+        <div className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center sm:px-4">
           <div
             className="absolute inset-0 bg-black/70"
             onClick={() => setActivePlan(null)}
             role="presentation"
           />
           <motion.div
-            initial={{ opacity: 0, y: 24 }}
+            initial={{ opacity: 0, y: 32 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.25 }}
-            className={`relative w-full max-w-xl rounded-3xl border p-6 shadow-xl ${
+            className={`relative w-full sm:max-w-xl flex flex-col rounded-t-3xl sm:rounded-3xl border shadow-xl
+              max-h-[92dvh] sm:max-h-[88vh] ${
               isDark
-                ? "border-white/10 bg-black/90 text-white"
+                ? "border-white/10 bg-black/95 text-white"
                 : "border-black/10 bg-white text-black"
             }`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="plan-modal-title"
           >
-            <button
-              onClick={() => setActivePlan(null)}
-              className={`absolute right-4 top-4 rounded-full border px-2 py-1 text-sm ${
-                isDark ? "border-white/20 text-white/70 hover:text-white" : "border-black/10 text-black/60 hover:text-black"
-              }`}
-              aria-label="Cerrar"
-              type="button"
-            >
-              ×
-            </button>
-            <h4 id="plan-modal-title" className="text-2xl font-semibold">
-              {activePlan.title}
-            </h4>
-            <div className="mt-4 aspect-square w-full overflow-hidden rounded-2xl">
-              <img
-                src={activePlan.image}
-                alt={activePlan.title}
-                className="h-full w-full object-cover"
-              />
-            </div>
-            {activePlan.price && (
-              <div className="mt-4 text-sm font-semibold text-[#04d9b5]">{activePlan.price}</div>
-            )}
-            <div className="mt-6 space-y-5">
-              {activePlan.sections
-                .filter((section) => section.title !== "Características destacadas")
-                .map((section) => (
-                  <div key={`${activePlan.key}-${section.title}`}>
-                    <h5 className="text-xs font-semibold uppercase tracking-[0.3em] text-[#04d9b5]">
-                      {section.title}
-                    </h5>
-                    {section.body && (
-                    <p className={`mt-2 text-sm leading-relaxed ${isDark ? "text-white/70" : "text-black/70"}`}>
-                      {section.body}
-                    </p>
-                  )}
-                  {section.items && (
-                    <ul className={`mt-3 space-y-2 text-sm ${isDark ? "text-white/70" : "text-black/70"}`}>
-                      {section.items.map((item) => (
-                        <li key={item} className="flex items-start gap-2">
-                          <span className="mt-1 h-2 w-2 rounded-full bg-[#04d9b5]" aria-hidden="true" />
-                          <span>{item}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              ))}
-            </div>
-            <div className="mt-6 flex flex-wrap gap-2">
-              <a
-                href={`/registro?plan=${activePlan.key}`}
-                className="rounded-xl bg-[#04d9b5] px-4 py-2 text-sm font-semibold text-black transition hover:brightness-110 inline-block text-center"
+            {/* ── Sticky header ── */}
+            <div className={`flex items-start justify-between gap-4 px-6 pt-6 pb-4 shrink-0 rounded-t-3xl ${
+              isDark ? "bg-black/95" : "bg-white"
+            }`}>
+              <div>
+                <h4 id="plan-modal-title" className="text-2xl font-semibold leading-tight">
+                  {activePlan.title}
+                </h4>
+                {activePlan.price && (
+                  <p className="mt-1 text-sm font-semibold text-[#04d9b5]">{activePlan.price}</p>
+                )}
+              </div>
+              <button
+                onClick={() => setActivePlan(null)}
+                className={`shrink-0 rounded-full border w-8 h-8 flex items-center justify-center text-lg leading-none mt-0.5 ${
+                  isDark ? "border-white/20 text-white/70 hover:text-white" : "border-black/10 text-black/60 hover:text-black"
+                }`}
+                aria-label="Cerrar"
+                type="button"
               >
-                Contratar
-              </a>
-              {activePlan.priceId && (
-                <button
-                  onClick={() => addToCart(activePlan.priceId!)}
-                  className="rounded-xl border border-[#04d9b5] px-4 py-2 text-sm font-medium text-[#04d9b5] transition hover:bg-[#04d9b5]/10"
-                  type="button"
+                ×
+              </button>
+            </div>
+
+            {/* ── Scrollable body ── */}
+            <div className="overflow-y-auto overscroll-contain px-6 pb-6 flex-1">
+              {/* Imagen compacta */}
+              <div className="w-full h-40 overflow-hidden rounded-2xl mb-5">
+                <img
+                  src={activePlan.image}
+                  alt={activePlan.title}
+                  className="h-full w-full object-cover"
+                />
+              </div>
+
+              {/* Secciones de detalle */}
+              <div className="space-y-5">
+                {activePlan.sections
+                  .filter((section) => section.title !== "Características destacadas")
+                  .map((section) => (
+                    <div key={`${activePlan.key}-${section.title}`}>
+                      <h5 className="text-xs font-semibold uppercase tracking-[0.3em] text-[#04d9b5]">
+                        {section.title}
+                      </h5>
+                      {section.body && (
+                        <p className={`mt-2 text-sm leading-relaxed ${isDark ? "text-white/70" : "text-black/70"}`}>
+                          {section.body}
+                        </p>
+                      )}
+                      {section.items && (
+                        <ul className={`mt-3 space-y-2 text-sm ${isDark ? "text-white/70" : "text-black/70"}`}>
+                          {section.items.map((item) => (
+                            <li key={item} className="flex items-start gap-2">
+                              <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[#04d9b5]" aria-hidden="true" />
+                              <span>{item}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  ))}
+              </div>
+
+              {/* CTAs */}
+              <div className="mt-6 flex flex-wrap gap-2">
+                <a
+                  href={`/registro?plan=${activePlan.key}`}
+                  className="rounded-xl bg-[#04d9b5] px-4 py-2 text-sm font-semibold text-black transition hover:brightness-110 inline-block text-center"
                 >
-                  Agregar al carrito
-                </button>
-              )}
-              {activePlan.key !== "starter" && (
-                <button
-                  onClick={closeAndContact}
-                  className="rounded-xl bg-[#04d9b5]/10 px-4 py-2 text-sm font-medium text-[#04d9b5] transition hover:bg-[#04d9b5]/20"
-                  type="button"
-                >
-                  Probar
-                </button>
-              )}
+                  Contratar
+                </a>
+                {activePlan.priceId && (
+                  <button
+                    onClick={() => addToCart(activePlan.priceId!)}
+                    className="rounded-xl border border-[#04d9b5] px-4 py-2 text-sm font-medium text-[#04d9b5] transition hover:bg-[#04d9b5]/10"
+                    type="button"
+                  >
+                    Agregar al carrito
+                  </button>
+                )}
+                {activePlan.key !== "starter" && (
+                  <button
+                    onClick={closeAndContact}
+                    className="rounded-xl bg-[#04d9b5]/10 px-4 py-2 text-sm font-medium text-[#04d9b5] transition hover:bg-[#04d9b5]/20"
+                    type="button"
+                  >
+                    Probar
+                  </button>
+                )}
+              </div>
             </div>
           </motion.div>
         </div>
       )}
 
       {showCart && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center px-4">
+        <div className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center sm:px-4">
           <div
             className="absolute inset-0 bg-black/70"
             onClick={() => setShowCart(false)}
             role="presentation"
           />
           <motion.div
-            initial={{ opacity: 0, y: 24 }}
+            initial={{ opacity: 0, y: 32 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.25 }}
-            className={`relative w-full max-w-md rounded-3xl border p-6 shadow-xl ${
+            className={`relative w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl border p-6 shadow-xl max-h-[80dvh] overflow-y-auto overscroll-contain ${
               isDark
-                ? "border-white/10 bg-black/90 text-white"
+                ? "border-white/10 bg-black/95 text-white"
                 : "border-black/10 bg-white text-black"
             }`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="cart-modal-title"
           >
-            <button
-              onClick={() => setShowCart(false)}
-              className={`absolute right-4 top-4 rounded-full border px-2 py-1 text-sm ${
-                isDark ? "border-white/20 text-white/70 hover:text-white" : "border-black/10 text-black/60 hover:text-black"
-              }`}
-              aria-label="Cerrar"
-              type="button"
-            >
-              ×
-            </button>
-            <h4 id="cart-modal-title" className="text-2xl font-semibold">
-              🛒 Carrito ({cart.length})
-            </h4>
+            <div className="flex items-center justify-between mb-4">
+              <h4 id="cart-modal-title" className="text-2xl font-semibold">
+                🛒 Carrito ({cart.length})
+              </h4>
+              <button
+                onClick={() => setShowCart(false)}
+                className={`rounded-full border w-8 h-8 flex items-center justify-center text-lg leading-none ${
+                  isDark ? "border-white/20 text-white/70 hover:text-white" : "border-black/10 text-black/60 hover:text-black"
+                }`}
+                aria-label="Cerrar"
+                type="button"
+              >
+                ×
+              </button>
+            </div>
             {cart.length === 0 ? (
               <p className={`mt-4 text-sm ${isDark ? "text-white/70" : "text-black/70"}`}>
                 El carrito está vacío
