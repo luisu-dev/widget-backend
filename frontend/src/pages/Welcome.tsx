@@ -9,12 +9,10 @@ export default function Welcome() {
 
   useEffect(() => {
     if (!sessionId) {
-      // Si no hay session_id, redirigir al inicio
       navigate('/')
       return
     }
 
-    // Countdown para auto-redirigir
     const timer = setInterval(() => {
       setCountdown(prev => {
         if (prev <= 1) {
@@ -29,93 +27,150 @@ export default function Welcome() {
     return () => clearInterval(timer)
   }, [sessionId, navigate])
 
+  const steps = [
+    'Inicia sesión con las credenciales de tu email',
+    'Conecta tu página de Facebook / Instagram',
+    'Configura tu número de WhatsApp (si aplica)',
+    'Personaliza el comportamiento de tu asistente IA',
+    '¡Comienza a automatizar tus conversaciones!',
+  ]
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-900 via-purple-800 to-indigo-900 flex items-center justify-center px-4">
-      <div className="max-w-2xl mx-auto text-center">
-        {/* Success Icon */}
-        <div className="mb-8">
-          <div className="w-24 h-24 mx-auto bg-green-500 rounded-full flex items-center justify-center">
-            <svg
-              className="w-12 h-12 text-white"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
+    <div
+      className="min-h-screen flex items-center justify-center px-4 py-12"
+      style={{ background: 'var(--md-background)' }}
+    >
+      <div className="w-full max-w-[560px]">
+
+        {/* Success icon */}
+        <div className="text-center mb-8">
+          <div
+            className="inline-flex items-center justify-center w-20 h-20 rounded-full mb-6"
+            style={{ background: 'var(--md-primary-container)' }}
+          >
+            <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
               <path
+                d="M10 20l7 7 13-14"
+                stroke="var(--md-primary)"
+                strokeWidth="3"
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                strokeWidth={3}
-                d="M5 13l4 4L19 7"
               />
             </svg>
           </div>
+          <h1
+            className="text-[32px] font-bold tracking-tight mb-2"
+            style={{ color: 'var(--md-on-surface)' }}
+          >
+            ¡Bienvenido a Acid IA!
+          </h1>
+          <p style={{ color: 'var(--md-on-surface-variant)' }}>
+            Tu pago se procesó exitosamente y tu cuenta fue creada.
+          </p>
         </div>
 
-        {/* Welcome Message */}
-        <h1 className="text-4xl md:text-5xl font-bold text-white mb-6">
-          ¡Bienvenido a Acid IA!
-        </h1>
-
-        <div className="bg-white/10 backdrop-blur-md rounded-2xl p-8 shadow-2xl mb-8">
-          <p className="text-xl text-purple-100 mb-6">
-            Tu pago se ha procesado exitosamente y tu cuenta ha sido creada.
-          </p>
-
-          <div className="bg-cyan-500/20 border border-cyan-400 rounded-lg p-6 text-left mb-6">
-            <h2 className="text-xl font-bold text-white mb-4">
-              📧 Revisa tu correo electrónico
-            </h2>
-            <p className="text-purple-100 mb-4">
+        {/* Email notice card */}
+        <div
+          className="rounded-[16px] p-5 mb-4 flex items-start gap-4"
+          style={{
+            background: 'var(--md-primary-container)',
+            boxShadow: 'var(--md-elevation-1)'
+          }}
+        >
+          <div
+            className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center mt-0.5"
+            style={{ background: 'rgba(4,217,181,.2)' }}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M3 7a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" stroke="var(--md-primary)" strokeWidth="1.8"/>
+              <path d="M3 7l9 6 9-6" stroke="var(--md-primary)" strokeWidth="1.8" strokeLinecap="round"/>
+            </svg>
+          </div>
+          <div>
+            <p
+              className="font-semibold mb-1"
+              style={{ color: 'var(--md-on-primary-container)' }}
+            >
+              Revisa tu correo electrónico
+            </p>
+            <p className="text-sm mb-3" style={{ color: 'var(--md-on-primary-container)' }}>
               Te hemos enviado un email con:
             </p>
-            <ul className="space-y-2 text-purple-100">
-              <li>✓ Tus credenciales de acceso</li>
-              <li>✓ URL de inicio de sesión</li>
-              <li>✓ Instrucciones de configuración</li>
+            <ul className="space-y-1">
+              {['Tus credenciales de acceso', 'URL de inicio de sesión', 'Instrucciones de configuración'].map((item) => (
+                <li key={item} className="flex items-center gap-2 text-sm" style={{ color: 'var(--md-on-primary-container)' }}>
+                  <span
+                    className="h-1.5 w-1.5 rounded-full shrink-0"
+                    style={{ background: 'var(--md-primary)' }}
+                  />
+                  {item}
+                </li>
+              ))}
             </ul>
           </div>
-
-          <div className="bg-white/5 rounded-lg p-6 text-left">
-            <h3 className="text-lg font-bold text-white mb-3">
-              Próximos pasos:
-            </h3>
-            <ol className="space-y-2 text-purple-100 list-decimal list-inside">
-              <li>Inicia sesión con las credenciales de tu email</li>
-              <li>Conecta tu página de Facebook/Instagram</li>
-              <li>Configura tu número de WhatsApp (si aplica)</li>
-              <li>Personaliza el comportamiento de tu asistente IA</li>
-              <li>¡Comienza a automatizar tus conversaciones!</li>
-            </ol>
-          </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="space-y-4">
-          <button
-            onClick={() => navigate('/login')}
-            className="w-full max-w-md mx-auto block py-4 px-6 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white font-bold rounded-lg shadow-lg transition-all"
+        {/* Next steps card */}
+        <div
+          className="rounded-[16px] p-5 mb-6"
+          style={{
+            background: 'var(--md-surface-container)',
+            boxShadow: 'var(--md-elevation-1)'
+          }}
+        >
+          <p
+            className="font-semibold mb-3"
+            style={{ color: 'var(--md-on-surface)' }}
           >
-            Iniciar Sesión Ahora
-          </button>
-
-          <p className="text-purple-200 text-sm">
-            Serás redirigido automáticamente en{' '}
-            <span className="font-bold text-cyan-400">{countdown}</span> segundos
+            Próximos pasos
           </p>
+          <ol className="space-y-2.5">
+            {steps.map((step, i) => (
+              <li key={step} className="flex items-start gap-3">
+                <span
+                  className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[12px] font-bold mt-0.5"
+                  style={{
+                    background: 'var(--md-primary-container)',
+                    color: 'var(--md-on-primary-container)'
+                  }}
+                >
+                  {i + 1}
+                </span>
+                <span className="text-sm" style={{ color: 'var(--md-on-surface-variant)' }}>
+                  {step}
+                </span>
+              </li>
+            ))}
+          </ol>
         </div>
+
+        {/* CTA */}
+        <button
+          onClick={() => navigate('/login')}
+          className="md-btn-filled w-full py-3.5 text-[15px] mb-4"
+        >
+          Iniciar sesión ahora
+        </button>
+
+        <p className="text-sm text-center" style={{ color: 'var(--md-on-surface-variant)' }}>
+          Redirección automática en{' '}
+          <span className="font-semibold" style={{ color: 'var(--md-primary)' }}>
+            {countdown}
+          </span>{' '}
+          segundos
+        </p>
 
         {/* Support */}
-        <div className="mt-8 text-purple-200 text-sm">
-          <p>
-            ¿Necesitas ayuda?{' '}
-            <a
-              href="mailto:info@acidia.app"
-              className="text-cyan-400 hover:underline font-medium"
-            >
-              Contáctanos
-            </a>
-          </p>
-        </div>
+        <p className="text-[12px] text-center mt-6" style={{ color: 'var(--md-on-surface-variant)' }}>
+          ¿Necesitas ayuda?{' '}
+          <a
+            href="mailto:info@acidia.app"
+            className="underline font-medium"
+            style={{ color: 'var(--md-primary)' }}
+          >
+            Contáctanos
+          </a>
+        </p>
       </div>
     </div>
   )

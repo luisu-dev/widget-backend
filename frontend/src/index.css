@@ -1,9 +1,277 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
-/* Evitamos scroll suave global en Android/equipos modestos */
+/* ===== Material Design 3 — Dark Teal Scheme ===== */
+:root {
+  --md-primary:              #04d9b5;
+  --md-on-primary:           #00201c;
+  --md-primary-container:    #003730;
+  --md-on-primary-container: #80f5de;
+
+  --md-secondary:            #b0ccc9;
+  --md-on-secondary:         #1b3532;
+  --md-secondary-container:  #324b49;
+  --md-on-secondary-container:#ccece9;
+
+  --md-error:                #ffb4ab;
+  --md-on-error:             #690005;
+  --md-error-container:      #93000a;
+  --md-on-error-container:   #ffb4ab;
+
+  --md-background:           #0f1210;
+  --md-on-background:        #dde4e2;
+
+  --md-surface:              #191c1b;
+  --md-surface-dim:          #101413;
+  --md-surface-container-lowest:  #0b0f0e;
+  --md-surface-container-low:     #191c1b;
+  --md-surface-container:         #1d211f;
+  --md-surface-container-high:    #272b29;
+  --md-surface-container-highest: #323635;
+
+  --md-on-surface:           #dde4e2;
+  --md-on-surface-variant:   #bbc9c6;
+  --md-outline:              #5f7573;
+  --md-outline-variant:      #3f4947;
+
+  /* Elevation shadows — MD3 dark mode */
+  --md-elevation-1: 0px 1px 2px rgba(0,0,0,.3), 0px 1px 3px 1px rgba(0,0,0,.15);
+  --md-elevation-2: 0px 1px 2px rgba(0,0,0,.3), 0px 2px 6px 2px rgba(0,0,0,.15);
+  --md-elevation-3: 0px 4px 8px 3px rgba(0,0,0,.15), 0px 1px 3px rgba(0,0,0,.3);
+  --md-elevation-4: 0px 6px 10px 4px rgba(0,0,0,.15), 0px 2px 3px rgba(0,0,0,.3);
+}
+
+/* ===== Base ===== */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  font-family: 'Roboto', system-ui, -apple-system, sans-serif;
+  background-color: var(--md-background);
+  color: var(--md-on-surface);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Smooth scroll on capable devices */
 html { scroll-behavior: auto; }
 html.smooth-scroll { scroll-behavior: smooth; }
 
 /* Ocultar scrollbar en nav horizontal móvil */
 .scrollbar-hide::-webkit-scrollbar { display: none; }
 .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ===== MD3 Reusable Components ===== */
+
+/* --- Text Fields (outlined) --- */
+.md-field {
+  position: relative;
+}
+.md-field input,
+.md-field textarea,
+.md-field select {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--md-outline);
+  border-radius: 4px;
+  padding: 14px 16px;
+  color: var(--md-on-surface);
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1.5;
+  outline: none;
+  transition: border-color .15s, border-width .15s;
+}
+.md-field input::placeholder,
+.md-field textarea::placeholder {
+  color: var(--md-on-surface-variant);
+}
+.md-field input:focus,
+.md-field textarea:focus,
+.md-field select:focus {
+  border-width: 2px;
+  border-color: var(--md-primary);
+  padding: 13px 15px;
+}
+.md-field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: .04em;
+  color: var(--md-on-surface-variant);
+  margin-bottom: 6px;
+}
+.md-field input:focus ~ label,
+.md-field:focus-within label {
+  color: var(--md-primary);
+}
+
+/* --- Buttons --- */
+.md-btn-filled {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--md-primary);
+  color: var(--md-on-primary);
+  border: none;
+  border-radius: 9999px;
+  padding: 10px 24px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: .01em;
+  cursor: pointer;
+  transition: filter .15s, transform .1s;
+}
+.md-btn-filled:hover { filter: brightness(1.1); }
+.md-btn-filled:active { transform: scale(.97); }
+.md-btn-filled:disabled { opacity: .38; cursor: not-allowed; }
+
+.md-btn-tonal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
+  border: none;
+  border-radius: 9999px;
+  padding: 10px 24px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: .01em;
+  cursor: pointer;
+  transition: filter .15s;
+}
+.md-btn-tonal:hover { filter: brightness(1.1); }
+.md-btn-tonal:disabled { opacity: .38; cursor: not-allowed; }
+
+.md-btn-outlined {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--md-primary);
+  border: 1px solid var(--md-outline);
+  border-radius: 9999px;
+  padding: 10px 24px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: .01em;
+  cursor: pointer;
+  transition: background .15s;
+}
+.md-btn-outlined:hover { background: rgba(4,217,181,.08); }
+
+.md-btn-text {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--md-primary);
+  border: none;
+  border-radius: 9999px;
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: .01em;
+  cursor: pointer;
+  transition: background .15s;
+}
+.md-btn-text:hover { background: rgba(4,217,181,.08); }
+
+/* --- Switch (MD3) --- */
+.md-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 52px;
+  height: 32px;
+  cursor: pointer;
+}
+.md-switch input { opacity: 0; width: 0; height: 0; }
+.md-switch-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  background: var(--md-outline);
+  transition: background .2s;
+}
+.md-switch input:checked + .md-switch-track {
+  background: var(--md-primary);
+}
+.md-switch-thumb {
+  position: absolute;
+  left: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--md-outline);
+  box-shadow: var(--md-elevation-1);
+  transition: transform .2s, background .2s, width .2s, height .2s;
+}
+.md-switch input:checked ~ .md-switch-thumb {
+  transform: translateX(20px);
+  background: var(--md-on-primary);
+}
+
+/* --- Cards --- */
+.md-card {
+  background: var(--md-surface-container);
+  border-radius: 16px;
+  box-shadow: var(--md-elevation-1);
+}
+.md-card-elevated {
+  background: var(--md-surface-container-low);
+  border-radius: 16px;
+  box-shadow: var(--md-elevation-2);
+}
+
+/* --- Top App Bar --- */
+.md-top-app-bar {
+  background: var(--md-surface-container);
+  box-shadow: var(--md-elevation-2);
+  height: 64px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+}
+
+/* --- Navigation Tabs --- */
+.md-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: .01em;
+  color: var(--md-on-surface-variant);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  transition: color .15s;
+  white-space: nowrap;
+}
+.md-tab:hover { color: var(--md-on-surface); }
+.md-tab.active {
+  color: var(--md-primary);
+}
+.md-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: var(--md-primary);
+}
+
+/* --- Divider --- */
+.md-divider {
+  border: none;
+  border-top: 1px solid var(--md-outline-variant);
+}

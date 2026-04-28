@@ -13,6 +13,33 @@ interface RegisterForm {
   plan: 'starter' | 'addon-whatsapp' | 'addon-ecommerce' | 'web-basic' | 'web-premium' | 'web-ecommerce'
 }
 
+const PLANS = [
+  {
+    id: 'starter',
+    name: 'Plan Starter',
+    subtitle: 'Chat Web',
+    price: '$1,500 MXN/mes',
+    features: [
+      'Widget de chat web embebible',
+      'FAQs con tono de marca',
+      'Leads calificados',
+      'Redirecciones a WhatsApp o URLs',
+    ],
+  },
+  {
+    id: 'addon-whatsapp',
+    name: 'Add-on WhatsApp',
+    subtitle: 'Canal Conversacional',
+    price: '$500 MXN/mes',
+    features: [
+      'Respuestas del chat web en WhatsApp',
+      'Leads calificados y links de pago',
+      'Detección de intención de compra',
+      'Se suma al Plan Starter',
+    ],
+  },
+] as const
+
 export default function Register() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -28,7 +55,6 @@ export default function Register() {
     plan: 'starter'
   })
 
-  // Pre-seleccionar plan desde URL
   useEffect(() => {
     const planFromUrl = searchParams.get('plan')
     const validPlans = ['starter', 'addon-whatsapp', 'addon-ecommerce', 'web-basic', 'web-premium', 'web-ecommerce']
@@ -63,7 +89,6 @@ export default function Register() {
       }
 
       const data = await response.json()
-      // Redirigir a Stripe checkout
       window.location.href = data.checkout_url
     } catch (err: any) {
       setError(err.message)
@@ -72,224 +97,272 @@ export default function Register() {
   }
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setForm(prev => ({
-      ...prev,
-      [e.target.name]: e.target.value
-    }))
+    setForm(prev => ({ ...prev, [e.target.name]: e.target.value }))
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-900 via-purple-800 to-indigo-900">
-      <div className="container mx-auto px-4 py-12">
+    <div
+      className="min-h-screen py-12 px-4"
+      style={{ background: 'var(--md-background)' }}
+    >
+      <div className="max-w-[560px] mx-auto">
+
         {/* Header */}
-        <div className="text-center mb-12">
-          <h1 className="text-4xl md:text-5xl font-bold text-white mb-4">
+        <div className="text-center mb-10">
+          <h1
+            className="text-[32px] font-bold tracking-tight mb-2"
+            style={{ color: 'var(--md-on-surface)' }}
+          >
             Acid IA
           </h1>
-          <p className="text-xl text-purple-200">
-            Registra tu negocio y comienza a automatizar tus conversaciones
+          <p className="text-base" style={{ color: 'var(--md-on-surface-variant)' }}>
+            Registra tu negocio y automatiza tus conversaciones
           </p>
           <button
             onClick={() => navigate('/login')}
-            className="mt-4 text-purple-200 hover:text-white transition-colors"
+            className="md-btn-text mt-3 text-sm"
           >
             ¿Ya tienes cuenta? Inicia sesión
           </button>
         </div>
 
-        {/* Form */}
-        <div className="max-w-2xl mx-auto bg-white/10 backdrop-blur-md rounded-2xl p-8 shadow-2xl">
-          <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Datos de Contacto */}
-            <div>
-              <h2 className="text-2xl font-bold text-white mb-4">Datos de Contacto</h2>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-purple-200 mb-2">
-                    Nombre Completo *
-                  </label>
-                  <input
-                    type="text"
-                    name="fullName"
-                    required
-                    value={form.fullName}
-                    onChange={handleChange}
-                    className="w-full px-4 py-3 bg-white/10 border border-purple-300/30 rounded-lg text-white placeholder-purple-300/50 focus:outline-none focus:ring-2 focus:ring-cyan-400"
-                    placeholder="Juan Pérez"
-                  />
-                </div>
+        {/* Form card */}
+        <div
+          className="rounded-[28px] p-8 space-y-8"
+          style={{
+            background: 'var(--md-surface-container)',
+            boxShadow: 'var(--md-elevation-2)'
+          }}
+        >
+          <form onSubmit={handleSubmit} className="space-y-8">
 
-                <div>
-                  <label className="block text-sm font-medium text-purple-200 mb-2">
-                    Teléfono *
-                  </label>
-                  <input
-                    type="tel"
-                    name="phone"
-                    required
-                    value={form.phone}
-                    onChange={handleChange}
-                    className="w-full px-4 py-3 bg-white/10 border border-purple-300/30 rounded-lg text-white placeholder-purple-300/50 focus:outline-none focus:ring-2 focus:ring-cyan-400"
-                    placeholder="+52 999 123 4567"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-purple-200 mb-2">
-                    Email *
-                  </label>
-                  <input
-                    type="email"
-                    name="email"
-                    required
-                    value={form.email}
-                    onChange={handleChange}
-                    className="w-full px-4 py-3 bg-white/10 border border-purple-300/30 rounded-lg text-white placeholder-purple-300/50 focus:outline-none focus:ring-2 focus:ring-cyan-400"
-                    placeholder="juan@ejemplo.com"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Datos del Negocio */}
-            <div>
-              <h2 className="text-2xl font-bold text-white mb-4">Datos del Negocio</h2>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-purple-200 mb-2">
-                    Nombre del Negocio *
-                  </label>
-                  <input
-                    type="text"
-                    name="businessName"
-                    required
-                    value={form.businessName}
-                    onChange={handleChange}
-                    className="w-full px-4 py-3 bg-white/10 border border-purple-300/30 rounded-lg text-white placeholder-purple-300/50 focus:outline-none focus:ring-2 focus:ring-cyan-400"
-                    placeholder="Mi Tienda"
-                  />
-                  <p className="mt-1 text-xs text-purple-300">
-                    Se generará un identificador único para tu cuenta basado en este nombre
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-purple-200 mb-2">
-                    Número de WhatsApp
-                  </label>
-                  <input
-                    type="tel"
-                    name="whatsappNumber"
-                    value={form.whatsappNumber}
-                    onChange={handleChange}
-                    className="w-full px-4 py-3 bg-white/10 border border-purple-300/30 rounded-lg text-white placeholder-purple-300/50 focus:outline-none focus:ring-2 focus:ring-cyan-400"
-                    placeholder="+52 999 123 4567"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-purple-200 mb-2">
-                    Página Web
-                  </label>
-                  <input
-                    type="url"
-                    name="website"
-                    value={form.website}
-                    onChange={handleChange}
-                    className="w-full px-4 py-3 bg-white/10 border border-purple-300/30 rounded-lg text-white placeholder-purple-300/50 focus:outline-none focus:ring-2 focus:ring-cyan-400"
-                    placeholder="https://mitienda.com"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Plan Selection */}
-            <div>
-              <h2 className="text-2xl font-bold text-white mb-4">Selecciona tu Plan</h2>
-              <div className="grid md:grid-cols-2 gap-4">
-                <label
-                  className={`relative cursor-pointer rounded-xl p-6 border-2 transition-all ${
-                    form.plan === 'starter'
-                      ? 'border-cyan-400 bg-cyan-400/10'
-                      : 'border-purple-300/30 bg-white/5 hover:bg-white/10'
-                  }`}
+            {/* ── Sección 1: Datos de contacto ── */}
+            <section className="space-y-5">
+              <div>
+                <h2
+                  className="text-[18px] font-semibold mb-0.5"
+                  style={{ color: 'var(--md-on-surface)' }}
                 >
-                  <input
-                    type="radio"
-                    name="plan"
-                    value="starter"
-                    checked={form.plan === 'starter'}
-                    onChange={handleChange}
-                    className="sr-only"
-                  />
-                  <div className="text-center">
-                    <h3 className="text-xl font-bold text-white mb-2">Plan Starter</h3>
-                    <p className="text-sm text-purple-300 mb-1">(Chat Web)</p>
-                    <p className="text-3xl font-bold text-cyan-400 mb-4">$1,500 MXN/mes</p>
-                    <p className="text-xs text-purple-300 mb-4">+IVA</p>
-                    <ul className="text-sm text-purple-200 space-y-2 text-left">
-                      <li>✓ Widget de chat web embebible</li>
-                      <li>✓ FAQs con tono de marca</li>
-                      <li>✓ Leads calificados</li>
-                      <li>✓ Redirecciones a WhatsApp o URLs</li>
-                    </ul>
-                  </div>
-                </label>
-
-                <label
-                  className={`relative cursor-pointer rounded-xl p-6 border-2 transition-all ${
-                    form.plan === 'addon-whatsapp'
-                      ? 'border-cyan-400 bg-cyan-400/10'
-                      : 'border-purple-300/30 bg-white/5 hover:bg-white/10'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="plan"
-                    value="addon-whatsapp"
-                    checked={form.plan === 'addon-whatsapp'}
-                    onChange={handleChange}
-                    className="sr-only"
-                  />
-                  <div className="text-center">
-                    <h3 className="text-xl font-bold text-white mb-2">Add-on WhatsApp</h3>
-                    <p className="text-sm text-purple-300 mb-1">(Canal Conversacional)</p>
-                    <p className="text-3xl font-bold text-cyan-400 mb-4">$500 MXN/mes</p>
-                    <p className="text-xs text-purple-300 mb-4">+IVA</p>
-                    <ul className="text-sm text-purple-200 space-y-2 text-left">
-                      <li>✓ Respuestas del chat web en WhatsApp</li>
-                      <li>✓ Leads calificados y links de pago</li>
-                      <li>✓ Detección de intención de compra</li>
-                      <li>✓ Se suma al Plan Starter</li>
-                    </ul>
-                  </div>
-                </label>
+                  Datos de contacto
+                </h2>
+                <hr style={{ borderColor: 'var(--md-outline-variant)', marginTop: '12px' }} />
               </div>
-            </div>
 
-            {/* Error Message */}
+              <div className="md-field">
+                <label>Nombre completo *</label>
+                <input
+                  type="text"
+                  name="fullName"
+                  required
+                  value={form.fullName}
+                  onChange={handleChange}
+                  placeholder="Juan Pérez"
+                />
+              </div>
+
+              <div className="md-field">
+                <label>Teléfono *</label>
+                <input
+                  type="tel"
+                  name="phone"
+                  required
+                  value={form.phone}
+                  onChange={handleChange}
+                  placeholder="+52 999 123 4567"
+                />
+              </div>
+
+              <div className="md-field">
+                <label>Correo electrónico *</label>
+                <input
+                  type="email"
+                  name="email"
+                  required
+                  value={form.email}
+                  onChange={handleChange}
+                  placeholder="juan@ejemplo.com"
+                />
+              </div>
+            </section>
+
+            {/* ── Sección 2: Datos del negocio ── */}
+            <section className="space-y-5">
+              <div>
+                <h2
+                  className="text-[18px] font-semibold mb-0.5"
+                  style={{ color: 'var(--md-on-surface)' }}
+                >
+                  Datos del negocio
+                </h2>
+                <hr style={{ borderColor: 'var(--md-outline-variant)', marginTop: '12px' }} />
+              </div>
+
+              <div className="md-field">
+                <label>Nombre del negocio *</label>
+                <input
+                  type="text"
+                  name="businessName"
+                  required
+                  value={form.businessName}
+                  onChange={handleChange}
+                  placeholder="Mi Tienda"
+                />
+                <p className="text-[12px] mt-1.5" style={{ color: 'var(--md-on-surface-variant)' }}>
+                  Se generará un identificador único basado en este nombre
+                </p>
+              </div>
+
+              <div className="md-field">
+                <label>Número de WhatsApp</label>
+                <input
+                  type="tel"
+                  name="whatsappNumber"
+                  value={form.whatsappNumber}
+                  onChange={handleChange}
+                  placeholder="+52 999 123 4567"
+                />
+              </div>
+
+              <div className="md-field">
+                <label>Página web</label>
+                <input
+                  type="url"
+                  name="website"
+                  value={form.website}
+                  onChange={handleChange}
+                  placeholder="https://mitienda.com"
+                />
+              </div>
+            </section>
+
+            {/* ── Sección 3: Plan ── */}
+            <section className="space-y-4">
+              <div>
+                <h2
+                  className="text-[18px] font-semibold mb-0.5"
+                  style={{ color: 'var(--md-on-surface)' }}
+                >
+                  Selecciona tu plan
+                </h2>
+                <hr style={{ borderColor: 'var(--md-outline-variant)', marginTop: '12px' }} />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {PLANS.map((plan) => {
+                  const selected = form.plan === plan.id
+                  return (
+                    <label
+                      key={plan.id}
+                      className="relative cursor-pointer rounded-[16px] p-5 transition-all"
+                      style={{
+                        background: selected ? 'var(--md-primary-container)' : 'var(--md-surface-container-high)',
+                        border: selected
+                          ? '2px solid var(--md-primary)'
+                          : '1px solid var(--md-outline-variant)',
+                        boxShadow: selected ? 'var(--md-elevation-1)' : 'none',
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="plan"
+                        value={plan.id}
+                        checked={selected}
+                        onChange={handleChange}
+                        className="sr-only"
+                      />
+
+                      {/* Selected check */}
+                      {selected && (
+                        <div
+                          className="absolute top-3 right-3 w-6 h-6 rounded-full flex items-center justify-center"
+                          style={{ background: 'var(--md-primary)' }}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                            <path d="M2.5 7l3.5 3.5 5.5-6" stroke="var(--md-on-primary)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        </div>
+                      )}
+
+                      <p
+                        className="text-[15px] font-semibold mb-0.5"
+                        style={{ color: selected ? 'var(--md-on-primary-container)' : 'var(--md-on-surface)' }}
+                      >
+                        {plan.name}
+                      </p>
+                      <p
+                        className="text-[12px] mb-3"
+                        style={{ color: selected ? 'var(--md-on-primary-container)' : 'var(--md-on-surface-variant)' }}
+                      >
+                        {plan.subtitle}
+                      </p>
+                      <p
+                        className="text-[22px] font-bold mb-1"
+                        style={{ color: 'var(--md-primary)' }}
+                      >
+                        {plan.price}
+                      </p>
+                      <p
+                        className="text-[11px] mb-3"
+                        style={{ color: selected ? 'var(--md-on-primary-container)' : 'var(--md-on-surface-variant)' }}
+                      >
+                        +IVA
+                      </p>
+                      <ul className="space-y-1.5">
+                        {plan.features.map((f) => (
+                          <li key={f} className="flex items-start gap-2">
+                            <span
+                              className="mt-1.5 h-1.5 w-1.5 rounded-full shrink-0"
+                              style={{ background: 'var(--md-primary)' }}
+                            />
+                            <span
+                              className="text-[13px]"
+                              style={{ color: selected ? 'var(--md-on-primary-container)' : 'var(--md-on-surface-variant)' }}
+                            >
+                              {f}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </label>
+                  )
+                })}
+              </div>
+            </section>
+
+            {/* Error */}
             {error && (
-              <div className="bg-red-500/20 border border-red-500 rounded-lg p-4 text-white">
-                {error}
+              <div
+                className="flex items-start gap-3 rounded-xl p-3"
+                style={{
+                  background: 'rgba(147,0,10,.25)',
+                  border: '1px solid var(--md-error-container)'
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" className="shrink-0 mt-0.5">
+                  <circle cx="12" cy="12" r="10" stroke="var(--md-error)" strokeWidth="1.8"/>
+                  <path d="M12 8v5" stroke="var(--md-error)" strokeWidth="1.8" strokeLinecap="round"/>
+                  <circle cx="12" cy="16.5" r=".75" fill="var(--md-error)"/>
+                </svg>
+                <p className="text-sm" style={{ color: 'var(--md-error)' }}>{error}</p>
               </div>
             )}
 
-            {/* Submit Button */}
+            {/* Submit */}
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-4 px-6 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white font-bold rounded-lg shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className="md-btn-filled w-full py-3.5 text-[15px]"
             >
-              {loading ? 'Procesando...' : 'Continuar al Pago'}
+              {loading ? 'Procesando…' : 'Continuar al pago'}
             </button>
 
-            <p className="text-sm text-center text-purple-200">
+            <p className="text-[12px] text-center" style={{ color: 'var(--md-on-surface-variant)' }}>
               Al continuar, aceptas nuestros{' '}
-              <a href="/terms" className="text-cyan-400 hover:underline">
+              <a href="/terms" className="underline" style={{ color: 'var(--md-primary)' }}>
                 Términos y Condiciones
-              </a>
-              {' '}y{' '}
-              <a href="/privacy" className="text-cyan-400 hover:underline">
+              </a>{' '}
+              y{' '}
+              <a href="/privacy" className="underline" style={{ color: 'var(--md-primary)' }}>
                 Política de Privacidad
               </a>
             </p>

@@ -871,6 +871,44 @@ def _tenant_stripe_acct(t: Optional[dict]) -> str:
 def _tenant_stripe_prices(t: Optional[dict]) -> dict:
     return ((t or {}).get("settings") or {}).get("stripe_prices") or {}
 
+# Precios por plan en centavos MXN (para la cuenta de la plataforma)
+_PLATFORM_PLAN_CENTS: dict = {
+    "starter":          150_000,  # $1,500 MXN/mes
+    "addon-whatsapp":    50_000,  # $500 MXN/mes
+    "addon-ecommerce":   50_000,  # $500 MXN/mes
+    "meta":             100_000,  # $1,000 MXN/mes (alias legacy)
+}
+
+_PLATFORM_PLAN_NAMES: dict = {
+    "starter":         "Acid IA – Plan Starter",
+    "addon-whatsapp":  "Acid IA – Add-on WhatsApp",
+    "addon-ecommerce": "Acid IA – Add-on E-commerce",
+    "meta":            "Acid IA – Plan Meta",
+}
+
+
+async def ensure_platform_prices(t: dict) -> dict:
+    """Crea/recupera precios en la cuenta de la plataforma (sin Stripe Connect)."""
+    prices = _tenant_stripe_prices(t).copy()
+    changed = False
+
+    for plan_key, cents in _PLATFORM_PLAN_CENTS.items():
+        if plan_key not in prices:
+            p = stripe.Price.create(
+                currency="mxn",
+                unit_amount=cents,
+                recurring={"interval": "month"},
+                product_data={"name": _PLATFORM_PLAN_NAMES[plan_key]},
+            )
+            prices[plan_key] = p.id
+            changed = True
+
+    if changed:
+        await merge_tenant_settings(t["slug"], {"stripe_prices": prices})
+
+    return prices
+
+
 async def ensure_prices_for_tenant(t: dict, mxn_starter_cents: int = 150000, mxn_meta_cents: int = 100000) -> dict:
     acct = _tenant_stripe_acct(t)
     if not acct:
@@ -7049,8 +7087,8 @@ async def create_pre_registration(body: PreRegistrationIn):
     business_slug = body.business_slug or generate_slug_from_name(body.business_name)
 
     # Validar que el plan sea válido
-    if body.plan not in {"starter", "meta"}:
-        raise HTTPException(400, "Plan inválido. Debe ser 'starter' o 'meta'")
+    if body.plan not in _PLATFORM_PLAN_CENTS:
+        raise HTTPException(400, f"Plan inválido. Debe ser uno de: {', '.join(_PLATFORM_PLAN_CENTS)}")
 
     # Verificar que el slug no esté ya en uso
     async with db_engine.begin() as conn:
@@ -7105,24 +7143,19 @@ async def create_pre_registration(body: PreRegistrationIn):
             }
         )
 
-    # Crear sesión de checkout de Stripe para el tenant 'acidia' (o el que procese pagos)
-    # Nota: Aquí usamos el tenant 'acidia' que tiene Stripe Connect configurado
+    # Usar la cuenta de la plataforma directamente (sin Stripe Connect)
     t = await fetch_tenant("acidia")
     if not t:
         raise HTTPException(500, "Tenant de procesamiento de pagos no configurado")
 
-    acct = _tenant_stripe_acct(t)
-    if not acct:
-        raise HTTPException(500, "Stripe Connect no configurado")
-
-    # Asegurar que existan los precios
+    # Asegurar que existan los precios en la cuenta de la plataforma
     prices = _tenant_stripe_prices(t)
     if body.plan not in prices:
-        prices = await ensure_prices_for_tenant(t)
+        prices = await ensure_platform_prices(t)
 
     price_id = prices[body.plan]
 
-    # Crear sesión de Stripe con metadata del pre-registro
+    # Crear sesión de Stripe directamente en la cuenta de la plataforma
     session = stripe.checkout.Session.create(
         mode="subscription",
         line_items=[{"price": price_id, "quantity": 1}],
@@ -7135,7 +7168,6 @@ async def create_pre_registration(body: PreRegistrationIn):
             "plan": body.plan,
             "is_new_tenant": "true"
         },
-        stripe_account=acct,
     )
 
     # Actualizar el pre-registro con el session_id de Stripe
