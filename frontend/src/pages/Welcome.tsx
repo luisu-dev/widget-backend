@@ -29,8 +29,8 @@ export default function Welcome() {
     return () => clearInterval(timer)
   }, [sessionId, navigate])
 
-  const steps = t('welcome.steps', { returnObjects: true }) as string[]
-  const emailItems = t('welcome.email_items', { returnObjects: true }) as string[]
+  const steps = t('welcome.steps', { returnObjects: true }) as unknown as string[]
+  const emailItems = t('welcome.email_items', { returnObjects: true }) as unknown as string[]
 
   return (
     <div

@@ -89,8 +89,6 @@ function Nav({ active, visible, isDark, cart, onOpenCart }: { active: string; vi
 
 /* ========= FAB CARRITO MÓVIL ========= */
 function CartFab({ cart, onClick, visible, isDark }: { cart: string[]; onClick: () => void; visible: boolean; isDark: boolean }) {
-  const { t } = useTranslation();
-  
   if (cart.length === 0) return null;
 
   return (
@@ -1026,7 +1024,7 @@ export default function App() {
             title={t("landing.client_requirements_title")}
             content={
               <ul className="space-y-2">
-                {(t("landing.client_requirements", { returnObjects: true }) as string[]).map((item) => (
+                {(t("landing.client_requirements", { returnObjects: true }) as unknown as string[]).map((item) => (
                   <li key={item} className="flex gap-2">
                     <span className="mt-1 h-2 w-2 rounded-full bg-[#04d9b5]" aria-hidden="true" />
                     <span>{item}</span>
@@ -1040,7 +1038,7 @@ export default function App() {
             title={t("landing.general_conditions_title")}
             content={
               <ul className="space-y-2">
-                {(t("landing.general_conditions", { returnObjects: true }) as string[]).map((item) => (
+                {(t("landing.general_conditions", { returnObjects: true }) as unknown as string[]).map((item) => (
                   <li key={item} className="flex gap-2">
                     <span className="mt-1 h-2 w-2 rounded-full bg-[#04d9b5]" aria-hidden="true" />
                     <span>{item}</span>

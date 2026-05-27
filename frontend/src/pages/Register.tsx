@@ -75,7 +75,7 @@ export default function Register() {
     setForm(prev => ({ ...prev, [e.target.name]: e.target.value }))
   }
 
-  const plans = t('register.plans', { returnObjects: true }) as Array<{
+  const plans = t('register.plans', { returnObjects: true }) as unknown as Array<{
     id: RegisterForm['plan']
     name: string
     subtitle: string
