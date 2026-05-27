@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import FacebookConnect from './dashboard/FacebookConnect';
 
 import { API_BASE } from '../config'
@@ -19,16 +20,16 @@ type CalendarFieldKey =
   | 'date'
   | 'time';
 
-const CALENDAR_FIELD_OPTIONS: Array<{ key: CalendarFieldKey; label: string }> = [
-  { key: 'name', label: 'Nombre completo' },
-  { key: 'email', label: 'Correo electrónico' },
-  { key: 'whatsapp', label: 'WhatsApp' },
-  { key: 'phone', label: 'Teléfono' },
-  { key: 'company', label: 'Empresa' },
-  { key: 'service', label: 'Servicio de interés' },
-  { key: 'notes', label: 'Notas adicionales' },
-  { key: 'date', label: 'Fecha de la cita' },
-  { key: 'time', label: 'Hora de la cita' }
+const CALENDAR_FIELD_OPTIONS: Array<{ key: CalendarFieldKey; labelKey: string }> = [
+  { key: 'name', labelKey: 'integrations.calendar_fields.name' },
+  { key: 'email', labelKey: 'integrations.calendar_fields.email' },
+  { key: 'whatsapp', labelKey: 'integrations.calendar_fields.whatsapp' },
+  { key: 'phone', labelKey: 'integrations.calendar_fields.phone' },
+  { key: 'company', labelKey: 'integrations.calendar_fields.company' },
+  { key: 'service', labelKey: 'integrations.calendar_fields.service' },
+  { key: 'notes', labelKey: 'integrations.calendar_fields.notes' },
+  { key: 'date', labelKey: 'integrations.calendar_fields.date' },
+  { key: 'time', labelKey: 'integrations.calendar_fields.time' }
 ];
 
 interface GoogleCalendarItem {
@@ -40,6 +41,7 @@ interface GoogleCalendarItem {
 }
 
 export default function Integrations({ token, onConnectionChange }: IntegrationsProps) {
+  const { t } = useTranslation();
   const [activeSection, setActiveSection] = useState<string | null>(null);
   const [whatsappStatus, setWhatsappStatus] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -107,7 +109,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
     if (!googleConnected && !googleError) return;
 
     if (googleConnected) {
-      setCalendarFeedback({ type: 'success', text: 'Cuenta de Google conectada correctamente.' });
+      setCalendarFeedback({ type: 'success', text: t('integrations.google_connected_success') });
       fetchGoogleCalendarSettings();
       fetchGoogleCalendars();
       onConnectionChange();
@@ -130,7 +132,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
     if (!shopifyConnected) return;
 
     fetchShopifyStatus();
-    setShopifyFeedback({ type: 'success', text: `Tienda${shopName ? ` "${shopName}"` : ''} conectada correctamente.` });
+    setShopifyFeedback({ type: 'success', text: t('integrations.shopify_connected_success', { shop: shopName ? ` "${shopName}"` : '' }) });
 
     params.delete('shopify_connected');
     params.delete('shop');
@@ -210,12 +212,12 @@ export default function Integrations({ token, onConnectionChange }: Integrations
     setShopifyFeedback(null);
     try {
       const domain = shopifyForm.domain.trim();
-      if (!domain) throw new Error('Ingresa el dominio de tu tienda');
+      if (!domain) throw new Error(t('integrations.shopify_domain_required'));
       const res = await fetch(`${API_BASE}/v1/admin/shopify/oauth/start?shop=${encodeURIComponent(domain)}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Error al iniciar conexión');
+      if (!res.ok) throw new Error(data.detail || t('integrations.connection_start_error'));
       window.location.href = data.auth_url;
     } catch (err: any) {
       setShopifyFeedback({ type: 'error', text: err.message });
@@ -256,7 +258,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
   };
 
   const handleShopifyDisconnect = async () => {
-    if (!confirm('¿Desconectar Shopify? El bot dejará de acceder a tu catálogo de productos.')) return;
+    if (!confirm(t('integrations.shopify_disconnect_confirm'))) return;
     setShopifyLoading(true);
     try {
       await fetch(`${API_BASE}/v1/admin/shopify/disconnect`, {
@@ -377,7 +379,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
       });
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.detail || 'No se pudo guardar la configuración');
+        throw new Error(errorData.detail || t('integrations.calendar_save_error'));
       }
       const data = await res.json();
       setCalendarConfig((prev) => ({
@@ -394,10 +396,10 @@ export default function Integrations({ token, onConnectionChange }: Integrations
         google_account_email: data.google_account_email || prev.google_account_email,
         ready: Boolean(data.ready)
       }));
-      setCalendarFeedback({ type: 'success', text: 'Configuración de Google Calendar guardada.' });
+      setCalendarFeedback({ type: 'success', text: t('integrations.calendar_saved') });
     } catch (error: any) {
       console.error('Error saving Google Calendar settings:', error);
-      setCalendarFeedback({ type: 'error', text: error.message || 'Error guardando configuración de Google Calendar.' });
+      setCalendarFeedback({ type: 'error', text: error.message || t('integrations.calendar_save_error_fallback') });
     } finally {
       setCalendarLoading(false);
     }
@@ -412,19 +414,19 @@ export default function Integrations({ token, onConnectionChange }: Integrations
       });
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.detail || 'No se pudo iniciar la conexión con Google');
+        throw new Error(errorData.detail || t('integrations.google_connect_error'));
       }
       const data = await res.json();
       window.location.href = data.auth_url;
     } catch (error: any) {
       console.error('Error starting Google OAuth:', error);
-      setCalendarFeedback({ type: 'error', text: error.message || 'No se pudo iniciar la conexión con Google.' });
+      setCalendarFeedback({ type: 'error', text: error.message || t('integrations.google_connect_error_fallback') });
       setGoogleConnectionLoading(false);
     }
   };
 
   const handleGoogleDisconnect = async () => {
-    if (!confirm('¿Deseas desconectar esta cuenta de Google Calendar?')) {
+    if (!confirm(t('integrations.google_disconnect_confirm'))) {
       return;
     }
 
@@ -448,7 +450,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
         google_account_email: '',
         ready: prev.enabled && Boolean(prev.calendar_id) && prev.service_account_configured
       }));
-      setCalendarFeedback({ type: 'success', text: 'Cuenta de Google desconectada.' });
+      setCalendarFeedback({ type: 'success', text: t('integrations.google_disconnected') });
       onConnectionChange();
     } catch (error: any) {
       console.error('Error disconnecting Google:', error);
@@ -513,7 +515,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
       await fetchWhatsAppStatus();
 
       // Mostrar webhook URL
-      alert(`Configuración exitosa!\n\nWebhook URL para Twilio:\n${data.webhook_url}\n\nCopia esta URL y configúrala en tu cuenta de Twilio.`);
+      alert(t('integrations.twilio_success', { url: data.webhook_url }));
 
       // Reset form
       setTwilioForm({
@@ -523,7 +525,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
       });
     } catch (error: any) {
       console.error('Error configuring Twilio:', error);
-      alert(error.message || 'Error al configurar Twilio. Verifica tus credenciales.');
+      alert(error.message || t('integrations.twilio_error'));
     } finally {
       setLoading(false);
     }
@@ -536,9 +538,9 @@ export default function Integrations({ token, onConnectionChange }: Integrations
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-white mb-2">Integraciones</h2>
+        <h2 className="text-2xl font-bold text-white mb-2">{t('integrations.title')}</h2>
         <p className="text-gray-400">
-          Gestiona, agrega o elimina todas tus integraciones
+          {t('integrations.subtitle')}
         </p>
       </div>
 
@@ -550,15 +552,17 @@ export default function Integrations({ token, onConnectionChange }: Integrations
         >
           <div className="flex items-center space-x-4">
             <h3 className="text-base font-medium text-white group-hover:text-[#04d9b5] transition">
-              Redes Sociales
+              {t('integrations.social')}
             </h3>
             <span className="text-xs text-gray-400">Facebook • Instagram</span>
           </div>
           <div className="flex items-center space-x-3">
             {connectedPagesCount > 0 ? (
-              <span className="text-xs text-green-400">{connectedPagesCount} conectada{connectedPagesCount !== 1 ? 's' : ''}</span>
+              <span className="text-xs text-green-400">
+                {t(connectedPagesCount === 1 ? 'integrations.connected_count' : 'integrations.connected_count_plural', { count: connectedPagesCount })}
+              </span>
             ) : (
-              <span className="text-xs text-gray-500">No conectadas</span>
+              <span className="text-xs text-gray-500">{t('integrations.not_connected_plural')}</span>
             )}
             <svg
               className={`w-4 h-4 text-[#04d9b5] transition-transform ${activeSection === 'social' ? 'rotate-180' : ''}`}
@@ -588,13 +592,13 @@ export default function Integrations({ token, onConnectionChange }: Integrations
             <h3 className="text-base font-medium text-white group-hover:text-[#04d9b5] transition">
               WhatsApp
             </h3>
-            <span className="text-xs text-gray-400">Canal conversacional</span>
+            <span className="text-xs text-gray-400">{t('integrations.whatsapp_subtitle')}</span>
           </div>
           <div className="flex items-center space-x-3">
             {whatsappStatus?.configured ? (
-              <span className="text-xs text-green-400">Conectado</span>
+              <span className="text-xs text-green-400">{t('integrations.connected')}</span>
             ) : (
-              <span className="text-xs text-gray-500">No conectado</span>
+              <span className="text-xs text-gray-500">{t('integrations.not_connected')}</span>
             )}
             <svg
               className={`w-4 h-4 text-[#04d9b5] transition-transform ${activeSection === 'whatsapp' ? 'rotate-180' : ''}`}
@@ -613,20 +617,20 @@ export default function Integrations({ token, onConnectionChange }: Integrations
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-                  <span className="text-green-400 font-medium text-sm">WhatsApp conectado</span>
+                  <span className="text-green-400 font-medium text-sm">{t('integrations.whatsapp_connected')}</span>
                 </div>
                 <div className="bg-white/5 border border-white/10 rounded-lg p-3 space-y-2">
                   <div>
-                    <div className="text-xs text-gray-400">Número de WhatsApp:</div>
+                    <div className="text-xs text-gray-400">{t('integrations.whatsapp_number')}</div>
                     <div className="text-white font-mono text-sm">{whatsappStatus.whatsapp_from}</div>
                   </div>
                   <div className="pt-2 border-t border-white/10">
-                    <div className="text-xs text-gray-400 mb-1">Webhook URL para Twilio:</div>
+                    <div className="text-xs text-gray-400 mb-1">{t('integrations.twilio_webhook')}</div>
                     <div className="text-white font-mono text-xs break-all bg-black/30 p-2 rounded">
                       {whatsappStatus.webhook_url}
                     </div>
                     <p className="text-xs text-gray-500 mt-1">
-                      Configura esta URL en tu cuenta de Twilio para recibir mensajes
+                      {t('integrations.twilio_webhook_hint')}
                     </p>
                   </div>
                 </div>
@@ -641,30 +645,30 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                   }}
                   className="w-full px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-gray-300 hover:bg-white/10 transition text-sm"
                 >
-                  Reconfigurar credenciales
+                  {t('integrations.reconfigure_credentials')}
                 </button>
               </div>
             ) : whatsappRequestSent ? (
               <div className="bg-green-500/20 border border-green-500/40 rounded-lg p-4">
                 <p className="text-green-300 text-sm">
-                  ✓ Solicitud enviada exitosamente. Nos pondremos en contacto contigo pronto para configurar WhatsApp.
+                  {t('integrations.request_sent')}
                 </p>
               </div>
             ) : showTwilioForm ? (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <h4 className="text-white text-sm font-medium">Configurar Twilio WhatsApp</h4>
+                  <h4 className="text-white text-sm font-medium">{t('integrations.configure_twilio')}</h4>
                   <button
                     onClick={() => setShowTwilioForm(false)}
                     className="text-gray-400 hover:text-white text-xs"
                   >
-                    ← Volver
+                    ← {t('integrations.back')}
                   </button>
                 </div>
 
                 <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3">
                   <p className="text-blue-300 text-xs">
-                    Ingresa tus credenciales de Twilio. Encuéntralas en: <br />
+                    {t('integrations.twilio_credentials_hint')} <br />
                     <a href="https://console.twilio.com" target="_blank" rel="noopener noreferrer" className="underline">
                       console.twilio.com
                     </a>
@@ -695,7 +699,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                   </div>
 
                   <div>
-                    <label className="block text-xs text-gray-400 mb-1">WhatsApp From Number *</label>
+                    <label className="block text-xs text-gray-400 mb-1">{t('integrations.twilio_from_number')}</label>
                     <input
                       type="text"
                       value={twilioForm.whatsapp_from}
@@ -704,7 +708,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                       className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#04d9b5] font-mono"
                     />
                     <p className="text-xs text-gray-500 mt-1">
-                      Para Sandbox: whatsapp:+14155238886 • Para número real: tu número de Twilio
+                      {t('integrations.twilio_from_hint')}
                     </p>
                   </div>
                 </div>
@@ -714,43 +718,43 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                     onClick={() => setShowTwilioForm(false)}
                     className="flex-1 px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-gray-300 hover:bg-white/10 transition text-sm"
                   >
-                    Cancelar
+                    {t('integrations.cancel')}
                   </button>
                   <button
                     onClick={handleTwilioConfig}
                     disabled={loading || !twilioForm.account_sid || !twilioForm.auth_token || !twilioForm.whatsapp_from}
                     className="flex-1 px-4 py-2 rounded-lg bg-[#04d9b5]/20 border border-[#04d9b5]/40 text-[#04d9b5] hover:bg-[#04d9b5]/30 transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {loading ? 'Guardando...' : 'Guardar Configuración'}
+                    {loading ? t('integrations.saving') : t('integrations.save_config')}
                   </button>
                 </div>
               </div>
             ) : showWhatsAppForm ? (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <h4 className="text-white text-sm font-medium">Solicitud de Activación de WhatsApp</h4>
+                  <h4 className="text-white text-sm font-medium">{t('integrations.whatsapp_request_title')}</h4>
                   <button
                     onClick={() => setShowWhatsAppForm(false)}
                     className="text-gray-400 hover:text-white text-xs"
                   >
-                    ← Volver
+                    ← {t('integrations.back')}
                   </button>
                 </div>
 
                 <div className="space-y-3">
                   <div>
-                    <label className="block text-xs text-gray-400 mb-1">Nombre del Negocio *</label>
+                    <label className="block text-xs text-gray-400 mb-1">{t('integrations.business_name')}</label>
                     <input
                       type="text"
                       value={whatsappForm.business_name}
                       onChange={(e) => setWhatsappForm({ ...whatsappForm, business_name: e.target.value })}
-                      placeholder="Ej: Chilangos Downtown"
+                      placeholder={t('integrations.business_placeholder')}
                       className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#04d9b5]"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs text-gray-400 mb-1">Número de Teléfono *</label>
+                    <label className="block text-xs text-gray-400 mb-1">{t('integrations.phone_number')}</label>
                     <input
                       type="tel"
                       value={whatsappForm.phone_number}
@@ -759,12 +763,12 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                       className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#04d9b5]"
                     />
                     <p className="text-xs text-gray-500 mt-1">
-                      Si no tienes número, te ayudaremos a obtener uno
+                      {t('integrations.phone_hint')}
                     </p>
                   </div>
 
                   <div>
-                    <label className="block text-xs text-gray-400 mb-1">Email de Contacto *</label>
+                    <label className="block text-xs text-gray-400 mb-1">{t('integrations.contact_email')}</label>
                     <input
                       type="email"
                       value={whatsappForm.contact_email}
@@ -775,11 +779,11 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                   </div>
 
                   <div>
-                    <label className="block text-xs text-gray-400 mb-1">Información Adicional (opcional)</label>
+                    <label className="block text-xs text-gray-400 mb-1">{t('integrations.additional_info')}</label>
                     <textarea
                       value={whatsappForm.additional_info}
                       onChange={(e) => setWhatsappForm({ ...whatsappForm, additional_info: e.target.value })}
-                      placeholder="Cuéntanos sobre tu negocio o necesidades específicas..."
+                      placeholder={t('integrations.additional_info_placeholder')}
                       rows={3}
                       className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#04d9b5]"
                     />
@@ -791,40 +795,40 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                     onClick={() => setShowWhatsAppForm(false)}
                     className="flex-1 px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-gray-300 hover:bg-white/10 transition text-sm"
                   >
-                    Cancelar
+                    {t('integrations.cancel')}
                   </button>
                   <button
                     onClick={handleWhatsAppRequest}
                     disabled={loading || !whatsappForm.business_name || !whatsappForm.phone_number || !whatsappForm.contact_email}
                     className="flex-1 px-4 py-2 rounded-lg bg-[#04d9b5]/20 border border-[#04d9b5]/40 text-[#04d9b5] hover:bg-[#04d9b5]/30 transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {loading ? 'Enviando...' : 'Enviar Solicitud'}
+                    {loading ? t('integrations.sending') : t('integrations.send_request')}
                   </button>
                 </div>
               </div>
             ) : (
               <div className="space-y-3">
                 <p className="text-gray-300 text-sm">
-                  Activa WhatsApp para tu negocio y empieza a recibir mensajes de tus clientes.
+                  {t('integrations.whatsapp_intro')}
                 </p>
                 <ul className="space-y-2 text-xs text-gray-400">
                   <li className="flex items-center gap-2">
                     <svg className="w-3 h-3 text-[#04d9b5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    Respuestas automáticas con IA
+                    {t('integrations.ai_replies')}
                   </li>
                   <li className="flex items-center gap-2">
                     <svg className="w-3 h-3 text-[#04d9b5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    Integración con tu catálogo de productos
+                    {t('integrations.catalog_integration')}
                   </li>
                   <li className="flex items-center gap-2">
                     <svg className="w-3 h-3 text-[#04d9b5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    Atención 24/7 para tus clientes
+                    {t('integrations.support_247')}
                   </li>
                 </ul>
 
@@ -833,10 +837,10 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                     onClick={() => setShowWhatsAppForm(true)}
                     className="w-full px-4 py-2 rounded-lg bg-[#04d9b5]/20 border border-[#04d9b5]/40 text-[#04d9b5] hover:bg-[#04d9b5]/30 transition text-sm"
                   >
-                    Solicitar Activación
+                    {t('integrations.request_activation')}
                   </button>
                   <p className="text-xs text-gray-400">
-                    Completa el formulario y nuestro equipo se encargará de configurar WhatsApp para ti. Te contactaremos en 24-48 horas.
+                    {t('integrations.request_activation_hint')}
                   </p>
                 </div>
               </div>
@@ -855,13 +859,13 @@ export default function Integrations({ token, onConnectionChange }: Integrations
             <h3 className="text-base font-medium text-white group-hover:text-[#04d9b5] transition">
               Google Calendar
             </h3>
-            <span className="text-xs text-gray-400">Citas automáticas</span>
+            <span className="text-xs text-gray-400">{t('integrations.calendar_subtitle')}</span>
           </div>
           <div className="flex items-center space-x-3">
             {calendarConfig.ready ? (
-              <span className="text-xs text-green-400">Listo</span>
+              <span className="text-xs text-green-400">{t('integrations.ready')}</span>
             ) : (
-              <span className="text-xs text-gray-500">Pendiente</span>
+              <span className="text-xs text-gray-500">{t('integrations.pending')}</span>
             )}
             <svg
               className={`w-4 h-4 text-[#04d9b5] transition-transform ${activeSection === 'calendar' ? 'rotate-180' : ''}`}
@@ -885,11 +889,11 @@ export default function Integrations({ token, onConnectionChange }: Integrations
             <div className="rounded-lg bg-white/5 border border-white/10 p-4 space-y-3">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <p className="text-sm text-white font-medium">Cuenta de Google</p>
+                  <p className="text-sm text-white font-medium">{t('integrations.google_account')}</p>
                   <p className="text-xs text-gray-400">
                     {calendarConfig.user_connection_configured
-                      ? `Conectada como ${calendarConfig.google_account_email || 'cuenta sin email visible'}`
-                      : 'Conecta la cuenta del usuario para elegir calendarios sin configurar IDs manuales.'}
+                      ? t('integrations.google_connected_as', { email: calendarConfig.google_account_email || t('integrations.google_no_email') })
+                      : t('integrations.google_connect_hint')}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -900,14 +904,14 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                         disabled={googleConnectionLoading}
                         className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white hover:bg-white/10 transition disabled:opacity-50"
                       >
-                        {googleConnectionLoading ? 'Actualizando...' : 'Recargar calendarios'}
+                        {googleConnectionLoading ? t('integrations.refreshing') : t('integrations.refresh_calendars')}
                       </button>
                       <button
                         onClick={handleGoogleDisconnect}
                         disabled={googleConnectionLoading}
                         className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-300 hover:bg-red-500/20 transition disabled:opacity-50"
                       >
-                        Desconectar Google
+                        {t('integrations.disconnect_google')}
                       </button>
                     </>
                   ) : (
@@ -916,7 +920,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                       disabled={googleConnectionLoading || !calendarConfig.oauth_client_configured}
                       className="px-3 py-2 rounded-lg bg-[#04d9b5]/20 border border-[#04d9b5]/40 text-sm text-[#04d9b5] hover:bg-[#04d9b5]/30 transition disabled:opacity-50"
                     >
-                      {googleConnectionLoading ? 'Conectando...' : 'Conectar Google'}
+                      {googleConnectionLoading ? t('integrations.connecting') : t('integrations.connect_google')}
                     </button>
                   )}
                 </div>
@@ -924,15 +928,15 @@ export default function Integrations({ token, onConnectionChange }: Integrations
 
               {!calendarConfig.oauth_client_configured && (
                 <div className="rounded-lg border border-orange-500/30 bg-orange-500/10 p-3 text-xs text-orange-300">
-                  Falta configurar `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` y `GOOGLE_REDIRECT_URI` en el backend para habilitar OAuth.
+                  {t('integrations.oauth_missing')}
                 </div>
               )}
             </div>
 
             <div className="flex items-center justify-between rounded-lg bg-white/5 border border-white/10 p-3">
               <div>
-                <p className="text-sm text-white font-medium">Agendado automático</p>
-                <p className="text-xs text-gray-400">Si está activo, el bot puede crear citas directamente.</p>
+                <p className="text-sm text-white font-medium">{t('integrations.auto_schedule')}</p>
+                <p className="text-xs text-gray-400">{t('integrations.auto_schedule_hint')}</p>
               </div>
               <button
                 onClick={() => setCalendarConfig((prev) => ({ ...prev, enabled: !prev.enabled }))}
@@ -945,7 +949,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
             <div className="space-y-3">
               {calendarConfig.user_connection_configured && (
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1">Calendario de Google</label>
+                  <label className="block text-xs text-gray-400 mb-1">{t('integrations.google_calendar')}</label>
                   <select
                     value={calendarConfig.calendar_id}
                     onChange={(e) => {
@@ -959,15 +963,15 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                     }}
                     className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm focus:outline-none focus:ring-1 focus:ring-[#04d9b5]"
                   >
-                    <option value="">Selecciona un calendario</option>
+                    <option value="">{t('integrations.select_calendar')}</option>
                     {googleCalendars.map((calendar) => (
                       <option key={calendar.id} value={calendar.id}>
-                        {calendar.primary ? 'Principal' : calendar.summary} ({calendar.id})
+                        {calendar.primary ? t('integrations.primary') : calendar.summary} ({calendar.id})
                       </option>
                     ))}
                   </select>
                   <p className="mt-1 text-xs text-gray-500">
-                    {googleConnectionLoading ? 'Cargando calendarios...' : 'También puedes escribir manualmente un Calendar ID si lo prefieres.'}
+                    {googleConnectionLoading ? t('integrations.loading_calendars') : t('integrations.manual_calendar_hint')}
                   </p>
                 </div>
               )}
@@ -983,21 +987,21 @@ export default function Integrations({ token, onConnectionChange }: Integrations
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1">Zona horaria</label>
+                  <label className="block text-xs text-gray-400 mb-1">{t('integrations.timezone')}</label>
                   <select
                     value={calendarConfig.timezone}
                     onChange={(e) => setCalendarConfig((prev) => ({ ...prev, timezone: e.target.value }))}
                     className="w-full px-3 py-2 rounded-lg bg-[#0f0f17] border border-white/10 text-white text-sm focus:outline-none focus:ring-1 focus:ring-[#04d9b5]"
                   >
-                    <optgroup label="México / Centroamérica">
-                      <option value="America/Mexico_City">Ciudad de México (CST/CDT)</option>
-                      <option value="America/Cancun">Cancún (EST)</option>
+                    <optgroup label={t('integrations.timezone_mexico')}>
+                      <option value="America/Mexico_City">{t('integrations.timezone_mexico_city')}</option>
+                      <option value="America/Cancun">{t('integrations.timezone_cancun')}</option>
                       <option value="America/Monterrey">Monterrey (CST/CDT)</option>
                       <option value="America/Chihuahua">Chihuahua (MST/MDT)</option>
                       <option value="America/Tijuana">Tijuana (PST/PDT)</option>
                       <option value="America/Guatemala">Guatemala (CST)</option>
                     </optgroup>
-                    <optgroup label="Sudamérica">
+                    <optgroup label={t('integrations.timezone_south_america')}>
                       <option value="America/Bogota">Bogotá (COT)</option>
                       <option value="America/Lima">Lima (PET)</option>
                       <option value="America/Santiago">Santiago (CLT)</option>
@@ -1005,22 +1009,22 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                       <option value="America/Sao_Paulo">São Paulo (BRT)</option>
                       <option value="America/Caracas">Caracas (VET)</option>
                     </optgroup>
-                    <optgroup label="España">
+                    <optgroup label={t('integrations.timezone_spain')}>
                       <option value="Europe/Madrid">Madrid (CET/CEST)</option>
                     </optgroup>
-                    <optgroup label="EE.UU.">
-                      <option value="America/New_York">Nueva York (EST/EDT)</option>
+                    <optgroup label={t('integrations.timezone_usa')}>
+                      <option value="America/New_York">{t('integrations.timezone_new_york')}</option>
                       <option value="America/Chicago">Chicago (CST/CDT)</option>
                       <option value="America/Denver">Denver (MST/MDT)</option>
-                      <option value="America/Los_Angeles">Los Ángeles (PST/PDT)</option>
+                      <option value="America/Los_Angeles">{t('integrations.timezone_los_angeles')}</option>
                     </optgroup>
-                    <optgroup label="Otros">
+                    <optgroup label={t('integrations.timezone_other')}>
                       <option value="UTC">UTC</option>
                     </optgroup>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1">Duración (minutos)</label>
+                  <label className="block text-xs text-gray-400 mb-1">{t('integrations.duration')}</label>
                   <input
                     type="number"
                     min={15}
@@ -1034,7 +1038,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
             </div>
 
             <div className="rounded-lg bg-white/5 border border-white/10 p-3">
-              <p className="text-sm text-white font-medium mb-2">Campos a recolectar en el flujo</p>
+              <p className="text-sm text-white font-medium mb-2">{t('integrations.collect_fields')}</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 {CALENDAR_FIELD_OPTIONS.map((field) => (
                   <label key={field.key} className="flex items-center gap-2 text-sm text-gray-300">
@@ -1045,19 +1049,19 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                       onChange={() => toggleCalendarField(field.key)}
                       className="accent-[#04d9b5]"
                     />
-                    <span>{field.label}</span>
+                    <span>{t(field.labelKey)}</span>
                   </label>
                 ))}
               </div>
-              <p className="text-xs text-gray-500 mt-2">`Fecha` y `Hora` siempre son requeridos para crear la cita.</p>
+              <p className="text-xs text-gray-500 mt-2">{t('integrations.required_date_time')}</p>
             </div>
 
             <div className={`rounded-lg border p-3 text-xs ${calendarConfig.user_connection_configured || calendarConfig.service_account_configured ? 'bg-green-500/10 border-green-500/30 text-green-300' : 'bg-orange-500/10 border-orange-500/30 text-orange-300'}`}>
               {calendarConfig.user_connection_configured
-                ? 'La agenda usará la cuenta conectada por el usuario.'
+                ? t('integrations.calendar_user_mode')
                 : calendarConfig.service_account_configured
-                  ? 'Service account de Google detectada en backend. Sigue disponible como respaldo.'
-                  : 'Falta configurar OAuth de usuario o GOOGLE_SERVICE_ACCOUNT_JSON / GOOGLE_SERVICE_ACCOUNT_FILE en el backend.'}
+                  ? t('integrations.calendar_service_mode')
+                  : t('integrations.calendar_missing_mode')}
             </div>
 
             <button
@@ -1065,7 +1069,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
               disabled={calendarLoading || !calendarConfig.calendar_id}
               className="w-full px-4 py-2 rounded-lg bg-[#04d9b5]/20 border border-[#04d9b5]/40 text-[#04d9b5] hover:bg-[#04d9b5]/30 transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {calendarLoading ? 'Guardando...' : 'Guardar configuración de agenda'}
+              {calendarLoading ? t('integrations.saving') : t('integrations.save_calendar')}
             </button>
           </div>
         )}
@@ -1081,7 +1085,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
             <h3 className="text-base font-medium text-white group-hover:text-[#04d9b5] transition">
               E-commerce
             </h3>
-            <span className="text-xs text-gray-400">Stripe • Mercado Libre • Shopify • Catálogo</span>
+            <span className="text-xs text-gray-400">{t('integrations.ecommerce_subtitle')}</span>
           </div>
           <div className="flex items-center space-x-3">
             <svg
@@ -1103,7 +1107,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                 <h4 className="text-sm font-medium text-white">Stripe</h4>
               </div>
               <p className="text-xs text-gray-400 mb-3">
-                Acepta pagos directamente desde el chat. Cada marca puede tener su propia cuenta de Stripe.
+                {t('integrations.stripe_desc')}
               </p>
 
               {/* Lista de marcas/tenants con Stripe */}
@@ -1121,7 +1125,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                       <div className="flex items-center gap-2">
                         {tenant.stripe_acct ? (
                           <>
-                            <span className="text-xs text-green-400">Conectado</span>
+                            <span className="text-xs text-green-400">{t('integrations.connected')}</span>
                             <button
                               onClick={() => window.open(`${API_BASE}/v1/admin/stripe/dashboard?tenant_slug=${tenant.slug}&token=${token}`, '_blank')}
                               className="px-3 py-1 rounded text-xs bg-[#04d9b5]/20 border border-[#04d9b5]/40 text-[#04d9b5] hover:bg-[#04d9b5]/30 transition"
@@ -1137,7 +1141,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                             }}
                             className="px-3 py-1 rounded text-xs bg-[#04d9b5]/20 border border-[#04d9b5]/40 text-[#04d9b5] hover:bg-[#04d9b5]/30 transition"
                           >
-                            Conectar
+                            {t('integrations.connect')}
                           </button>
                         )}
                       </div>
@@ -1145,7 +1149,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                   ))
                 ) : (
                   <div className="text-xs text-gray-500 text-center py-2">
-                    No hay marcas configuradas.
+                    {t('integrations.no_brands')}
                   </div>
                 )}
               </div>
@@ -1157,10 +1161,10 @@ export default function Integrations({ token, onConnectionChange }: Integrations
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <h4 className="text-sm font-medium text-white">Mercado Libre</h4>
-                <span className="px-2 py-1 rounded text-xs bg-yellow-500/20 text-yellow-300">Próximamente</span>
+                <span className="px-2 py-1 rounded text-xs bg-yellow-500/20 text-yellow-300">{t('integrations.coming_soon')}</span>
               </div>
               <p className="text-xs text-gray-400">
-                Integración con tu tienda de Mercado Libre
+                {t('integrations.mercado_desc')}
               </p>
             </div>
 
@@ -1170,10 +1174,10 @@ export default function Integrations({ token, onConnectionChange }: Integrations
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <h4 className="text-sm font-medium text-white">Shopify</h4>
-                <span className="px-2 py-1 rounded text-xs bg-yellow-500/20 text-yellow-300">Próximamente</span>
+                <span className="px-2 py-1 rounded text-xs bg-yellow-500/20 text-yellow-300">{t('integrations.coming_soon')}</span>
               </div>
               <p className="text-xs text-gray-400">
-                Conecta tu tienda de Shopify
+                {t('integrations.shopify_desc')}
               </p>
             </div>
 
@@ -1181,9 +1185,9 @@ export default function Integrations({ token, onConnectionChange }: Integrations
 
             {/* Catálogo - Multi-brand */}
             <div className="space-y-3">
-              <h4 className="text-sm font-medium text-white">Catálogo de Productos</h4>
+              <h4 className="text-sm font-medium text-white">{t('integrations.product_catalog')}</h4>
               <p className="text-xs text-gray-400 mb-3">
-                Configura el catálogo de productos para cada marca (formato JSON).
+                {t('integrations.catalog_desc')}
               </p>
 
               {/* Lista de marcas con catálogo */}
@@ -1197,7 +1201,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                       <div className="flex items-center justify-between">
                         <div className="text-white text-sm font-medium">{tenant.name}</div>
                         {tenant.catalog_url && (
-                          <span className="text-xs text-green-400">Configurado</span>
+                          <span className="text-xs text-green-400">{t('integrations.configured')}</span>
                         )}
                       </div>
                       <input
@@ -1217,15 +1221,15 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                   ))
                 ) : (
                   <div className="text-xs text-gray-500 text-center py-2">
-                    No hay marcas configuradas.
+                    {t('integrations.no_brands')}
                   </div>
                 )}
               </div>
 
               <p className="text-xs text-gray-500">
-                ¿No sabes cómo crear tu catálogo?{' '}
+                {t('integrations.catalog_help')}{' '}
                 <a href="#" className="text-[#04d9b5] hover:underline">
-                  Contacta con soporte
+                  {t('integrations.contact_support')}
                 </a>
               </p>
             </div>
@@ -1241,12 +1245,12 @@ export default function Integrations({ token, onConnectionChange }: Integrations
         >
           <div className="flex items-center space-x-4">
             <h3 className="text-base font-medium text-white group-hover:text-[#04d9b5] transition">
-              Páginas Web
+              {t('integrations.web_pages')}
             </h3>
-            <span className="text-xs text-gray-400">Sitios conectados al widget</span>
+            <span className="text-xs text-gray-400">{t('integrations.web_subtitle')}</span>
           </div>
           <div className="flex items-center space-x-3">
-            <span className="text-xs text-green-400">1 sitio</span>
+            <span className="text-xs text-green-400">{t('integrations.one_site')}</span>
             <svg
               className={`w-4 h-4 text-[#04d9b5] transition-transform ${activeSection === 'web' ? 'rotate-180' : ''}`}
               fill="none"
@@ -1261,16 +1265,16 @@ export default function Integrations({ token, onConnectionChange }: Integrations
         {activeSection === 'web' && (
           <div className="px-6 py-4 border-t border-white/10 bg-black/20 space-y-4">
             <p className="text-gray-300 text-xs">
-              Agrega los sitios web donde quieres instalar el widget del bot.
+              {t('integrations.web_desc')}
             </p>
             <div className="space-y-2">
               <div className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10">
                 <span className="text-white text-sm">acidia.app</span>
-                <button className="text-red-400 hover:text-red-300 text-xs">Eliminar</button>
+                <button className="text-red-400 hover:text-red-300 text-xs">{t('integrations.delete')}</button>
               </div>
             </div>
             <button className="px-4 py-2 rounded-lg bg-[#04d9b5]/20 border border-[#04d9b5]/40 text-[#04d9b5] hover:bg-[#04d9b5]/30 transition text-sm">
-              + Agregar Sitio Web
+              {t('integrations.add_website')}
             </button>
           </div>
         )}
@@ -1286,12 +1290,12 @@ export default function Integrations({ token, onConnectionChange }: Integrations
             <h3 className="text-base font-medium text-white group-hover:text-[#04d9b5] transition">
               Shopify
             </h3>
-            <span className="text-xs text-gray-400">Catálogo de productos para el bot</span>
+            <span className="text-xs text-gray-400">{t('integrations.shopify_subtitle')}</span>
           </div>
           <div className="flex items-center space-x-3">
             {shopifyStatus?.connected
-              ? <span className="text-xs text-green-400">● Conectado</span>
-              : <span className="text-xs text-gray-500">No conectado</span>}
+              ? <span className="text-xs text-green-400">● {t('integrations.connected')}</span>
+              : <span className="text-xs text-gray-500">{t('integrations.not_connected')}</span>}
             <svg
               className={`w-4 h-4 text-[#04d9b5] transition-transform ${activeSection === 'shopify' ? 'rotate-180' : ''}`}
               fill="none" viewBox="0 0 24 24" stroke="currentColor"
@@ -1322,7 +1326,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                     disabled={shopifyLoading}
                     className="text-red-400 hover:text-red-300 text-xs disabled:opacity-50"
                   >
-                    Desconectar
+                    {t('integrations.disconnect')}
                   </button>
                 </div>
 
@@ -1332,7 +1336,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                     disabled={shopifyProductsLoading}
                     className="px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white text-sm hover:bg-white/15 transition disabled:opacity-50"
                   >
-                    {shopifyProductsLoading ? 'Cargando...' : 'Ver productos sincronizados'}
+                    {shopifyProductsLoading ? t('facebook.loading') : t('integrations.view_synced_products')}
                   </button>
                 </div>
 
@@ -1353,12 +1357,12 @@ export default function Integrations({ token, onConnectionChange }: Integrations
             ) : (
               <div className="space-y-4">
                 <p className="text-gray-400 text-xs">
-                  Conecta tu tienda Shopify para que el bot pueda recomendar productos y mostrar tarjetas interactivas.
+                  {t('integrations.shopify_connect_desc')}
                 </p>
 
                 {/* Opción principal: OAuth (un clic) */}
                 <form onSubmit={handleShopifyOAuth} className="space-y-3 p-4 rounded-xl bg-[#04d9b5]/5 border border-[#04d9b5]/20">
-                  <p className="text-[#04d9b5] text-xs font-semibold">Recomendado — Autorización automática</p>
+                  <p className="text-[#04d9b5] text-xs font-semibold">{t('integrations.recommended_oauth')}</p>
                   <div>
                     <input
                       type="text"
@@ -1374,15 +1378,15 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                     disabled={shopifyLoading}
                     className="w-full py-2.5 rounded-lg bg-[#04d9b5] text-black font-semibold text-sm hover:bg-[#04d9b5]/90 transition disabled:opacity-50"
                   >
-                    {shopifyLoading ? 'Redirigiendo...' : 'Autorizar con Shopify →'}
+                    {shopifyLoading ? t('integrations.redirecting') : t('integrations.authorize_shopify')}
                   </button>
-                  <p className="text-gray-500 text-xs">Te redirige a Shopify para aprobar el acceso. Sin copiar tokens.</p>
+                  <p className="text-gray-500 text-xs">{t('integrations.shopify_oauth_hint')}</p>
                 </form>
 
                 {/* Opción avanzada: token manual */}
                 <details className="group">
                   <summary className="text-gray-500 text-xs cursor-pointer hover:text-gray-300">
-                    Opción avanzada: ingresar token manualmente
+                    {t('integrations.advanced_token')}
                   </summary>
                   <form onSubmit={handleShopifyConnect} className="space-y-3 mt-3">
                     <div className="flex gap-2">
@@ -1396,7 +1400,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                       </button>
                     </div>
                     <input type="password" required
-                      placeholder={shopifyForm.tokenType === 'admin' ? 'shpat_...' : 'Token de Storefront API'}
+                      placeholder={shopifyForm.tokenType === 'admin' ? 'shpat_...' : t('integrations.storefront_token_placeholder')}
                       value={shopifyForm.tokenType === 'admin' ? shopifyForm.adminToken : shopifyForm.storefrontToken}
                       onChange={e => setShopifyForm(prev => shopifyForm.tokenType === 'admin'
                         ? { ...prev, adminToken: e.target.value }
@@ -1405,7 +1409,7 @@ export default function Integrations({ token, onConnectionChange }: Integrations
                     />
                     <button type="submit" disabled={shopifyLoading}
                       className="w-full py-2 rounded-lg bg-white/10 border border-white/20 text-white text-sm hover:bg-white/15 transition disabled:opacity-50">
-                      {shopifyLoading ? 'Guardando...' : 'Guardar token'}
+                      {shopifyLoading ? t('integrations.saving') : t('integrations.save_token')}
                     </button>
                   </form>
                 </details>

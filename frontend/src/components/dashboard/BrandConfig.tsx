@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { API_BASE } from '../../config'
 
@@ -36,6 +37,7 @@ interface BrandConfigProps {
 }
 
 export default function BrandConfig({ token, tenant, selectedPage, onUpdate }: BrandConfigProps) {
+  const { t } = useTranslation()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -46,11 +48,11 @@ export default function BrandConfig({ token, tenant, selectedPage, onUpdate }: B
 
   const [formData, setFormData] = useState({
     brand: settings.brand || defaultBrand,
-    tone: settings.tone || 'amigable y profesional',
+    tone: settings.tone || t('brand_config.default_tone'),
     policies: settings.policies || '',
     hours: settings.hours || '',
     products: settings.products || '',
-    bot_off_message: settings.bot_off_message || 'El asistente está en pausa. Escríbenos por WhatsApp o envíanos un correo y te respondemos enseguida.'
+    bot_off_message: settings.bot_off_message || t('brand_config.default_bot_off')
   })
 
   useEffect(() => {
@@ -59,13 +61,13 @@ export default function BrandConfig({ token, tenant, selectedPage, onUpdate }: B
 
     setFormData({
       brand: currentSettings.brand || currentBrand,
-      tone: currentSettings.tone || 'amigable y profesional',
+      tone: currentSettings.tone || t('brand_config.default_tone'),
       policies: currentSettings.policies || '',
       hours: currentSettings.hours || '',
       products: currentSettings.products || '',
-      bot_off_message: currentSettings.bot_off_message || 'El asistente está en pausa. Escríbenos por WhatsApp o envíanos un correo y te respondemos enseguida.'
+      bot_off_message: currentSettings.bot_off_message || t('brand_config.default_bot_off')
     })
-  }, [tenant, selectedPage])
+  }, [tenant, selectedPage, t])
 
   const handleSave = async () => {
     setSaving(true)
@@ -90,11 +92,11 @@ export default function BrandConfig({ token, tenant, selectedPage, onUpdate }: B
         })
       })
 
-      if (!res.ok) throw new Error('Error al guardar configuración')
+      if (!res.ok) throw new Error(t('brand_config.save_error'))
 
       const message = selectedPage
-        ? `Configuración de "${selectedPage.page_name}" guardada exitosamente`
-        : 'Configuración guardada exitosamente'
+        ? t('brand_config.page_saved', { page: selectedPage.page_name })
+        : t('brand_config.saved')
 
       setSuccess(message)
 
@@ -115,9 +117,9 @@ export default function BrandConfig({ token, tenant, selectedPage, onUpdate }: B
 
   return (
     <div className="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl p-6">
-      <h3 className="text-xl font-semibold text-white mb-4">Identidad de Marca del Bot</h3>
+      <h3 className="text-xl font-semibold text-white mb-4">{t('brand_config.title')}</h3>
       <p className="text-gray-400 text-sm mb-6">
-        Configura cómo se presenta tu asistente de IA ante los clientes
+        {t('brand_config.subtitle')}
       </p>
 
       {error && (
@@ -136,65 +138,65 @@ export default function BrandConfig({ token, tenant, selectedPage, onUpdate }: B
         {/* Nombre de Marca */}
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-2">
-            Nombre de tu negocio
+            {t('brand_config.business_name')}
           </label>
           <input
             type="text"
             value={formData.brand}
             onChange={(e) => setFormData({ ...formData, brand: e.target.value })}
-            placeholder="Ej: Kante Bike Rentals"
+            placeholder={t('brand_config.business_placeholder')}
             className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#04d9b5]"
           />
           <p className="text-xs text-gray-500 mt-1">
-            El bot se presentará como asistente de esta marca
+            {t('brand_config.business_hint')}
           </p>
         </div>
 
         {/* Tono de Voz */}
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-2">
-            Tono de voz
+            {t('brand_config.tone')}
           </label>
           <select
             value={formData.tone}
             onChange={(e) => setFormData({ ...formData, tone: e.target.value })}
             className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-[#04d9b5]"
           >
-            <option value="formal y profesional">Formal y profesional</option>
-            <option value="amigable y profesional">Amigable y profesional</option>
-            <option value="casual y cercano">Casual y cercano</option>
-            <option value="técnico y experto">Técnico y experto</option>
-            <option value="juvenil y dinámico">Juvenil y dinámico</option>
+            <option value="formal y profesional">{t('brand_config.tone_formal')}</option>
+            <option value="amigable y profesional">{t('brand_config.tone_friendly')}</option>
+            <option value="casual y cercano">{t('brand_config.tone_casual')}</option>
+            <option value="técnico y experto">{t('brand_config.tone_technical')}</option>
+            <option value="juvenil y dinámico">{t('brand_config.tone_young')}</option>
           </select>
         </div>
 
         {/* Productos/Servicios */}
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-2">
-            Productos o servicios
+            {t('brand_config.products')}
           </label>
           <textarea
             value={formData.products}
             onChange={(e) => setFormData({ ...formData, products: e.target.value })}
-            placeholder="Ej: Renta de bicicletas de montaña, eléctricas y urbanas. Tours guiados por la ciudad. Servicio de entrega a domicilio."
+            placeholder={t('brand_config.products_placeholder')}
             rows={4}
             className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#04d9b5] resize-none"
           />
           <p className="text-xs text-gray-500 mt-1">
-            Describe brevemente qué ofreces
+            {t('brand_config.products_hint')}
           </p>
         </div>
 
         {/* Horarios */}
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-2">
-            Horarios de atención
+            {t('brand_config.hours')}
           </label>
           <input
             type="text"
             value={formData.hours}
             onChange={(e) => setFormData({ ...formData, hours: e.target.value })}
-            placeholder="Ej: Lunes a Viernes 9am-7pm, Sábados 10am-6pm"
+            placeholder={t('brand_config.hours_placeholder')}
             className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#04d9b5]"
           />
         </div>
@@ -202,29 +204,29 @@ export default function BrandConfig({ token, tenant, selectedPage, onUpdate }: B
         {/* Políticas */}
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-2">
-            Políticas importantes
+            {t('brand_config.policies')}
           </label>
           <textarea
             value={formData.policies}
             onChange={(e) => setFormData({ ...formData, policies: e.target.value })}
-            placeholder="Ej: Depósito reembolsable de $500. Cancelaciones con 24h de anticipación. Se requiere identificación oficial."
+            placeholder={t('brand_config.policies_placeholder')}
             rows={3}
             className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#04d9b5] resize-none"
           />
           <p className="text-xs text-gray-500 mt-1">
-            Reglas que el bot debe mencionar (cancelaciones, depósitos, etc.)
+            {t('brand_config.policies_hint')}
           </p>
         </div>
 
         {/* Mensaje cuando el bot está pausado */}
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-2">
-            Mensaje cuando el bot está pausado
+            {t('brand_config.bot_off_message')}
           </label>
           <textarea
             value={formData.bot_off_message}
             onChange={(e) => setFormData({ ...formData, bot_off_message: e.target.value })}
-            placeholder="El asistente está en pausa. Escríbenos por WhatsApp..."
+            placeholder={t('brand_config.bot_off_placeholder')}
             rows={2}
             className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#04d9b5] resize-none"
           />
@@ -237,7 +239,7 @@ export default function BrandConfig({ token, tenant, selectedPage, onUpdate }: B
             disabled={saving}
             className="w-full py-3 px-4 bg-gradient-to-r from-[#04d9b5] to-[#02a88a] hover:from-[#02a88a] hover:to-[#04d9b5] text-black font-semibold rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {saving ? 'Guardando...' : 'Guardar configuración'}
+            {saving ? t('brand_config.saving') : t('brand_config.save')}
           </button>
         </div>
       </div>
@@ -249,10 +251,9 @@ export default function BrandConfig({ token, tenant, selectedPage, onUpdate }: B
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           <div className="text-sm text-blue-200">
-            <p className="font-medium mb-1">Tip profesional:</p>
+            <p className="font-medium mb-1">{t('brand_config.tip_title')}</p>
             <p className="text-blue-300">
-              Cuanta más información proporciones, mejores respuestas dará tu asistente.
-              Puedes actualizar esta configuración en cualquier momento.
+              {t('brand_config.tip_text')}
             </p>
           </div>
         </div>

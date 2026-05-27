@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { API_BASE } from '../../config'
 
@@ -41,6 +42,7 @@ interface FacebookConnectProps {
 }
 
 export default function FacebookConnect({ token, onConnectionChange }: FacebookConnectProps) {
+  const { t } = useTranslation()
   const [connecting, setConnecting] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
   const [error, setError] = useState('')
@@ -61,7 +63,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
       const res = await fetch(`${API_BASE}/auth/facebook/pages`, {
         headers: { Authorization: `Bearer ${token}` }
       })
-      if (!res.ok) throw new Error('Error al cargar páginas')
+      if (!res.ok) throw new Error(t('facebook.pages_loaded_error'))
       const data = await res.json()
       const loadedPages = data.pages || []
       setPages(loadedPages)
@@ -137,7 +139,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.get('facebook_connected') === 'true') {
-      setSuccess('¡Facebook conectado exitosamente! Actualizando información...')
+      setSuccess(t('facebook.connected_updating'))
       window.history.replaceState({}, '', window.location.pathname)
 
       // Recargar páginas
@@ -146,7 +148,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
         if (onConnectionChange) {
           onConnectionChange()
         }
-        setSuccess('¡Facebook conectado exitosamente!')
+        setSuccess(t('facebook.connected_success'))
       }, 1000)
     }
   }, [onConnectionChange])
@@ -158,7 +160,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
       const res = await fetch(`${API_BASE}/auth/facebook/connect`, {
         headers: { Authorization: `Bearer ${token}` }
       })
-      if (!res.ok) throw new Error('Error al iniciar conexión con Facebook')
+      if (!res.ok) throw new Error(t('facebook.connect_error'))
       const data = await res.json()
       window.location.href = data.auth_url
     } catch (err: any) {
@@ -175,9 +177,9 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       })
-      if (!res.ok) throw new Error('Error al activar página')
+      if (!res.ok) throw new Error(t('facebook.activate_error'))
 
-      setSuccess('Página activada correctamente')
+      setSuccess(t('facebook.page_activated'))
       await fetchPages()
       if (onConnectionChange) {
         onConnectionChange()
@@ -190,7 +192,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
   }
 
   const handleDisconnect = async () => {
-    if (!confirm('¿Estás seguro de desconectar Facebook? Dejarás de recibir mensajes de Facebook e Instagram.')) {
+    if (!confirm(t('facebook.disconnect_confirm'))) {
       return
     }
 
@@ -201,9 +203,9 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       })
-      if (!res.ok) throw new Error('Error al desconectar Facebook')
+      if (!res.ok) throw new Error(t('facebook.disconnect_error'))
 
-      setSuccess('Facebook desconectado correctamente')
+      setSuccess(t('facebook.disconnect_success'))
       setTimeout(() => {
         if (onConnectionChange) {
           onConnectionChange()
@@ -226,15 +228,15 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
   if (loading) {
     return (
       <div className="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl p-6">
-        <h3 className="text-xl font-semibold text-white mb-4">Conexión con Facebook</h3>
-        <div className="text-center text-gray-400">Cargando...</div>
+        <h3 className="text-xl font-semibold text-white mb-4">{t('facebook.title')}</h3>
+        <div className="text-center text-gray-400">{t('facebook.loading')}</div>
       </div>
     )
   }
 
   return (
     <div className="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl p-6">
-      <h3 className="text-xl font-semibold text-white mb-4">Conexión con Facebook</h3>
+      <h3 className="text-xl font-semibold text-white mb-4">{t('facebook.title')}</h3>
 
       {error && (
         <div className="mb-4 p-3 rounded-lg bg-red-500/20 border border-red-500/50 text-red-200 text-sm">
@@ -252,7 +254,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
         <div className="space-y-4">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-            <span className="text-green-400 font-medium">{pages.length} página(s) de tu cuenta de Facebook</span>
+            <span className="text-green-400 font-medium">{t('facebook.pages_count', { count: pages.length })}</span>
           </div>
 
           {/* Lista de páginas */}
@@ -284,7 +286,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
                     )}
                     {page.is_active && (
                       <span className="px-2 py-1 text-xs bg-green-500/20 text-green-400 rounded-full">
-                        En uso
+                        {t('facebook.in_use')}
                       </span>
                     )}
                   </div>
@@ -300,7 +302,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
                         <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
                           <path d="M12 2c2.717 0 3.056.01 4.122.06 1.065.05 1.79.217 2.428.465.66.254 1.216.598 1.772 1.153a4.908 4.908 0 0 1 1.153 1.772c.247.637.415 1.363.465 2.428.047 1.066.06 1.405.06 4.122 0 2.717-.01 3.056-.06 4.122-.05 1.065-.218 1.79-.465 2.428a4.883 4.883 0 0 1-1.153 1.772 4.915 4.915 0 0 1-1.772 1.153c-.637.247-1.363.415-2.428.465-1.066.047-1.405.06-4.122.06-2.717 0-3.056-.01-4.122-.06-1.065-.05-1.79-.218-2.428-.465a4.89 4.89 0 0 1-1.772-1.153 4.904 4.904 0 0 1-1.153-1.772c-.248-.637-.415-1.363-.465-2.428C2.013 15.056 2 14.717 2 12c0-2.717.01-3.056.06-4.122.05-1.066.217-1.79.465-2.428a4.88 4.88 0 0 1 1.153-1.772A4.897 4.897 0 0 1 5.45 2.525c.638-.248 1.362-.415 2.428-.465C8.944 2.013 9.283 2 12 2zm0 5a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm6.5-.25a1.25 1.25 0 1 0-2.5 0 1.25 1.25 0 0 0 2.5 0zM12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6z"/>
                         </svg>
-                        <span className="font-medium">Ver detalles de Instagram</span>
+                        <span className="font-medium">{t('facebook.view_instagram')}</span>
                       </div>
                       <svg
                         className={`w-4 h-4 text-purple-400 transition-transform ${
@@ -319,7 +321,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
                       <div className="mt-3 space-y-4">
                         {loadingIgData.has(page.ig_user_id) ? (
                           <div className="text-center text-gray-400 py-4">
-                            Cargando datos de Instagram...
+                            {t('facebook.loading_instagram')}
                           </div>
                         ) : (
                           <>
@@ -348,13 +350,13 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
                                     )}
                                     <div className="flex gap-4 mt-3 text-xs">
                                       <div className="text-white">
-                                        <span className="font-bold">{igProfiles[page.ig_user_id].media_count.toLocaleString()}</span> publicaciones
+                                        <span className="font-bold">{igProfiles[page.ig_user_id].media_count.toLocaleString()}</span> {t('facebook.posts')}
                                       </div>
                                       <div className="text-white">
-                                        <span className="font-bold">{igProfiles[page.ig_user_id].followers_count.toLocaleString()}</span> seguidores
+                                        <span className="font-bold">{igProfiles[page.ig_user_id].followers_count.toLocaleString()}</span> {t('facebook.followers')}
                                       </div>
                                       <div className="text-white">
-                                        <span className="font-bold">{igProfiles[page.ig_user_id].follows_count.toLocaleString()}</span> seguidos
+                                        <span className="font-bold">{igProfiles[page.ig_user_id].follows_count.toLocaleString()}</span> {t('facebook.following')}
                                       </div>
                                     </div>
                                     <div className="text-xs text-gray-400 mt-2 font-mono">
@@ -369,7 +371,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
                             {igMedia[page.ig_user_id] && igMedia[page.ig_user_id].length > 0 && (
                               <div>
                                 <div className="text-white text-sm font-medium mb-2">
-                                  Publicaciones recientes ({igMedia[page.ig_user_id].length})
+                                  {t('facebook.recent_posts', { count: igMedia[page.ig_user_id].length })}
                                 </div>
                                 <div className="grid grid-cols-3 gap-2">
                                   {igMedia[page.ig_user_id].slice(0, 9).map((media) => (
@@ -394,7 +396,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
                                       )}
                                       <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center p-2">
                                         <p className="text-white text-xs text-center line-clamp-3">
-                                          {media.caption || 'Sin descripción'}
+                                          {media.caption || t('facebook.no_description')}
                                         </p>
                                       </div>
                                     </a>
@@ -414,7 +416,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
                     onClick={() => handleActivatePage(page.page_id)}
                     className="w-full mt-2 px-3 py-1.5 text-sm bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/50 text-blue-200 rounded transition"
                   >
-                    Usar esta página
+                    {t('facebook.use_page')}
                   </button>
                 )}
               </div>
@@ -424,27 +426,27 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
           {/* Connected features */}
           {activePage && (
             <div className="bg-white/5 border border-white/10 rounded-lg p-4">
-              <div className="text-sm font-medium text-white mb-3">Funcionalidades activas con "{activePage.page_name}":</div>
+              <div className="text-sm font-medium text-white mb-3">{t('facebook.active_features', { page: activePage.page_name })}</div>
               <ul className="space-y-2 text-sm">
                 <li className="flex items-center gap-2 text-gray-300">
                   <svg className="w-4 h-4 text-[#04d9b5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
-                  Mensajes directos de Facebook
+                  {t('facebook.facebook_messages')}
                 </li>
                 {activePage.ig_user_id && (
                   <li className="flex items-center gap-2 text-gray-300">
                     <svg className="w-4 h-4 text-[#04d9b5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    Mensajes directos de Instagram
+                    {t('facebook.instagram_messages')}
                   </li>
                 )}
                 <li className="flex items-center gap-2 text-gray-300">
                   <svg className="w-4 h-4 text-[#04d9b5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
-                  Respuestas automáticas con IA
+                  {t('facebook.ai_replies')}
                 </li>
               </ul>
             </div>
@@ -457,19 +459,19 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
                 disabled={connecting}
                 className="flex-1 px-4 py-2 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/50 text-blue-200 rounded-lg transition disabled:opacity-50"
               >
-                {connecting ? 'Conectando...' : 'Cambiar página'}
+                {connecting ? t('facebook.changing') : t('facebook.change_page')}
               </button>
               <button
                 onClick={handleDisconnect}
                 disabled={disconnecting}
                 className="flex-1 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 text-red-200 rounded-lg transition disabled:opacity-50"
               >
-                {disconnecting ? 'Desconectando...' : 'Desconectar'}
+                {disconnecting ? t('facebook.disconnecting') : t('facebook.disconnect')}
               </button>
             </div>
             <p className="text-sm text-gray-400">
-              <strong>Cambiar página:</strong> Conecta una página diferente sin perder tu configuración.<br/>
-              <strong>Desconectar:</strong> Elimina completamente la conexión con Facebook e Instagram.
+              <strong>{t('facebook.change_page_help_title')}</strong> {t('facebook.change_page_help')}<br/>
+              <strong>{t('facebook.disconnect_help_title')}</strong> {t('facebook.disconnect_help')}
             </p>
           </div>
         </div>
@@ -477,11 +479,11 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
         <div className="space-y-4">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 bg-gray-500 rounded-full"></div>
-            <span className="text-gray-400">No conectado</span>
+            <span className="text-gray-400">{t('facebook.not_connected')}</span>
           </div>
 
           <p className="text-gray-300">
-            Conecta tu página de Facebook para recibir y responder mensajes automáticamente.
+            {t('facebook.connect_intro')}
           </p>
 
           <ul className="space-y-2 text-gray-400 text-sm">
@@ -489,25 +491,25 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
               <svg className="w-4 h-4 text-[#04d9b5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
-              Mensajes directos de Facebook
+              {t('facebook.facebook_messages')}
             </li>
             <li className="flex items-center gap-2">
               <svg className="w-4 h-4 text-[#04d9b5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
-              Mensajes directos de Instagram
+              {t('facebook.instagram_messages')}
             </li>
             <li className="flex items-center gap-2">
               <svg className="w-4 h-4 text-[#04d9b5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
-              Comentarios en publicaciones
+              {t('facebook.post_comments')}
             </li>
             <li className="flex items-center gap-2">
               <svg className="w-4 h-4 text-[#04d9b5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
-              Respuestas automáticas con IA
+              {t('facebook.ai_replies')}
             </li>
           </ul>
 
@@ -516,7 +518,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
             disabled={connecting}
             className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-semibold rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {connecting ? 'Conectando...' : 'Conectar con Facebook'}
+            {connecting ? t('facebook.changing') : t('facebook.connect_button')}
           </button>
         </div>
       )}

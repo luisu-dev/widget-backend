@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import BrandConfig from '../components/dashboard/BrandConfig';
 import Integrations from '../components/Integrations';
 import { API_BASE } from '../config'
@@ -102,6 +103,7 @@ function MetricCard({ label, value }: { label: string; value: string | number })
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 function Dashboard() {
+  const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const [token, setToken] = useState(() => localStorage.getItem('zia_token') || '');
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -446,7 +448,7 @@ function Dashboard() {
           className="w-10 h-10 rounded-full border-4 border-t-transparent animate-spin"
           style={{ borderColor: 'var(--md-outline-variant)', borderTopColor: 'var(--md-primary)' }}
         />
-        <p style={{ color: 'var(--md-on-surface-variant)' }}>Cargando…</p>
+        <p style={{ color: 'var(--md-on-surface-variant)' }}>{t('dashboard.loading')}</p>
       </div>
     );
   }
@@ -454,10 +456,10 @@ function Dashboard() {
   if (!profile) return null;
 
   const TABS = [
-    { id: 'integrations', label: 'Integraciones' },
-    { id: 'messages',     label: 'Conversaciones' },
-    { id: 'metrics',      label: 'Métricas' },
-    { id: 'settings',     label: 'Configuración' },
+    { id: 'integrations', label: t('dashboard.tabs.integrations') },
+    { id: 'messages',     label: t('dashboard.tabs.messages') },
+    { id: 'metrics',      label: t('dashboard.tabs.metrics') },
+    { id: 'settings',     label: t('dashboard.tabs.settings') },
   ];
 
   const isAdmin =
@@ -502,8 +504,8 @@ function Dashboard() {
             onClick={handleLogout}
             className="md-btn-outlined px-3 py-1.5 text-[13px]"
           >
-            <span className="sm:hidden">Salir</span>
-            <span className="hidden sm:inline">Cerrar sesión</span>
+            <span className="sm:hidden">{t('dashboard.logout_short')}</span>
+            <span className="hidden sm:inline">{t('dashboard.logout')}</span>
           </button>
         </div>
       </header>
@@ -535,7 +537,7 @@ function Dashboard() {
             className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-2 flex items-center gap-2"
           >
             <span className="text-[12px]" style={{ color: 'var(--md-on-surface-variant)' }}>
-              Página:
+              {t('dashboard.page')}
             </span>
             {facebookPages.length === 1 ? (
               <span
@@ -618,12 +620,12 @@ function Dashboard() {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-[22px] font-semibold" style={{ color: 'var(--md-on-surface)' }}>
-                  {selectedSession ? 'Conversación' : 'Conversaciones'}
+                  {selectedSession ? t('dashboard.conversation') : t('dashboard.conversations')}
                 </h2>
                 <p className="text-sm mt-0.5" style={{ color: 'var(--md-on-surface-variant)' }}>
                   {selectedSession
-                    ? 'Mensajes de la sesión'
-                    : `${groupedConversations().length} conversaciones activas`}
+                    ? t('dashboard.session_messages')
+                    : t('dashboard.active_conversations', { count: groupedConversations().length })}
                 </p>
               </div>
               <div className="flex gap-2">
@@ -632,14 +634,14 @@ function Dashboard() {
                     onClick={() => { setSelectedSession(null); setConversationMessages([]); }}
                     className="md-btn-outlined px-4 py-2 text-sm"
                   >
-                    ← Volver
+                    ← {t('dashboard.back')}
                   </button>
                 )}
                 <button
                   onClick={fetchMessages}
                   className="md-btn-tonal px-4 py-2 text-sm"
                 >
-                  Actualizar
+                  {t('dashboard.refresh')}
                 </button>
               </div>
             </div>
@@ -652,7 +654,7 @@ function Dashboard() {
                     className="col-span-full rounded-[16px] p-10 text-center"
                     style={{ background: 'var(--md-surface-container)' }}
                   >
-                    <p style={{ color: 'var(--md-on-surface-variant)' }}>No hay conversaciones aún</p>
+                    <p style={{ color: 'var(--md-on-surface-variant)' }}>{t('dashboard.no_conversations')}</p>
                   </div>
                 ) : (
                   groupedConversations().map((conv) => {
@@ -697,7 +699,7 @@ function Dashboard() {
                             {isInstagram ? 'Instagram' : isFacebook ? 'Messenger' : conv.lastMessage.channel}
                           </span>
                           <span className="text-[11px]" style={{ color: 'var(--md-on-surface-variant)' }}>
-                            {conv.messageCount} msgs
+                            {t('dashboard.messages_count', { count: conv.messageCount })}
                           </span>
                         </div>
                         <p className="text-[12px] mb-1 truncate font-mono" style={{ color: 'var(--md-on-surface-variant)' }}>
@@ -707,7 +709,7 @@ function Dashboard() {
                           {conv.lastMessage.content}
                         </p>
                         <p className="text-[11px]" style={{ color: 'var(--md-on-surface-variant)' }}>
-                          {new Date(conv.lastMessage.created_at).toLocaleString('es-MX')}
+                          {new Date(conv.lastMessage.created_at).toLocaleString(i18n.language.startsWith('en') ? 'en-US' : 'es-MX')}
                         </p>
                       </div>
                     );
@@ -730,7 +732,7 @@ function Dashboard() {
                   <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                     <div>
                       <p className="text-[11px] uppercase tracking-widest font-medium mb-0.5" style={{ color: 'var(--md-on-surface-variant)' }}>
-                        Sesión
+                        {t('dashboard.session')}
                       </p>
                       <p className="text-sm font-mono" style={{ color: 'var(--md-on-surface)' }}>
                         {selectedSession}
@@ -739,13 +741,13 @@ function Dashboard() {
                     <div className="flex items-center gap-3">
                       <div>
                         <p className="text-[12px]" style={{ color: 'var(--md-on-surface-variant)' }}>
-                          Bot en esta conversación
+                          {t('dashboard.bot_in_conversation')}
                         </p>
                         <p
                           className="text-[13px] font-semibold"
                           style={{ color: conversationBotEnabled ? 'var(--md-primary)' : 'var(--md-on-surface-variant)' }}
                         >
-                          {conversationBotEnabled ? 'Activo' : 'Pausado'}
+                          {conversationBotEnabled ? t('dashboard.active') : t('dashboard.paused')}
                         </p>
                       </div>
                       <MdSwitch
@@ -781,10 +783,10 @@ function Dashboard() {
                                 : 'var(--md-on-primary-container)',
                             }}
                           >
-                            {msg.direction === 'in' ? msg.author || 'Cliente' : 'Bot'}
+                            {msg.direction === 'in' ? msg.author || t('dashboard.customer') : 'Bot'}
                           </span>
                           <span className="text-[10px]" style={{ color: 'var(--md-outline)' }}>
-                            {new Date(msg.created_at).toLocaleTimeString('es-MX')}
+                            {new Date(msg.created_at).toLocaleTimeString(i18n.language.startsWith('en') ? 'en-US' : 'es-MX')}
                           </span>
                         </div>
                         <p
@@ -823,7 +825,7 @@ function Dashboard() {
                           color: 'var(--md-on-surface-variant)',
                         }}
                       >
-                        Este canal no soporta respuesta manual desde el dashboard.
+                        {t('dashboard.manual_reply_unsupported')}
                       </div>
                     );
                   }
@@ -835,7 +837,7 @@ function Dashboard() {
                     >
                       {channelLabel && (
                         <p className="text-[12px] mb-2" style={{ color: 'var(--md-on-surface-variant)' }}>
-                          Respondiendo por {channelLabel}
+                          {t('dashboard.replying_by', { channel: channelLabel })}
                         </p>
                       )}
                       <div className="flex gap-2">
@@ -846,7 +848,7 @@ function Dashboard() {
                           onKeyDown={(e) => {
                             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(); }
                           }}
-                          placeholder="Escribe tu respuesta…"
+                          placeholder={t('dashboard.reply_placeholder')}
                           disabled={sendingReply}
                           className="flex-1 px-4 py-2.5 rounded-[8px] border text-sm focus:outline-none"
                           style={{
@@ -860,11 +862,11 @@ function Dashboard() {
                           disabled={sendingReply || !replyMessage.trim()}
                           className="md-btn-filled px-4 py-2.5 text-sm"
                         >
-                          {sendingReply ? '…' : 'Enviar'}
+                          {sendingReply ? '…' : t('dashboard.send')}
                         </button>
                       </div>
                       <p className="text-[11px] mt-2" style={{ color: 'var(--md-on-surface-variant)' }}>
-                        Presiona Enter para enviar. El bot queda pausado en esta conversación.
+                        {t('dashboard.enter_to_send')}
                       </p>
                     </div>
                   );
@@ -880,24 +882,24 @@ function Dashboard() {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-[22px] font-semibold" style={{ color: 'var(--md-on-surface)' }}>
-                  Métricas
+                  {t('dashboard.tabs.metrics')}
                 </h2>
                 <p className="text-sm mt-0.5" style={{ color: 'var(--md-on-surface-variant)' }}>
-                  Últimos 7 días
+                  {t('dashboard.last_7_days')}
                 </p>
               </div>
               <button onClick={fetchMetrics} className="md-btn-tonal px-4 py-2 text-sm">
-                Actualizar
+                {t('dashboard.refresh')}
               </button>
             </div>
 
             {metrics ? (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <MetricCard label="Conversaciones" value={metrics.messages?.conversations || 0} />
-                <MetricCard label="Mensajes recibidos" value={metrics.messages?.inbound || 0} />
-                <MetricCard label="Mensajes enviados" value={metrics.messages?.outbound || 0} />
-                <MetricCard label="Tokens aprox." value={(metrics.approxTokens || 0).toLocaleString()} />
-                <MetricCard label="Leads capturados" value={metrics.leads || 0} />
+                <MetricCard label={t('dashboard.metric_conversations')} value={metrics.messages?.conversations || 0} />
+                <MetricCard label={t('dashboard.metric_inbound')} value={metrics.messages?.inbound || 0} />
+                <MetricCard label={t('dashboard.metric_outbound')} value={metrics.messages?.outbound || 0} />
+                <MetricCard label={t('dashboard.metric_tokens')} value={(metrics.approxTokens || 0).toLocaleString()} />
+                <MetricCard label={t('dashboard.metric_leads')} value={metrics.leads || 0} />
                 {metrics.actions && Object.entries(metrics.actions).map(([type, count]: [string, any]) => (
                   <MetricCard key={type} label={type.replace(/_/g, ' ')} value={count || 0} />
                 ))}
@@ -911,7 +913,7 @@ function Dashboard() {
                   className="inline-block w-8 h-8 rounded-full border-4 border-t-transparent animate-spin mb-3"
                   style={{ borderColor: 'var(--md-outline-variant)', borderTopColor: 'var(--md-primary)' }}
                 />
-                <p style={{ color: 'var(--md-on-surface-variant)' }}>Cargando métricas…</p>
+                <p style={{ color: 'var(--md-on-surface-variant)' }}>{t('dashboard.loading_metrics')}</p>
               </div>
             )}
           </div>
@@ -922,10 +924,10 @@ function Dashboard() {
           <div className="space-y-5 max-w-2xl">
             <div>
               <h2 className="text-[22px] font-semibold" style={{ color: 'var(--md-on-surface)' }}>
-                Configuración
+                {t('dashboard.tabs.settings')}
               </h2>
               <p className="text-sm mt-0.5" style={{ color: 'var(--md-on-surface-variant)' }}>
-                Ajusta la configuración de tu tenant
+                {t('dashboard.settings_subtitle')}
               </p>
             </div>
 
@@ -943,7 +945,7 @@ function Dashboard() {
                 <circle cx="12" cy="8" r=".75" fill="var(--md-primary)"/>
               </svg>
               <p className="text-[13px]">
-                Esta configuración aplica a todos tus canales: widget web, WhatsApp, Facebook e Instagram.
+                {t('dashboard.settings_applies')}
               </p>
             </div>
 
@@ -965,10 +967,10 @@ function Dashboard() {
             >
               <div>
                 <h3 className="text-[17px] font-semibold" style={{ color: 'var(--md-on-surface)' }}>
-                  Contacto y Widget
+                  {t('dashboard.contact_widget')}
                 </h3>
                 <p className="text-[13px] mt-0.5" style={{ color: 'var(--md-on-surface-variant)' }}>
-                  Números de WhatsApp y botones del chat
+                  {t('dashboard.contact_widget_subtitle')}
                 </p>
               </div>
 
@@ -990,7 +992,7 @@ function Dashboard() {
               )}
 
               <div className="md-field">
-                <label>WhatsApp para redirecciones</label>
+                <label>{t('dashboard.whatsapp_redirects')}</label>
                 <input
                   type="text"
                   value={contactForm.whatsapp}
@@ -998,12 +1000,12 @@ function Dashboard() {
                   placeholder="525512345678 (sin + ni espacios)"
                 />
                 <p className="text-[11px] mt-1.5" style={{ color: 'var(--md-on-surface-variant)' }}>
-                  El bot enviará aquí el link «Contactar por WhatsApp» en el widget
+                  {t('dashboard.whatsapp_hint')}
                 </p>
               </div>
 
               <div className="md-field">
-                <label>WhatsApp para notificaciones (Shopify)</label>
+                <label>{t('dashboard.whatsapp_notifications')}</label>
                 <input
                   type="text"
                   value={contactForm.whatsapp_notifications}
@@ -1011,20 +1013,20 @@ function Dashboard() {
                   placeholder="525512345678 (sin + ni espacios)"
                 />
                 <p className="text-[11px] mt-1.5" style={{ color: 'var(--md-on-surface-variant)' }}>
-                  Recibe alertas de nuevas órdenes de Shopify
+                  {t('dashboard.orders_hint')}
                 </p>
               </div>
 
               <div className="md-field">
-                <label>Botones del widget (chips)</label>
+                <label>{t('dashboard.widget_chips')}</label>
                 <input
                   type="text"
                   value={contactForm.widget_chips}
                   onChange={e => setContactForm(p => ({ ...p, widget_chips: e.target.value }))}
-                  placeholder="Ver catálogo, Solicitar cotización, Contactar por WhatsApp"
+                  placeholder={t('dashboard.widget_chips_placeholder')}
                 />
                 <p className="text-[11px] mt-1.5" style={{ color: 'var(--md-on-surface-variant)' }}>
-                  Separados por coma — máx. 4 recomendado
+                  {t('dashboard.widget_chips_hint')}
                 </p>
               </div>
 
@@ -1033,7 +1035,7 @@ function Dashboard() {
                 disabled={savingContact}
                 className="md-btn-filled w-full py-3 text-[15px]"
               >
-                {savingContact ? 'Guardando…' : 'Guardar cambios'}
+                {savingContact ? t('dashboard.saving') : t('dashboard.save_changes')}
               </button>
             </div>
 
@@ -1043,17 +1045,17 @@ function Dashboard() {
               style={{ background: 'var(--md-surface-container)', boxShadow: 'var(--md-elevation-1)' }}
             >
               <h3 className="text-[17px] font-semibold mb-4" style={{ color: 'var(--md-on-surface)' }}>
-                Control del Bot
+                {t('dashboard.bot_control')}
               </h3>
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <p className="font-medium" style={{ color: 'var(--md-on-surface)' }}>
-                    Estado del Bot de IA
+                    {t('dashboard.ai_bot_status')}
                   </p>
                   <p className="text-[13px] mt-0.5" style={{ color: 'var(--md-on-surface-variant)' }}>
                     {botEnabled
-                      ? 'Respondiendo automáticamente a los mensajes'
-                      : 'Pausado — los mensajes no recibirán respuesta automática'}
+                      ? t('dashboard.bot_auto_reply')
+                      : t('dashboard.bot_paused_desc')}
                   </p>
                 </div>
                 <MdSwitch
@@ -1069,7 +1071,7 @@ function Dashboard() {
                   color: 'var(--md-on-surface-variant)',
                 }}
               >
-                Usa el interruptor para pausar el bot cuando quieras responder manualmente a tus clientes.
+                {t('dashboard.bot_control_hint')}
               </div>
             </div>
 
@@ -1079,14 +1081,14 @@ function Dashboard() {
               style={{ background: 'var(--md-surface-container)', boxShadow: 'var(--md-elevation-1)' }}
             >
               <h3 className="text-[17px] font-semibold mb-4" style={{ color: 'var(--md-on-surface)' }}>
-                Información del Tenant
+                {t('dashboard.tenant_info')}
               </h3>
               <dl className="space-y-3">
                 {[
-                  { label: 'Nombre', value: profile.tenant.name },
+                  { label: t('dashboard.name'), value: profile.tenant.name },
                   { label: 'Slug', value: profile.tenant.slug },
                   ...(profile.tenant.whatsapp ? [{ label: 'WhatsApp', value: profile.tenant.whatsapp }] : []),
-                  { label: 'Bot', value: botEnabled ? 'Activo' : 'Pausado', highlight: botEnabled },
+                  { label: t('dashboard.bot'), value: botEnabled ? t('dashboard.active') : t('dashboard.paused'), highlight: botEnabled },
                 ].map(({ label, value, highlight }) => (
                   <div key={label} className="flex items-center justify-between">
                     <dt className="text-[13px]" style={{ color: 'var(--md-on-surface-variant)' }}>
