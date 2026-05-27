@@ -1,7 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import logoMini from "../images/logo_mini.png";
 
 export default function TermsPage() {
+  const { t, i18n } = useTranslation();
+  const en = i18n.language.startsWith("en");
   const [isDark, setIsDark] = useState(() =>
     typeof window !== "undefined"
       ? window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? true
@@ -30,69 +33,105 @@ export default function TermsPage() {
   const bodyTone = isDark ? "text-white/85" : "text-slate-700";
   const listTone = isDark ? "text-white/80" : "text-slate-600";
   const footerTone = isDark ? "text-white/60" : "text-slate-500";
+  const copy = en
+    ? {
+        title: "Terms and Conditions",
+        acceptTitle: "1. Acceptance of Terms",
+        accept: "By accessing and using AcidIA digital services (website, applications, chatbots, and integrated platforms), the user accepts these Terms and Conditions. If they do not agree, they must refrain from using our services.",
+        serviceTitle: "2. Service Description",
+        service: "AcidIA offers a digital assistant and automated solutions to answer questions, show information about products or services, and facilitate communication and e-commerce processes.",
+        allowedTitle: "3. Permitted Use",
+        allowed: "The user agrees to use the services only for lawful purposes and in accordance with these Terms. It is not permitted to:",
+        allowedItems: ["Use the services to send spam, fraudulent messages, or illegal content.", "Attempt to damage, interrupt, or overload the systems that support the service.", "Impersonate another person or entity."],
+        usersTitle: "4. User Information",
+        users: "By interacting with our services, the user accepts that their personal data will be processed according to our",
+        privacy: "Privacy Notice",
+        ipTitle: "5. Intellectual Property",
+        ip: "All content, software, and technology that are part of AcidIA are owned by Luis Uribe / AcidIA and protected by applicable laws. No implied licenses are granted over that content.",
+        liabilityTitle: "6. Liability",
+        liability1: "The services are provided “as is”. AcidIA does not guarantee that they will be error-free or uninterrupted, although we implement reasonable measures to ensure operation.",
+        liability2: "We are not responsible for:",
+        liabilityItems: ["Misuse of the service by users.", "Failures caused by third-party technology providers (Meta, OpenAI, Twilio, Stripe, etc.)."],
+        changesTitle: "7. Changes",
+        changes: "We may modify these Terms at any time. Updates will be published on this page and become effective upon publication.",
+        lawTitle: "8. Governing Law and Jurisdiction",
+        law: "These Terms are governed by the laws of Mexico. Any dispute will be resolved before the competent courts of Quintana Roo, Mexico.",
+        contactTitle: "Contact",
+        contact: "If you have questions about these Terms and Conditions, contact us at:"
+      }
+    : {
+        title: "Términos y condiciones",
+        acceptTitle: "1. Aceptación de los términos",
+        accept: "Al acceder y utilizar los servicios digitales de AcidIA (sitio web, aplicaciones, chatbots y plataformas integradas), el usuario acepta estos Términos y Condiciones. Si no está de acuerdo, debe abstenerse de usar nuestros servicios.",
+        serviceTitle: "2. Descripción del servicio",
+        service: "AcidIA ofrece un asistente digital y soluciones automatizadas para responder consultas, mostrar información sobre productos o servicios y facilitar procesos de comunicación y comercio electrónico.",
+        allowedTitle: "3. Uso permitido",
+        allowed: "El usuario se compromete a utilizar los servicios únicamente con fines lícitos y conforme a estos Términos. No está permitido:",
+        allowedItems: ["Usar los servicios para enviar spam, mensajes fraudulentos o contenido ilegal.", "Intentar dañar, interrumpir o sobrecargar los sistemas que soportan el servicio.", "Suplantar la identidad de otra persona o entidad."],
+        usersTitle: "4. Información de usuarios",
+        users: "Al interactuar con nuestros servicios, el usuario acepta que sus datos personales sean tratados conforme a nuestro",
+        privacy: "Aviso de Privacidad",
+        ipTitle: "5. Propiedad intelectual",
+        ip: "Todo el contenido, software y tecnología que forman parte de AcidIA son propiedad de Luis Uribe / AcidIA y están protegidos por las leyes aplicables. No se otorgan licencias implícitas sobre dicho contenido.",
+        liabilityTitle: "6. Responsabilidad",
+        liability1: "Los servicios se proporcionan “tal cual”. AcidIA no garantiza que sean libres de errores o interrupciones, aunque implementamos medidas razonables para asegurar su funcionamiento.",
+        liability2: "No nos hacemos responsables por:",
+        liabilityItems: ["El uso indebido que los usuarios hagan del servicio.", "Fallas ocasionadas por terceros proveedores de servicios tecnológicos (Meta, OpenAI, Twilio, Stripe, etc.)."],
+        changesTitle: "7. Modificaciones",
+        changes: "Podemos modificar estos Términos en cualquier momento. Las actualizaciones se publicarán en esta misma página y serán efectivas desde su publicación.",
+        lawTitle: "8. Ley aplicable y jurisdicción",
+        law: "Estos Términos se rigen por las leyes de México. Cualquier controversia se resolverá ante los tribunales competentes de Quintana Roo, México.",
+        contactTitle: "Contacto",
+        contact: "Si tienes dudas sobre estos Términos y Condiciones, contáctanos en:"
+      };
 
   return (
     <div className={`min-h-screen px-6 py-16 ${pageTone}`}>
       <div className="mx-auto w-full max-w-4xl" style={shellStyle}>
         <div className={`relative overflow-hidden rounded-[2.5rem] border p-8 md:p-12 ${cardTone}`}>
           <div className="mb-8 flex items-center justify-between gap-6">
-            <img src={logoMini} alt="Acid IA" className="h-16 w-auto" />
+            <img src={logoMini} alt="AcidIA" className="h-16 w-auto" />
             <a href="/" className={`text-sm font-medium uppercase tracking-[0.4em] ${linkTone}`}>
-              ← Volver al inicio
+              ← {t("legal.back_home")}
             </a>
           </div>
-          <h1 className="text-3xl md:text-4xl font-bold text-[#ff8a00]">Términos y condiciones</h1>
+          <h1 className="text-3xl md:text-4xl font-bold text-[#ff8a00]">{copy.title}</h1>
 
-          <Section title="1. Aceptación de los términos" textClass={bodyTone}>
-            Al acceder y utilizar los servicios digitales de AcidIA (sitio web, aplicaciones, chatbots y plataformas integradas), el usuario acepta estos Términos y Condiciones. Si no está de acuerdo, debe abstenerse de usar nuestros servicios.
-          </Section>
+          <Section title={copy.acceptTitle} textClass={bodyTone}>{copy.accept}</Section>
 
-          <Section title="2. Descripción del servicio" textClass={bodyTone}>
-            AcidIA ofrece un asistente digital y soluciones automatizadas para responder consultas, mostrar información sobre productos o servicios y facilitar procesos de comunicación y comercio electrónico.
-          </Section>
+          <Section title={copy.serviceTitle} textClass={bodyTone}>{copy.service}</Section>
 
-          <Section title="3. Uso permitido" textClass={bodyTone}>
-            <p>El usuario se compromete a utilizar los servicios únicamente con fines lícitos y conforme a estos Términos. No está permitido:</p>
+          <Section title={copy.allowedTitle} textClass={bodyTone}>
+            <p>{copy.allowed}</p>
             <List className={listTone}>
-              <li>Usar los servicios para enviar spam, mensajes fraudulentos o contenido ilegal.</li>
-              <li>Intentar dañar, interrumpir o sobrecargar los sistemas que soportan el servicio.</li>
-              <li>Suplantar la identidad de otra persona o entidad.</li>
+              {copy.allowedItems.map((item) => <li key={item}>{item}</li>)}
             </List>
           </Section>
 
-          <Section title="4. Información de usuarios" textClass={bodyTone}>
-            Al interactuar con nuestros servicios, el usuario acepta que sus datos personales sean tratados conforme a nuestro{' '}
+          <Section title={copy.usersTitle} textClass={bodyTone}>
+            {copy.users}{' '}
             <a className="text-[#04d9b5]" href="https://acidia.app/privacy" target="_blank" rel="noreferrer">
-              Aviso de Privacidad
+              {copy.privacy}
             </a>
             .
           </Section>
 
-          <Section title="5. Propiedad intelectual" textClass={bodyTone}>
-            Todo el contenido, software y tecnología que forman parte de AcidIA son propiedad de Luis Uribe / AcidIA y están protegidos por las leyes aplicables. No se otorgan licencias implícitas sobre dicho contenido.
-          </Section>
+          <Section title={copy.ipTitle} textClass={bodyTone}>{copy.ip}</Section>
 
-          <Section title="6. Responsabilidad" textClass={bodyTone}>
-            <p>
-              Los servicios se proporcionan “tal cual”. AcidIA no garantiza que sean libres de errores o interrupciones, aunque implementamos medidas razonables para asegurar su funcionamiento.
-            </p>
-            <p>No nos hacemos responsables por:</p>
+          <Section title={copy.liabilityTitle} textClass={bodyTone}>
+            <p>{copy.liability1}</p>
+            <p>{copy.liability2}</p>
             <List className={listTone}>
-              <li>El uso indebido que los usuarios hagan del servicio.</li>
-              <li>Fallas ocasionadas por terceros proveedores de servicios tecnológicos (Meta, OpenAI, Twilio, Stripe, etc.).</li>
+              {copy.liabilityItems.map((item) => <li key={item}>{item}</li>)}
             </List>
           </Section>
 
-          <Section title="7. Modificaciones" textClass={bodyTone}>
-            Podemos modificar estos Términos en cualquier momento. Las actualizaciones se publicarán en esta misma página y serán efectivas desde su publicación.
-          </Section>
+          <Section title={copy.changesTitle} textClass={bodyTone}>{copy.changes}</Section>
 
-          <Section title="8. Ley aplicable y jurisdicción" textClass={bodyTone}>
-            Estos Términos se rigen por las leyes de México. Cualquier controversia se resolverá ante los tribunales competentes de Quintana Roo, México.
-          </Section>
+          <Section title={copy.lawTitle} textClass={bodyTone}>{copy.law}</Section>
 
-          <Section title="Contacto" textClass={bodyTone}>
-            <p>Si tienes dudas sobre estos Términos y Condiciones, contáctanos en:</p>
+          <Section title={copy.contactTitle} textClass={bodyTone}>
+            <p>{copy.contact}</p>
             <p>
               <a className="text-[#04d9b5]" href="mailto:info@acidia.app">
                 info@acidia.app
@@ -105,7 +144,7 @@ export default function TermsPage() {
             </p>
           </Section>
 
-          <p className={`mt-12 text-xs ${footerTone}`}>&copy; {new Date().getFullYear()} AcidIA. Todos los derechos reservados.</p>
+          <p className={`mt-12 text-xs ${footerTone}`}>&copy; {new Date().getFullYear()} AcidIA. {t("legal.rights")}</p>
         </div>
       </div>
     </div>

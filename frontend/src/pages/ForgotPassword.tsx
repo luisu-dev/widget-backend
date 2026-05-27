@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { API_BASE } from '../config'
 
 export default function ForgotPassword() {
+  const { t } = useTranslation()
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -20,11 +22,11 @@ export default function ForgotPassword() {
         body: JSON.stringify({ email })
       })
       if (!res.ok) {
-        throw new Error('No se pudo procesar la solicitud')
+        throw new Error(t('errors.request_failed'))
       }
       setSent(true)
     } catch (err: any) {
-      setError(err.message || 'Error enviando correo de recuperación')
+      setError(err.message || t('errors.recovery_email_error'))
     } finally {
       setLoading(false)
     }
@@ -53,10 +55,10 @@ export default function ForgotPassword() {
             className="text-[28px] font-bold tracking-tight mb-1"
             style={{ color: 'var(--md-on-surface)' }}
           >
-            Recuperar contraseña
+            {t('auth.forgot_title')}
           </h1>
           <p className="text-sm" style={{ color: 'var(--md-on-surface-variant)' }}>
-            Te enviaremos un enlace si tu correo existe
+            {t('auth.forgot_subtitle')}
           </p>
         </div>
 
@@ -83,7 +85,7 @@ export default function ForgotPassword() {
                   <path d="M8 12l3 3 5-5" stroke="var(--md-primary)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
                 <p className="text-sm" style={{ color: 'var(--md-on-primary-container)' }}>
-                  Si el correo existe en nuestra plataforma, recibirás un enlace de recuperación.
+                  {t('auth.forgot_success')}
                 </p>
               </div>
 
@@ -91,13 +93,13 @@ export default function ForgotPassword() {
                 to="/login"
                 className="md-btn-filled w-full py-3 text-[15px] flex items-center justify-center"
               >
-                Volver a iniciar sesión
+                {t('auth.back_to_login')}
               </Link>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-5">
               <div className="md-field">
-                <label htmlFor="email">Correo electrónico</label>
+                <label htmlFor="email">{t('auth.email')}</label>
                 <input
                   id="email"
                   type="email"
@@ -130,7 +132,7 @@ export default function ForgotPassword() {
                 disabled={loading}
                 className="md-btn-filled w-full py-3 text-[15px]"
               >
-                {loading ? 'Enviando…' : 'Enviar enlace'}
+                {loading ? t('auth.forgot_sending') : t('auth.forgot_send')}
               </button>
             </form>
           )}
@@ -143,7 +145,7 @@ export default function ForgotPassword() {
             className="text-sm transition-opacity hover:opacity-70"
             style={{ color: 'var(--md-on-surface-variant)' }}
           >
-            ← Volver a iniciar sesión
+            ← {t('auth.back_to_login')}
           </Link>
         </div>
       </div>

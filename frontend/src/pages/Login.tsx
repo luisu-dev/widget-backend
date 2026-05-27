@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { useNavigate, useLocation, Link } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { API_BASE } from '../config'
 
 export default function Login() {
+  const { t } = useTranslation()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -23,7 +25,7 @@ export default function Login() {
       })
 
       if (!res.ok) {
-        throw new Error('Usuario o contraseña incorrectos')
+        throw new Error(t('errors.login_failed'))
       }
 
       const data = await res.json()
@@ -33,7 +35,7 @@ export default function Login() {
       const from = (location.state as any)?.from?.pathname || '/dashboard'
       navigate(from, { replace: true })
     } catch (err: any) {
-      setError(err.message || 'Error al iniciar sesión')
+      setError(err.message || t('errors.login_error'))
     } finally {
       setLoading(false)
     }
@@ -71,10 +73,10 @@ export default function Login() {
             className="text-[28px] font-bold tracking-tight mb-1"
             style={{ color: 'var(--md-on-surface)' }}
           >
-            Acid IA
+            AcidIA
           </h1>
           <p className="text-sm" style={{ color: 'var(--md-on-surface-variant)' }}>
-            Inicia sesión para continuar
+            {t('auth.login_title')}
           </p>
         </div>
 
@@ -89,7 +91,7 @@ export default function Login() {
           <form onSubmit={handleSubmit} className="space-y-5">
             {/* Email */}
             <div className="md-field">
-              <label htmlFor="email">Correo electrónico</label>
+              <label htmlFor="email">{t('auth.email')}</label>
               <input
                 id="email"
                 type="email"
@@ -102,7 +104,7 @@ export default function Login() {
 
             {/* Password */}
             <div className="md-field">
-              <label htmlFor="password">Contraseña</label>
+              <label htmlFor="password">{t('auth.password')}</label>
               <input
                 id="password"
                 type="password"
@@ -117,7 +119,7 @@ export default function Login() {
                   className="text-[13px] font-medium transition-opacity hover:opacity-70"
                   style={{ color: 'var(--md-primary)' }}
                 >
-                  ¿Olvidaste tu contraseña?
+                  {t('auth.forgot_password')}
                 </Link>
               </div>
             </div>
@@ -146,7 +148,7 @@ export default function Login() {
               disabled={loading}
               className="md-btn-filled w-full py-3 text-[15px] mt-2"
             >
-              {loading ? 'Iniciando sesión…' : 'Iniciar sesión'}
+              {loading ? `${t('auth.login_button')}…` : t('auth.login_button')}
             </button>
           </form>
         </div>
@@ -158,7 +160,7 @@ export default function Login() {
             className="text-sm transition-opacity hover:opacity-70"
             style={{ color: 'var(--md-on-surface-variant)' }}
           >
-            ← Volver al inicio
+            ← {t('nav.inicio')}
           </a>
         </div>
       </div>

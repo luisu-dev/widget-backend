@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 
 export default function Welcome() {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const sessionId = searchParams.get('session_id')
@@ -27,13 +29,8 @@ export default function Welcome() {
     return () => clearInterval(timer)
   }, [sessionId, navigate])
 
-  const steps = [
-    'Inicia sesión con las credenciales de tu email',
-    'Conecta tu página de Facebook / Instagram',
-    'Configura tu número de WhatsApp (si aplica)',
-    'Personaliza el comportamiento de tu asistente IA',
-    '¡Comienza a automatizar tus conversaciones!',
-  ]
+  const steps = t('welcome.steps', { returnObjects: true }) as string[]
+  const emailItems = t('welcome.email_items', { returnObjects: true }) as string[]
 
   return (
     <div
@@ -62,10 +59,10 @@ export default function Welcome() {
             className="text-[32px] font-bold tracking-tight mb-2"
             style={{ color: 'var(--md-on-surface)' }}
           >
-            ¡Bienvenido a Acid IA!
+            {t('welcome.title')}
           </h1>
           <p style={{ color: 'var(--md-on-surface-variant)' }}>
-            Tu pago se procesó exitosamente y tu cuenta fue creada.
+            {t('welcome.subtitle')}
           </p>
         </div>
 
@@ -91,13 +88,13 @@ export default function Welcome() {
               className="font-semibold mb-1"
               style={{ color: 'var(--md-on-primary-container)' }}
             >
-              Revisa tu correo electrónico
+              {t('welcome.email_title')}
             </p>
             <p className="text-sm mb-3" style={{ color: 'var(--md-on-primary-container)' }}>
-              Te hemos enviado un email con:
+              {t('welcome.email_intro')}
             </p>
             <ul className="space-y-1">
-              {['Tus credenciales de acceso', 'URL de inicio de sesión', 'Instrucciones de configuración'].map((item) => (
+              {emailItems.map((item) => (
                 <li key={item} className="flex items-center gap-2 text-sm" style={{ color: 'var(--md-on-primary-container)' }}>
                   <span
                     className="h-1.5 w-1.5 rounded-full shrink-0"
@@ -122,7 +119,7 @@ export default function Welcome() {
             className="font-semibold mb-3"
             style={{ color: 'var(--md-on-surface)' }}
           >
-            Próximos pasos
+            {t('welcome.next_steps')}
           </p>
           <ol className="space-y-2.5">
             {steps.map((step, i) => (
@@ -149,26 +146,26 @@ export default function Welcome() {
           onClick={() => navigate('/login')}
           className="md-btn-filled w-full py-3.5 text-[15px] mb-4"
         >
-          Iniciar sesión ahora
+          {t('welcome.login_now')}
         </button>
 
         <p className="text-sm text-center" style={{ color: 'var(--md-on-surface-variant)' }}>
-          Redirección automática en{' '}
+          {t('welcome.redirect_prefix')}{' '}
           <span className="font-semibold" style={{ color: 'var(--md-primary)' }}>
             {countdown}
           </span>{' '}
-          segundos
+          {t('welcome.redirect_suffix')}
         </p>
 
         {/* Support */}
         <p className="text-[12px] text-center mt-6" style={{ color: 'var(--md-on-surface-variant)' }}>
-          ¿Necesitas ayuda?{' '}
+          {t('welcome.need_help')}{' '}
           <a
             href="mailto:info@acidia.app"
             className="underline font-medium"
             style={{ color: 'var(--md-primary)' }}
           >
-            Contáctanos
+            {t('welcome.contact_us')}
           </a>
         </p>
       </div>

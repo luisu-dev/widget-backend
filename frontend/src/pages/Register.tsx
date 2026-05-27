@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -13,34 +14,8 @@ interface RegisterForm {
   plan: 'starter' | 'addon-whatsapp' | 'addon-ecommerce' | 'web-basic' | 'web-premium' | 'web-ecommerce'
 }
 
-const PLANS = [
-  {
-    id: 'starter',
-    name: 'Plan Starter',
-    subtitle: 'Chat Web',
-    price: '$500 MXN/mes',
-    features: [
-      'Widget de chat web embebible',
-      'FAQs con tono de marca',
-      'Calificación de leads (nombre, contacto, presupuesto)',
-      'Redirecciones a WhatsApp o URLs',
-    ],
-  },
-  {
-    id: 'addon-whatsapp',
-    name: 'Add-on WhatsApp',
-    subtitle: '100 mensajes/mes incluidos',
-    price: '$500 MXN/mes · +$6.25 USD renta núm.',
-    features: [
-      '100 mensajes salientes incluidos/mes',
-      'Leads calificados y links de pago por WhatsApp',
-      'Detección de intención de compra',
-      'Renta de número: $6.25 USD/mes a cargo del cliente',
-    ],
-  },
-] as const
-
 export default function Register() {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [loading, setLoading] = useState(false)
@@ -85,7 +60,7 @@ export default function Register() {
 
       if (!response.ok) {
         const data = await response.json()
-        throw new Error(data.detail || 'Error al crear el registro')
+        throw new Error(data.detail || t('register.create_error'))
       }
 
       const data = await response.json()
@@ -100,6 +75,14 @@ export default function Register() {
     setForm(prev => ({ ...prev, [e.target.name]: e.target.value }))
   }
 
+  const plans = t('register.plans', { returnObjects: true }) as Array<{
+    id: RegisterForm['plan']
+    name: string
+    subtitle: string
+    price: string
+    features: string[]
+  }>
+
   return (
     <div
       className="min-h-screen py-12 px-4"
@@ -113,16 +96,16 @@ export default function Register() {
             className="text-[32px] font-bold tracking-tight mb-2"
             style={{ color: 'var(--md-on-surface)' }}
           >
-            Acid IA
+            AcidIA
           </h1>
           <p className="text-base" style={{ color: 'var(--md-on-surface-variant)' }}>
-            Registra tu negocio y automatiza tus conversaciones
+            {t('register.subtitle')}
           </p>
           <button
             onClick={() => navigate('/login')}
             className="md-btn-text mt-3 text-sm"
           >
-            ¿Ya tienes cuenta? Inicia sesión
+            {t('auth.login_link')}
           </button>
         </div>
 
@@ -143,25 +126,25 @@ export default function Register() {
                   className="text-[18px] font-semibold mb-0.5"
                   style={{ color: 'var(--md-on-surface)' }}
                 >
-                  Datos de contacto
+                  {t('register.contact_section')}
                 </h2>
                 <hr style={{ borderColor: 'var(--md-outline-variant)', marginTop: '12px' }} />
               </div>
 
               <div className="md-field">
-                <label>Nombre completo *</label>
+                <label>{t('register.full_name')}</label>
                 <input
                   type="text"
                   name="fullName"
                   required
                   value={form.fullName}
                   onChange={handleChange}
-                  placeholder="Juan Pérez"
+                  placeholder={t('register.full_name_placeholder')}
                 />
               </div>
 
               <div className="md-field">
-                <label>Teléfono *</label>
+                <label>{t('register.phone')}</label>
                 <input
                   type="tel"
                   name="phone"
@@ -173,7 +156,7 @@ export default function Register() {
               </div>
 
               <div className="md-field">
-                <label>Correo electrónico *</label>
+                <label>{t('auth.email')} *</label>
                 <input
                   type="email"
                   name="email"
@@ -192,28 +175,28 @@ export default function Register() {
                   className="text-[18px] font-semibold mb-0.5"
                   style={{ color: 'var(--md-on-surface)' }}
                 >
-                  Datos del negocio
+                  {t('register.business_section')}
                 </h2>
                 <hr style={{ borderColor: 'var(--md-outline-variant)', marginTop: '12px' }} />
               </div>
 
               <div className="md-field">
-                <label>Nombre del negocio *</label>
+                <label>{t('register.business_name')}</label>
                 <input
                   type="text"
                   name="businessName"
                   required
                   value={form.businessName}
                   onChange={handleChange}
-                  placeholder="Mi Tienda"
+                  placeholder={t('register.business_name_placeholder')}
                 />
                 <p className="text-[12px] mt-1.5" style={{ color: 'var(--md-on-surface-variant)' }}>
-                  Se generará un identificador único basado en este nombre
+                  {t('register.business_hint')}
                 </p>
               </div>
 
               <div className="md-field">
-                <label>Número de WhatsApp</label>
+                <label>{t('register.whatsapp_number')}</label>
                 <input
                   type="tel"
                   name="whatsappNumber"
@@ -224,7 +207,7 @@ export default function Register() {
               </div>
 
               <div className="md-field">
-                <label>Página web</label>
+                <label>{t('register.website')}</label>
                 <input
                   type="url"
                   name="website"
@@ -242,13 +225,13 @@ export default function Register() {
                   className="text-[18px] font-semibold mb-0.5"
                   style={{ color: 'var(--md-on-surface)' }}
                 >
-                  Selecciona tu plan
+                  {t('register.plan_section')}
                 </h2>
                 <hr style={{ borderColor: 'var(--md-outline-variant)', marginTop: '12px' }} />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {PLANS.map((plan) => {
+                {plans.map((plan) => {
                   const selected = form.plan === plan.id
                   return (
                     <label
@@ -305,7 +288,7 @@ export default function Register() {
                         className="text-[11px] mb-3"
                         style={{ color: selected ? 'var(--md-on-primary-container)' : 'var(--md-on-surface-variant)' }}
                       >
-                        +IVA
+                        {t('register.tax')}
                       </p>
                       <ul className="space-y-1.5">
                         {plan.features.map((f) => (
@@ -353,17 +336,17 @@ export default function Register() {
               disabled={loading}
               className="md-btn-filled w-full py-3.5 text-[15px]"
             >
-              {loading ? 'Procesando…' : 'Continuar al pago'}
+              {loading ? t('register.processing') : t('register.continue_payment')}
             </button>
 
             <p className="text-[12px] text-center" style={{ color: 'var(--md-on-surface-variant)' }}>
-              Al continuar, aceptas nuestros{' '}
+              {t('register.terms_prefix')}{' '}
               <a href="/terms" className="underline" style={{ color: 'var(--md-primary)' }}>
-                Términos y Condiciones
+                {t('register.terms')}
               </a>{' '}
-              y{' '}
+              {t('register.and')}{' '}
               <a href="/privacy" className="underline" style={{ color: 'var(--md-primary)' }}>
-                Política de Privacidad
+                {t('register.privacy')}
               </a>
             </p>
           </form>

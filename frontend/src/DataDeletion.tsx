@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import logoMini from "../images/logo_mini.png";
 
 export default function DataDeletionPage() {
+  const { t } = useTranslation();
   const [isDark, setIsDark] = useState(() =>
     typeof window !== "undefined"
       ? window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? true
@@ -34,27 +36,25 @@ export default function DataDeletionPage() {
       <div className="mx-auto w-full max-w-4xl" style={shellStyle}>
         <div className={`relative overflow-hidden rounded-[2.5rem] border p-8 md:p-12 ${cardTone}`}>
           <div className="mb-8 flex items-center justify-between gap-6">
-            <img src={logoMini} alt="Acid IA" className="h-16 w-auto" />
+            <img src={logoMini} alt="AcidIA" className="h-16 w-auto" />
             <a href="/" className={`text-sm font-medium uppercase tracking-[0.4em] ${linkTone}`}>
-              ← Volver al inicio
+              ← {t("legal.back_home")}
             </a>
           </div>
-          <h1 className="text-3xl md:text-4xl font-bold text-[#ff8a00]">Eliminación de datos</h1>
+          <h1 className="text-3xl md:text-4xl font-bold text-[#ff8a00]">{t("legal.data_deletion_title")}</h1>
 
           <div className={`mt-10 space-y-6 leading-relaxed ${textTone}`}>
-            <p>En AcidIA respetamos el derecho de los usuarios a eliminar sus datos personales en cualquier momento.</p>
+            <p>{t("legal.data_deletion_p1")}</p>
             <p>
-              Si deseas solicitar la eliminación de tu información de nuestros sistemas, por favor envía un correo a{' '}
+              {t("legal.data_deletion_p2a")}{' '}
               <a className="text-[#04d9b5]" href="mailto:arco@acidia.app">
                 arco@acidia.app
               </a>{' '}
-              con el asunto “Eliminación de Datos” y los detalles de tu cuenta o interacción.
+              {t("legal.data_deletion_p2b")}
             </p>
+            <p>{t("legal.data_deletion_p3")}</p>
             <p>
-              Procesaremos tu solicitud en un plazo máximo de 30 días hábiles y confirmaremos por correo electrónico cuando se haya completado.
-            </p>
-            <p>
-              Contacto:<br />
+              {t("legal.contact")}:<br />
               📧{' '}
               <a className="text-[#04d9b5]" href="mailto:info@acidia.app">
                 info@acidia.app

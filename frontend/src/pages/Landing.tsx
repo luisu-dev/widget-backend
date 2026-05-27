@@ -2,6 +2,7 @@ import { useRef, useState, useEffect, useMemo } from "react";
 import type { ReactNode, MouseEvent } from "react";
 import { motion, useScroll, useTransform, useSpring, useMotionValue } from "framer-motion";
 import type { MotionValue } from "framer-motion";
+import { useTranslation } from "react-i18next";
 
 import logoMini from "../../images/logo_mini.png";
 import faviconUrl from "../../images/favicon.ico";
@@ -14,11 +15,13 @@ const lowPower =
 
 /* ========= NAV ========= */
 function Nav({ active, visible, isDark, cart, onOpenCart }: { active: string; visible: boolean; isDark: boolean; cart: string[]; onOpenCart: () => void }) {
+  const { t } = useTranslation();
+  
   const items = [
-    { id: "inicio", label: "Inicio" },
-    { id: "quienes-somos", label: "Quiénes somos" },
-    { id: "planes", label: "Planes" },
-    { id: "contacto", label: "Contacto" },
+    { id: "inicio", label: t("nav.inicio") },
+    { id: "quienes-somos", label: t("nav.quienes_somos") },
+    { id: "planes", label: t("nav.planes") },
+    { id: "contacto", label: t("nav.contacto") },
   ];
 
   // Verificar si hay token de sesión
@@ -40,9 +43,9 @@ function Nav({ active, visible, isDark, cart, onOpenCart }: { active: string; vi
       style={{ scrollbarWidth: "none" as any }}
     >
       <div className="flex items-center gap-4">
-        <a href="#inicio" className="flex items-center rounded-xl px-2 py-1" aria-label="Ir al inicio">
-          <img src={logoMini} alt="Acid IA" className="h-10 w-auto" />
-          <span className="sr-only">Acid IA</span>
+        <a href="#inicio" className="flex items-center rounded-xl px-2 py-1" aria-label={t("landing.home_aria")}>
+          <img src={logoMini} alt="AcidIA" className="h-10 w-auto" />
+          <span className="sr-only">AcidIA</span>
         </a>
         <ul className="flex items-center gap-2">
         {items.map(({ id, label }) => {
@@ -70,14 +73,14 @@ function Nav({ active, visible, isDark, cart, onOpenCart }: { active: string; vi
             onClick={onOpenCart}
             className="ml-4 rounded-xl bg-[#04d9b5] px-4 py-2 text-sm font-medium text-black transition hover:brightness-110 hidden md:block"
           >
-            🛒 Carrito ({cart.length})
+            🛒 {t("nav.carrito")} ({cart.length})
           </button>
         )}
         <a
           href={isLoggedIn ? "/dashboard" : "/login"}
           className="ml-2 rounded-xl bg-gradient-to-r from-[#04d9b5] to-cyan-400 px-4 py-2 text-sm font-medium text-black transition hover:brightness-110 whitespace-nowrap"
         >
-          {isLoggedIn ? "Dashboard" : "Login"}
+          {isLoggedIn ? t("nav.dashboard") : t("nav.login")}
         </a>
       </div>
     </motion.nav>
@@ -86,6 +89,8 @@ function Nav({ active, visible, isDark, cart, onOpenCart }: { active: string; vi
 
 /* ========= FAB CARRITO MÓVIL ========= */
 function CartFab({ cart, onClick, visible, isDark }: { cart: string[]; onClick: () => void; visible: boolean; isDark: boolean }) {
+  const { t } = useTranslation();
+  
   if (cart.length === 0) return null;
 
   return (
@@ -165,32 +170,14 @@ type PlanCardData = {
 };
 
 
-const CLIENT_REQUIREMENTS = [
-  "Starter: sitio web donde insertar el widget y FAQs base",
-  "WhatsApp: cuenta WhatsApp Business API aprobada y proveedor (Meta Cloud API o Twilio) a cargo del cliente",
-  "E-commerce (add-on): cuenta Stripe activa y catalog_url/IDs de producto o precio",
-  "Paquetes web: contenidos, branding y estructura deseada; para e-commerce, catálogo e integración preferida",
-  "Stripe solo se configura cuando se contrata el add-on de e-commerce",
-  "Founders Plan: a partir del segundo módulo o paquete en el mismo tenant, 50% de descuento (excepto add-on WhatsApp salvo promos vigentes)",
-];
-
-const GENERAL_CONDITIONS = [
-  "Uso incluido por mes: 1M tokens de entrada + 1M tokens de salida por tenant; excedentes se cobran con bolsas adicionales",
-  "Modelos incluidos: familia GPT-4o mini; modelos premium o contextos ampliados se cotizan aparte",
-  "Pagos externos: comisiones de Stripe y proveedores de WhatsApp (Meta/Twilio/BSP) a cargo del cliente",
-  "Trabajamos exclusivamente con Twilio o Meta Cloud API para WhatsApp, según disponibilidad por país",
-  "Plazo anual (12 meses) con renovación automática; cancelación con 30 días de anticipación",
-  "SLA: soporte en horario hábil, incidencias críticas con máximo esfuerzo; cambios mayores se cotizan",
-  "Actualizaciones continuas del widget, parches de seguridad y compatibilidad con nuevos releases",
-  "Cada cliente es responsable de políticas, textos legales y uso legítimo de sus datos",
-];
-
 function PlanCard({ plan, isDark, onShowDetails, onAddToCart }: {
   plan: PlanCardData;
   isDark: boolean;
   onShowDetails: (plan: PlanCardData) => void;
   onAddToCart: (priceId: string) => void;
 }) {
+  const { t } = useTranslation();
+
   return (
     <div
       className={`relative flex flex-col rounded-3xl border p-6 transition ${
@@ -223,7 +210,7 @@ function PlanCard({ plan, isDark, onShowDetails, onAddToCart }: {
           className="rounded-xl border border-[#04d9b5] px-4 py-2 text-sm font-medium text-[#04d9b5] transition hover:bg-[#04d9b5]/10"
           type="button"
         >
-          Detalles
+          {t("landing.details")}
         </button>
         {plan.priceId && (
           <button
@@ -231,14 +218,14 @@ function PlanCard({ plan, isDark, onShowDetails, onAddToCart }: {
             className="rounded-xl bg-[#04d9b5]/10 px-4 py-2 text-sm font-medium text-[#04d9b5] transition hover:bg-[#04d9b5]/20"
             type="button"
           >
-            Agregar al carrito
+            {t("landing.add_to_cart")}
           </button>
         )}
         <a
           href={`/registro?plan=${plan.key}`}
           className="rounded-xl bg-[#04d9b5] px-4 py-2 text-sm font-medium text-black transition hover:brightness-110 inline-block text-center"
         >
-          Contratar
+          {t("landing.hire")}
         </a>
       </div>
     </div>
@@ -305,6 +292,7 @@ function PlanCarousel({
 
 /* ========= APP (oscuro) ========= */
 export default function App() {
+  const { t, i18n } = useTranslation();
   const ref = useRef<HTMLDivElement>(null);
   const heroRef = useRef<HTMLElement | null>(null);
 
@@ -315,7 +303,8 @@ export default function App() {
 
   // Cargar catálogo desde URL
   useEffect(() => {
-    const catalogUrl = import.meta.env.VITE_CATALOG_URL || "https://acidia.app/catalog.json";
+    const catalogFile = i18n.language.startsWith("en") ? "catalog.en.json" : "catalog.json";
+    const catalogUrl = import.meta.env.VITE_CATALOG_URL || `/${catalogFile}`;
 
     fetch(catalogUrl)
       .then(res => {
@@ -331,7 +320,7 @@ export default function App() {
         setCatalogError(err.message);
         setCatalogLoading(false);
       });
-  }, []);
+  }, [i18n.language]);
 
   // Scroll driver (global) — ya no usado directamente
   // Eliminado para evitar warning TS6133 (noUnusedLocals)
@@ -364,7 +353,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    document.title = "Acid IA";
+    document.title = "AcidIA";
     const ensureFavicon = () => {
       const selector = "link[rel='icon']";
       let link = document.querySelector<HTMLLinkElement>(selector);
@@ -405,7 +394,7 @@ export default function App() {
   const addToCart = (priceId: string) => {
     if (!priceId) return;
     setCart((prevCart) => [...prevCart, priceId]);
-    alert("Plan agregado al carrito!");
+    alert(t("landing.cart_added"));
   };
 
   const removeFromCart = (index: number) => {
@@ -451,18 +440,18 @@ export default function App() {
       if (!contentType || !contentType.includes('application/json')) {
         const text = await response.text();
         console.error('❌ Respuesta no es JSON:', text.substring(0, 200));
-        throw new Error('El servidor no respondió correctamente. Verifica la configuración del endpoint.');
+        throw new Error(t("landing.checkout_bad_response"));
       }
 
       const data = await response.json();
       console.log('📦 Response data:', data);
 
       if (!response.ok) {
-        throw new Error(data.error || 'Error al crear sesión de pago');
+        throw new Error(data.error || t("landing.checkout_create_error"));
       }
 
       if (!data.url) {
-        throw new Error('No se recibió URL de checkout');
+        throw new Error(t("landing.checkout_missing_url"));
       }
 
       console.log('✅ Redirigiendo a:', data.url);
@@ -470,7 +459,7 @@ export default function App() {
       setShowCart(false);
     } catch (error: any) {
       console.error('❌ Error en checkout:', error);
-      alert(`Error al procesar el pago: ${error.message}\n\nRevisa la consola para más detalles.`);
+      alert(t("landing.checkout_alert", { error: error.message }));
     }
   };
 
@@ -712,7 +701,7 @@ export default function App() {
                 className={`shrink-0 rounded-full border w-8 h-8 flex items-center justify-center text-lg leading-none mt-0.5 ${
                   isDark ? "border-white/20 text-white/70 hover:text-white" : "border-black/10 text-black/60 hover:text-black"
                 }`}
-                aria-label="Cerrar"
+                aria-label={t("landing.close")}
                 type="button"
               >
                 ×
@@ -733,7 +722,6 @@ export default function App() {
               {/* Secciones de detalle */}
               <div className="space-y-5">
                 {activePlan.sections
-                  .filter((section) => section.title !== "Características destacadas")
                   .map((section) => (
                     <div key={`${activePlan.key}-${section.title}`}>
                       <h5 className="text-xs font-semibold uppercase tracking-[0.3em] text-[#04d9b5]">
@@ -764,7 +752,7 @@ export default function App() {
                   href={`/registro?plan=${activePlan.key}`}
                   className="rounded-xl bg-[#04d9b5] px-4 py-2 text-sm font-semibold text-black transition hover:brightness-110 inline-block text-center"
                 >
-                  Contratar
+                  {t("landing.hire")}
                 </a>
                 {activePlan.priceId && (
                   <button
@@ -772,7 +760,7 @@ export default function App() {
                     className="rounded-xl border border-[#04d9b5] px-4 py-2 text-sm font-medium text-[#04d9b5] transition hover:bg-[#04d9b5]/10"
                     type="button"
                   >
-                    Agregar al carrito
+                    {t("landing.add_to_cart")}
                   </button>
                 )}
                 {activePlan.key !== "starter" && (
@@ -781,7 +769,7 @@ export default function App() {
                     className="rounded-xl bg-[#04d9b5]/10 px-4 py-2 text-sm font-medium text-[#04d9b5] transition hover:bg-[#04d9b5]/20"
                     type="button"
                   >
-                    Probar
+                    {t("landing.try")}
                   </button>
                 )}
               </div>
@@ -812,14 +800,14 @@ export default function App() {
           >
             <div className="flex items-center justify-between mb-4">
               <h4 id="cart-modal-title" className="text-2xl font-semibold">
-                🛒 Carrito ({cart.length})
+                🛒 {t("landing.cart_title")} ({cart.length})
               </h4>
               <button
                 onClick={() => setShowCart(false)}
                 className={`rounded-full border w-8 h-8 flex items-center justify-center text-lg leading-none ${
                   isDark ? "border-white/20 text-white/70 hover:text-white" : "border-black/10 text-black/60 hover:text-black"
                 }`}
-                aria-label="Cerrar"
+                aria-label={t("landing.close")}
                 type="button"
               >
                 ×
@@ -827,7 +815,7 @@ export default function App() {
             </div>
             {cart.length === 0 ? (
               <p className={`mt-4 text-sm ${isDark ? "text-white/70" : "text-black/70"}`}>
-                El carrito está vacío
+                {t("landing.cart_empty")}
               </p>
             ) : (
               <>
@@ -854,14 +842,14 @@ export default function App() {
                     className="flex-1 rounded-xl bg-[#04d9b5] px-4 py-2 text-sm font-semibold text-black transition hover:brightness-110"
                     type="button"
                   >
-                    Ir a Pagar
+                    {t("landing.checkout")}
                   </button>
                   <button
                     onClick={clearCart}
                     className={`rounded-xl border px-4 py-2 text-sm ${isDark ? "border-white/20 text-white/70 hover:bg-white/10" : "border-black/20 text-black/70 hover:bg-black/10"}`}
                     type="button"
                   >
-                    Vaciar
+                    {t("landing.clear_cart")}
                   </button>
                 </div>
               </>
@@ -937,28 +925,28 @@ export default function App() {
             style={{ opacity: useTransform(heroSmooth, [0, 0.3, 0.5], [1, 0.6, 0]) }}
           >
             <span className={`inline-block px-4 py-2 rounded-full ${isDark ? "bg-black/40 text-white" : "bg-white/40 text-black"}`}>
-              Desliza para revelar
+              {t("landing.scroll_reveal")}
             </span>
           </motion.div>
         </div>
       </section>
 
       {/* ===== QUÉ HACEMOS ===== */}
-      <Section id="quienes-somos" title="¿Qué es lo que hacemos?" className="pt-6 md:pt-8 pb-16">
+      <Section id="quienes-somos" title={t("landing.what_title")} className="pt-6 md:pt-8 pb-16">
         <p className={`text-lg leading-relaxed text-center max-w-3xl mx-auto ${isDark ? "text-white/80" : "text-black/80"}`}>
-          Automatizamos tus procesos con herramientas de inteligencia artificial diseñadas a las necesidades reales de tu negocio. Combinamos analítica, ciencia de datos y machine learning para detectar oportunidades, anticipar demanda y entregar información accionable a cada equipo.
+          {t("landing.what_desc")}
         </p>
         <div className="mt-12 grid md:grid-cols-3 gap-6 text-left">
-          <ValueCard isDark={isDark} accent="#ff8a00" title="Automatización con propósito">Mapeamos la operación y la convertimos en experiencias conversacionales que capturan datos útiles sin perder el tono humano de tu marca.</ValueCard>
-          <ValueCard isDark={isDark} accent="#a200ff" title="Analítica + ciencia de datos">Integramos tus fuentes, limpiamos la señal y construimos tableros que cuentan la historia completa de tu negocio en tiempo real.</ValueCard>
-          <ValueCard isDark={isDark} title="Machine learning aplicado">Entrenamos modelos que aprenden de tu operación para segmentar, recomendar y detectar patrones antes de que se conviertan en problemas.</ValueCard>
+          <ValueCard isDark={isDark} accent="#ff8a00" title={t("landing.value_automation_title")}>{t("landing.value_automation_desc")}</ValueCard>
+          <ValueCard isDark={isDark} accent="#a200ff" title={t("landing.value_analytics_title")}>{t("landing.value_analytics_desc")}</ValueCard>
+          <ValueCard isDark={isDark} title={t("landing.value_ml_title")}>{t("landing.value_ml_desc")}</ValueCard>
         </div>
       </Section>
 
       <Section
         title={
           <>
-            <span className="text-[#a200ff]">Servicio</span> al cliente{' '}
+            <span className="text-[#a200ff]">{t("landing.service_title_prefix")}</span> {t("landing.service_title_middle")}{' '}
             <span className="text-[#ff8a00]">24/7</span>
           </>
         }
@@ -966,10 +954,10 @@ export default function App() {
       >
         <div className={`mx-auto max-w-3xl text-center text-lg leading-relaxed ${isDark ? "text-white/80" : "text-black/80"}`}>
           <p>
-            Nuestra IA nunca duerme, pero detrás siempre hay humanos listos para intervenir. Si una conversación necesita empatía o criterio, nuestro equipo toma el control sin tickets interminables ni respuestas enlatadas.
+            {t("landing.service_desc_1")}
           </p>
           <p className="mt-6">
-            Piensa en un concierge digital que detecta la intención, prepara a la persona correcta y mantiene informados a tus clientes. Eso es servicio al cliente 24/7, con calidad humana y velocidad de máquina.
+            {t("landing.service_desc_2")}
           </p>
         </div>
       </Section>
@@ -979,32 +967,32 @@ export default function App() {
         id="planes"
         title={
           <>
-            Nuestros <span className="text-[#ff8a00]">planes</span> y{' '}
-            <span className="text-[#04d9b5]">precios</span>
+            {t("landing.plans_title_1")} <span className="text-[#ff8a00]">{t("landing.plans_title_2")}</span> {t("landing.plans_title_3")}{' '}
+            <span className="text-[#04d9b5]">{t("landing.plans_title_4")}</span>
           </>
         }
       >
         <p className={`text-lg text-center max-w-3xl mx-auto ${isDark ? "text-white/80" : "text-black/80"}`}>
-          Diseñamos paquetes modulares para activar <span className="text-[#04d9b5]">IA en tu operación</span> sin fricción.
-          Elige el plan que necesitas hoy y escala con nosotros cuando estés listo.
+          {t("landing.plans_desc_1")} <span className="text-[#04d9b5]">{t("landing.plans_desc_highlight")}</span> {t("landing.plans_desc_2")}
+          {' '}{t("landing.plans_desc_3")}
         </p>
 
         {catalogLoading && (
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-[#04d9b5]"></div>
-            <p className="mt-4 text-sm text-white/60">Cargando planes...</p>
+            <p className="mt-4 text-sm text-white/60">{t("landing.loading_plans")}</p>
           </div>
         )}
 
         {catalogError && (
           <div className="text-center py-12">
-            <p className="text-red-400">Error al cargar el catálogo: {catalogError}</p>
+            <p className="text-red-400">{t("landing.catalog_error", { error: catalogError })}</p>
           </div>
         )}
 
         {!catalogLoading && !catalogError && planCards.length === 0 && (
           <div className="text-center py-12">
-            <p className="text-white/60">No hay planes disponibles</p>
+            <p className="text-white/60">{t("landing.no_plans")}</p>
           </div>
         )}
 
@@ -1015,7 +1003,7 @@ export default function App() {
           isDark={isDark}
           onShowDetails={(p) => setActivePlan(p)}
           onAddToCart={addToCart}
-          label="Módulos y add-ons"
+          label={t("landing.modules_addons")}
           showArrow
         />
 
@@ -1024,21 +1012,21 @@ export default function App() {
           isDark={isDark}
           onShowDetails={(p) => setActivePlan(p)}
           onAddToCart={addToCart}
-          label="Paquetes web"
+          label={t("landing.web_packages")}
         />
 
         <p className={`mt-8 text-sm text-center ${isDark ? "text-white/60" : "text-black/60"}`}>
-          * Precios en MXN. No incluyen IVA. Podemos combinar planes o armar uno a medida.
+          {t("landing.price_note")}
         </p>
           </>
         )}
         <div className="mt-12 grid gap-6 lg:grid-cols-2">
           <Accordion
             isDark={isDark}
-            title="Requisitos del cliente"
+            title={t("landing.client_requirements_title")}
             content={
               <ul className="space-y-2">
-                {CLIENT_REQUIREMENTS.map((item) => (
+                {(t("landing.client_requirements", { returnObjects: true }) as string[]).map((item) => (
                   <li key={item} className="flex gap-2">
                     <span className="mt-1 h-2 w-2 rounded-full bg-[#04d9b5]" aria-hidden="true" />
                     <span>{item}</span>
@@ -1049,10 +1037,10 @@ export default function App() {
           />
           <Accordion
             isDark={isDark}
-            title="Condiciones generales"
+            title={t("landing.general_conditions_title")}
             content={
               <ul className="space-y-2">
-                {GENERAL_CONDITIONS.map((item) => (
+                {(t("landing.general_conditions", { returnObjects: true }) as string[]).map((item) => (
                   <li key={item} className="flex gap-2">
                     <span className="mt-1 h-2 w-2 rounded-full bg-[#04d9b5]" aria-hidden="true" />
                     <span>{item}</span>
@@ -1065,9 +1053,9 @@ export default function App() {
       </Section>
 
       {/* ===== CONTACTO ===== */}
-      <Section id="contacto" title="Contacto">
+      <Section id="contacto" title={t("landing.contact_title")}>
         <p className={`text-lg mb-10 text-center ${isDark ? "text-white/80" : "text-black/80"}`}>
-          Hablemos. Podemos mostrarte una demo, resolver dudas y armar un plan a tu medida. Déjanos tus datos y te escribimos en menos de 24 horas.
+          {t("landing.contact_intro")}
         </p>
         <ContactForm isDark={isDark} />
       </Section>
@@ -1078,6 +1066,7 @@ export default function App() {
 }
 
 function Footer({ isDark }: { isDark: boolean }) {
+  const { t } = useTranslation();
   const textColor = isDark ? "text-white/60" : "text-black/60";
   const linkBase = isDark ? "text-white/70 hover:text-white" : "text-black/70 hover:text-black";
   const handleNavigate = (event: MouseEvent<HTMLAnchorElement>, path: string) => {
@@ -1117,21 +1106,21 @@ function Footer({ isDark }: { isDark: boolean }) {
             className={linkBase}
             onClick={(event) => handleNavigate(event, "/terms")}
           >
-            Términos y condiciones
+            {t("landing.footer_terms")}
           </a>
           <a
             href="/privacy"
             className={linkBase}
             onClick={(event) => handleNavigate(event, "/privacy")}
           >
-            Aviso de privacidad
+            {t("landing.footer_privacy")}
           </a>
           <a
             href="/data-deletion"
             className={linkBase}
             onClick={(event) => handleNavigate(event, "/data-deletion")}
           >
-            Eliminación de datos
+            {t("landing.footer_data_deletion")}
           </a>
         </div>
         <div className={`text-xs ${textColor}`}>
@@ -1225,6 +1214,7 @@ function Accordion({
 }
 
 function ContactForm({ isDark }: { isDark: boolean }) {
+  const { t } = useTranslation();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
@@ -1245,7 +1235,7 @@ function ContactForm({ isDark }: { isDark: boolean }) {
       setMessage("");
     } else {
       setStatus("error");
-      setError(res.error || "No se pudo enviar. Intenta de nuevo.");
+      setError(res.error || t("landing.contact_error"));
     }
   }
 
@@ -1253,7 +1243,7 @@ function ContactForm({ isDark }: { isDark: boolean }) {
     <div>
       {!endpoint && (
         <div className={`mb-4 text-sm ${isDark ? "text-white/60" : "text-black/60"}`}>
-          Configura VITE_CONTACT_ENDPOINT para activar el envío por correo.
+          {t("landing.contact_endpoint_missing")}
         </div>
       )}
       <form onSubmit={onSubmit} className="grid gap-4 max-w-xl mx-auto text-left">
@@ -1262,7 +1252,7 @@ function ContactForm({ isDark }: { isDark: boolean }) {
           required
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Tu nombre"
+          placeholder={t("landing.contact_name_placeholder")}
           className={`px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-[#04d9b5] ${isDark ? "bg-white/5 border-white/10" : "bg-black/5 border-black/10"}`}
         />
         <input
@@ -1270,7 +1260,7 @@ function ContactForm({ isDark }: { isDark: boolean }) {
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          placeholder="Tu correo"
+          placeholder={t("landing.contact_email_placeholder")}
           className={`px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-[#04d9b5] ${isDark ? "bg-white/5 border-white/10" : "bg-black/5 border-black/10"}`}
         />
         <textarea
@@ -1278,7 +1268,7 @@ function ContactForm({ isDark }: { isDark: boolean }) {
           required
           value={message}
           onChange={(e) => setMessage(e.target.value)}
-          placeholder="Cuéntanos de tu proyecto"
+          placeholder={t("landing.contact_project_placeholder")}
           className={`px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-[#04d9b5] ${isDark ? "bg-white/5 border-white/10" : "bg-black/5 border-black/10"}`}
         />
         <button
@@ -1286,10 +1276,10 @@ function ContactForm({ isDark }: { isDark: boolean }) {
           disabled={status === "sending"}
           className={`rounded-xl bg-[#04d9b5] text-black px-6 py-3 font-medium shadow hover:brightness-110 transition ${status === "sending" ? "opacity-70 cursor-not-allowed" : ""}`}
         >
-          {status === "sending" ? "Enviando…" : status === "ok" ? "Enviado" : "Enviar"}
+          {status === "sending" ? t("landing.contact_sending") : status === "ok" ? t("landing.contact_sent") : t("landing.contact_send")}
         </button>
         {status === "ok" && (
-          <div className="text-sm text-[#04d9b5]">Gracias. Te contactaremos muy pronto.</div>
+          <div className="text-sm text-[#04d9b5]">{t("landing.contact_thanks")}</div>
         )}
         {status === "error" && (
           <div className="text-sm text-red-400">{error}</div>
