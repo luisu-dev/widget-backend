@@ -50,6 +50,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
   const [success, setSuccess] = useState('')
   const [pages, setPages] = useState<FacebookPage[]>([])
   const [loading, setLoading] = useState(true)
+  const [activatingPageId, setActivatingPageId] = useState<string | null>(null)
 
   // Instagram data
   const [expandedIgPages, setExpandedIgPages] = useState<Set<string>>(new Set())
@@ -202,14 +203,20 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
 
   const handleActivatePage = async (pageId: string) => {
     setError('')
+    setSuccess('')
+    setActivatingPageId(pageId)
     try {
-      const res = await fetch(`${API_BASE}/auth/facebook/pages/${pageId}/activate`, {
+      const res = await fetch(`${API_BASE}/auth/facebook/pages/${encodeURIComponent(pageId)}/activate`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       })
-      if (!res.ok) throw new Error(t('facebook.activate_error'))
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.detail || data.message || t('facebook.activate_error'))
+      }
 
       setSuccess(t('facebook.page_activated'))
+      setPages(prev => prev.map(page => ({ ...page, is_active: page.page_id === pageId })))
       await fetchPages()
       if (onConnectionChange) {
         onConnectionChange()
@@ -218,6 +225,8 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
     } catch (err: any) {
       console.error(err)
       setError(err.message)
+    } finally {
+      setActivatingPageId(null)
     }
   }
 
@@ -267,6 +276,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
   const isConnected = displayPages.length > 0
   const facebookPagesCount = displayPages.filter(page => !isInstagramLoginPage(page)).length
   const instagramAccountsCount = displayPages.filter(page => isInstagramLoginPage(page)).length
+  const hasInstagramConnection = displayPages.some(page => Boolean(page.ig_user_id))
   const onlyInstagramConnected = facebookPagesCount === 0 && instagramAccountsCount > 0
   const sectionTitle = onlyInstagramConnected
     ? t('facebook.instagram_title')
@@ -479,9 +489,10 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
                 {!page.is_active && (
                   <button
                     onClick={() => handleActivatePage(page.page_id)}
-                    className="w-full mt-2 px-3 py-1.5 text-sm bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/50 text-blue-200 rounded transition"
+                    disabled={activatingPageId === page.page_id}
+                    className="w-full mt-2 px-3 py-1.5 text-sm bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/50 text-blue-200 rounded transition disabled:opacity-50"
                   >
-                    {t('facebook.use_connection')}
+                    {activatingPageId === page.page_id ? t('facebook.activating_connection') : t('facebook.use_connection')}
                   </button>
                 )}
               </div>
@@ -521,7 +532,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
           )}
 
           <div className="pt-4 space-y-3">
-            <div className={`grid gap-3 ${instagramAccountsCount > 0 ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
+            <div className={`grid gap-3 ${hasInstagramConnection ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
               <button
                 onClick={handleConnect}
                 disabled={connecting}
@@ -530,10 +541,10 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
                 {connecting
                   ? t('facebook.changing')
                   : facebookPagesCount > 0
-                    ? t('facebook.change_page')
+                    ? t('facebook.sync_facebook')
                     : t('facebook.connect_button')}
               </button>
-              {instagramAccountsCount === 0 && (
+              {!hasInstagramConnection && (
                 <button
                   onClick={handleConnectInstagram}
                   disabled={connectingInstagram}
@@ -551,8 +562,8 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
               </button>
             </div>
             <p className="text-sm text-gray-400">
-              <strong>{facebookPagesCount > 0 ? t('facebook.change_page_help_title') : t('facebook.facebook_help_title')}</strong> {facebookPagesCount > 0 ? t('facebook.change_page_help') : t('facebook.facebook_help')}<br/>
-              {instagramAccountsCount === 0 && (
+              <strong>{facebookPagesCount > 0 ? t('facebook.sync_facebook_help_title') : t('facebook.facebook_help_title')}</strong> {facebookPagesCount > 0 ? t('facebook.sync_facebook_help') : t('facebook.facebook_help')}<br/>
+              {!hasInstagramConnection && (
                 <>
                   <strong>{t('facebook.instagram_help_title')}</strong> {t('facebook.instagram_help')}<br/>
                 </>
