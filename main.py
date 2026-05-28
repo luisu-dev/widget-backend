@@ -165,6 +165,7 @@ STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 SITE_URL = os.getenv("SITE_URL", "https://web-zia.vercel.app")
 GRAPH = "https://graph.facebook.com/v20.0"
+INSTAGRAM_GRAPH = "https://graph.instagram.com"
 GOOGLE_CALENDAR_DEFAULT_ID = os.getenv("GOOGLE_CALENDAR_DEFAULT_ID", "").strip()
 GOOGLE_CALENDAR_DEFAULT_TZ = os.getenv("GOOGLE_CALENDAR_DEFAULT_TZ", "America/Mexico_City").strip() or "America/Mexico_City"
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
@@ -4404,6 +4405,244 @@ async def facebook_oauth_callback(
     )
 
 
+@app.options("/auth/instagram/connect")
+async def options_instagram_connect():
+    return Response(status_code=204)
+
+@app.get("/auth/instagram/connect")
+async def instagram_oauth_connect(current = Depends(require_user)):
+    """Inicia Instagram Login para conectar una cuenta profesional sin página de Facebook."""
+    app_id = (
+        os.getenv("META_INSTAGRAM_APP_ID", "").strip()
+        or os.getenv("META_APP_ID", "").strip()
+    )
+    redirect_uri = (
+        os.getenv("INSTAGRAM_REDIRECT_URI", "").strip()
+        or os.getenv("INSTAGRAM_LOGIN_REDIRECT_URI", "").strip()
+    )
+
+    if not app_id:
+        raise HTTPException(500, "META_INSTAGRAM_APP_ID o META_APP_ID no configurado")
+    if not redirect_uri:
+        raise HTTPException(500, "INSTAGRAM_REDIRECT_URI no configurado")
+
+    state = jwt.encode(
+        {
+            "tenant_slug": current["tenant_slug"],
+            "user_id": current["id"],
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=10)
+        },
+        AUTH_SECRET,
+        algorithm="HS256"
+    )
+
+    scopes = os.getenv(
+        "INSTAGRAM_OAUTH_SCOPES",
+        "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments"
+    ).strip()
+
+    params = urlencode({
+        "enable_fb_login": "0",
+        "force_authentication": "1",
+        "client_id": app_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": scopes,
+        "state": state,
+    })
+
+    return {"auth_url": f"https://www.instagram.com/oauth/authorize?{params}"}
+
+
+@app.get("/auth/instagram/callback")
+async def instagram_oauth_callback(
+    code: str = Query(...),
+    state: str = Query(...)
+):
+    """Maneja Instagram Login y guarda el token de la cuenta profesional."""
+    log.info("Instagram OAuth callback iniciado")
+
+    try:
+        state_data = jwt.decode(state, AUTH_SECRET, algorithms=["HS256"])
+        tenant_slug = state_data["tenant_slug"]
+        user_id = state_data["user_id"]
+        log.info(f"State Instagram validado para tenant: {tenant_slug}, user_id: {user_id}")
+    except Exception as e:
+        log.error(f"Invalid Instagram OAuth state: {e}")
+        raise HTTPException(400, "Estado OAuth inválido o expirado")
+
+    app_id = (
+        os.getenv("META_INSTAGRAM_APP_ID", "").strip()
+        or os.getenv("META_APP_ID", "").strip()
+    )
+    app_secret = (
+        os.getenv("META_INSTAGRAM_APP_SECRET", "").strip()
+        or os.getenv("META_APP_SECRET", "").strip()
+    )
+    redirect_uri = (
+        os.getenv("INSTAGRAM_REDIRECT_URI", "").strip()
+        or os.getenv("INSTAGRAM_LOGIN_REDIRECT_URI", "").strip()
+    )
+
+    if not app_id or not app_secret:
+        raise HTTPException(500, "META_INSTAGRAM_APP_ID/META_APP_SECRET no configurados")
+    if not redirect_uri:
+        raise HTTPException(500, "INSTAGRAM_REDIRECT_URI no configurado")
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        token_resp = await client.post(
+            "https://api.instagram.com/oauth/access_token",
+            data={
+                "client_id": app_id,
+                "client_secret": app_secret,
+                "grant_type": "authorization_code",
+                "redirect_uri": redirect_uri,
+                "code": code,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        if token_resp.status_code != 200:
+            log.error(f"Instagram token exchange failed: {token_resp.text}")
+            raise HTTPException(400, "Error obteniendo token de Instagram")
+
+        token_data = token_resp.json()
+        access_token = token_data.get("access_token")
+        ig_user_id = str(token_data.get("user_id") or "")
+
+        if not access_token:
+            raise HTTPException(400, "Instagram no devolvió access token")
+
+        long_lived_resp = await client.get(
+            f"{INSTAGRAM_GRAPH}/access_token",
+            params={
+                "grant_type": "ig_exchange_token",
+                "client_secret": app_secret,
+                "access_token": access_token,
+            },
+        )
+        if long_lived_resp.status_code == 200:
+            long_lived_data = long_lived_resp.json()
+            access_token = long_lived_data.get("access_token", access_token)
+            log.info("Long-lived Instagram token obtenido")
+        else:
+            log.warning(f"No se pudo obtener long-lived Instagram token: {long_lived_resp.text}")
+
+        profile_fields = "id,username,name,profile_picture_url,followers_count,follows_count,media_count"
+        profile_resp = await client.get(
+            f"{INSTAGRAM_GRAPH}/me",
+            params={"fields": profile_fields, "access_token": access_token},
+        )
+        if profile_resp.status_code != 200:
+            log.warning(f"Instagram profile full fields failed: {profile_resp.text}")
+            profile_resp = await client.get(
+                f"{INSTAGRAM_GRAPH}/me",
+                params={"fields": "id,username", "access_token": access_token},
+            )
+
+        if profile_resp.status_code != 200:
+            log.error(f"Instagram profile fetch failed: {profile_resp.text}")
+            raise HTTPException(400, "Error obteniendo perfil de Instagram")
+
+        profile = profile_resp.json()
+        ig_user_id = str(profile.get("id") or ig_user_id)
+        username = profile.get("username") or ""
+        display_name = profile.get("name") or username or f"Instagram {ig_user_id}"
+
+    if not ig_user_id:
+        raise HTTPException(400, "Instagram no devolvió ID de usuario")
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    synthetic_page_id = f"ig:{ig_user_id}"
+    pages_saved = 0
+
+    async with db_engine.begin() as conn:
+        check_result = await conn.execute(
+            text("""
+                SELECT id, is_active FROM facebook_pages
+                WHERE tenant_slug = :tenant AND page_id = :page_id
+            """),
+            {"tenant": tenant_slug, "page_id": synthetic_page_id}
+        )
+        existing = check_result.first()
+
+        if existing:
+            await conn.execute(
+                text("""
+                    UPDATE facebook_pages
+                    SET page_name = :name,
+                        page_token = :token,
+                        ig_user_id = :ig_id,
+                        updated_at = NOW()
+                    WHERE tenant_slug = :tenant AND page_id = :page_id
+                """),
+                {
+                    "tenant": tenant_slug,
+                    "page_id": synthetic_page_id,
+                    "name": display_name,
+                    "token": access_token,
+                    "ig_id": ig_user_id,
+                }
+            )
+        else:
+            active_result = await conn.execute(
+                text("SELECT COUNT(*) FROM facebook_pages WHERE tenant_slug = :tenant AND is_active = true"),
+                {"tenant": tenant_slug}
+            )
+            active_count = active_result.scalar() or 0
+            initial_settings = {
+                "brand": display_name,
+                "tone": "amigable y profesional",
+                "products": "",
+                "hours": "",
+                "policies": "",
+                "bot_off_message": "El asistente está en pausa. Escríbenos por WhatsApp o envíanos un correo y te respondemos enseguida."
+            }
+            await conn.execute(
+                text("""
+                    INSERT INTO facebook_pages
+                    (tenant_slug, page_id, page_name, page_token, ig_user_id, fb_user_id, is_active, page_settings)
+                    VALUES (:tenant, :page_id, :name, :token, :ig_id, NULL, :is_active, :settings)
+                """),
+                {
+                    "tenant": tenant_slug,
+                    "page_id": synthetic_page_id,
+                    "name": display_name,
+                    "token": access_token,
+                    "ig_id": ig_user_id,
+                    "is_active": active_count == 0,
+                    "settings": json.dumps(initial_settings),
+                }
+            )
+            pages_saved = 1
+
+        tenant_result = await conn.execute(
+            text("SELECT settings FROM tenants WHERE slug = :slug"),
+            {"slug": tenant_slug}
+        )
+        tenant_row = tenant_result.first()
+        settings = tenant_row[0] if tenant_row and tenant_row[0] else {}
+        settings["instagram_login_user_id"] = ig_user_id
+        settings["instagram_login_username"] = username
+        settings["instagram_login_connected_at"] = datetime.now(timezone.utc).isoformat()
+        await conn.execute(
+            text("""
+                UPDATE tenants
+                SET settings = CAST(:settings AS JSONB),
+                    updated_at = NOW()
+                WHERE slug = :slug
+            """),
+            {"settings": json.dumps(settings), "slug": tenant_slug}
+        )
+
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+    onboarding_param = "&onboarding=true" if pages_saved > 0 else ""
+    return Response(
+        status_code=302,
+        headers={"Location": f"{frontend_url}/dashboard?instagram_connected=true{onboarding_param}"}
+    )
+
+
 @app.options("/auth/facebook/disconnect")
 async def options_facebook_disconnect():
     return Response(status_code=204)
@@ -4430,6 +4669,10 @@ async def facebook_oauth_disconnect(current = Depends(require_user)):
                     text("DELETE FROM facebook_pages WHERE fb_user_id = :fb_user_id"),
                     {"fb_user_id": fb_user_id}
                 )
+            await conn.execute(
+                text("DELETE FROM facebook_pages WHERE tenant_slug = :tenant AND page_id LIKE 'ig:%'"),
+                {"tenant": tenant_slug}
+            )
 
             # Remover credenciales de Facebook/Instagram de settings
             current_settings.pop("fb_page_id", None)
@@ -4438,6 +4681,9 @@ async def facebook_oauth_disconnect(current = Depends(require_user)):
             current_settings.pop("ig_user_id", None)
             current_settings.pop("ig_user_ids", None)
             current_settings.pop("fb_user_id", None)
+            current_settings.pop("instagram_login_user_id", None)
+            current_settings.pop("instagram_login_username", None)
+            current_settings.pop("instagram_login_connected_at", None)
 
             # Guardar settings actualizados
             await conn.execute(
@@ -4485,9 +4731,10 @@ async def facebook_list_pages(current = Depends(require_user)):
                     SELECT id, page_id, page_name, ig_user_id, is_active, created_at, updated_at, tenant_slug, page_settings
                     FROM facebook_pages
                     WHERE fb_user_id = :fb_user_id
+                       OR (tenant_slug = :tenant AND page_id LIKE 'ig:%')
                     ORDER BY created_at ASC
                 """),
-                {"fb_user_id": fb_user_id}
+                {"fb_user_id": fb_user_id, "tenant": tenant_slug}
             )
         else:
             # Si no hay fb_user_id, fallback al filtro antiguo por tenant
@@ -4531,10 +4778,10 @@ async def instagram_get_profile(ig_user_id: str, current = Depends(require_user)
     tenant_slug = current["tenant_slug"]
 
     async with db_engine.connect() as conn:
-        # Obtener el page_token desde la página de Facebook que tiene este ig_user_id
+        # Obtener el token desde la página de Facebook o desde Instagram Login directo.
         result = await conn.execute(
             text("""
-                SELECT page_token FROM facebook_pages
+                SELECT page_token, page_id FROM facebook_pages
                 WHERE ig_user_id = :ig_user_id AND tenant_slug = :tenant
                 LIMIT 1
             """),
@@ -4545,15 +4792,21 @@ async def instagram_get_profile(ig_user_id: str, current = Depends(require_user)
             raise HTTPException(404, "Instagram account not found or no access token")
 
         page_token = row[0]
+        page_id = row[1]
 
-    # Llamar a la Graph API para obtener información del perfil
-    # Campos disponibles con instagram_basic: id, username, name, biography, followers_count, follows_count, media_count, profile_picture_url
+    # Llamar a la Graph API correcta según el tipo de token.
     fields = "id,username,name,biography,followers_count,follows_count,media_count,profile_picture_url"
-    url = f"https://graph.facebook.com/v20.0/{ig_user_id}?fields={fields}&access_token={page_token}"
+    if str(page_id).startswith("ig:"):
+        url = f"{INSTAGRAM_GRAPH}/me?fields={fields}&access_token={page_token}"
+    else:
+        url = f"{GRAPH}/{ig_user_id}?fields={fields}&access_token={page_token}"
 
     import httpx
     async with httpx.AsyncClient() as client:
         resp = await client.get(url)
+        if resp.status_code != 200 and str(page_id).startswith("ig:"):
+            fallback_url = f"{INSTAGRAM_GRAPH}/me?fields=id,username&access_token={page_token}"
+            resp = await client.get(fallback_url)
 
         if resp.status_code != 200:
             raise HTTPException(500, f"Error fetching Instagram profile: {resp.text}")
@@ -4577,10 +4830,10 @@ async def instagram_get_media(ig_user_id: str, limit: int = 12, current = Depend
     tenant_slug = current["tenant_slug"]
 
     async with db_engine.connect() as conn:
-        # Obtener el page_token
+        # Obtener el token desde la página de Facebook o desde Instagram Login directo.
         result = await conn.execute(
             text("""
-                SELECT page_token FROM facebook_pages
+                SELECT page_token, page_id FROM facebook_pages
                 WHERE ig_user_id = :ig_user_id AND tenant_slug = :tenant
                 LIMIT 1
             """),
@@ -4591,10 +4844,15 @@ async def instagram_get_media(ig_user_id: str, limit: int = 12, current = Depend
             raise HTTPException(404, "Instagram account not found or no access token")
 
         page_token = row[0]
+        page_id = row[1]
 
     # Llamar a la Graph API para obtener medios
     # Primero obtener la lista de media IDs
-    media_url = f"https://graph.facebook.com/v20.0/{ig_user_id}/media?limit={limit}&access_token={page_token}"
+    is_instagram_login = str(page_id).startswith("ig:")
+    if is_instagram_login:
+        media_url = f"{INSTAGRAM_GRAPH}/me/media?limit={limit}&access_token={page_token}"
+    else:
+        media_url = f"{GRAPH}/{ig_user_id}/media?limit={limit}&access_token={page_token}"
 
     import httpx
     async with httpx.AsyncClient() as client:
@@ -4613,7 +4871,8 @@ async def instagram_get_media(ig_user_id: str, limit: int = 12, current = Depend
         for media_item in media_ids:
             media_id = media_item.get("id")
             if media_id:
-                detail_url = f"https://graph.facebook.com/v20.0/{media_id}?fields={fields}&access_token={page_token}"
+                graph_base = INSTAGRAM_GRAPH if is_instagram_login else GRAPH
+                detail_url = f"{graph_base}/{media_id}?fields={fields}&access_token={page_token}"
                 detail_resp = await client.get(detail_url)
 
                 if detail_resp.status_code == 200:
