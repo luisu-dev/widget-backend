@@ -17,11 +17,11 @@ interface FacebookPage {
 interface InstagramProfile {
   id: string
   username: string
-  name: string
+  name?: string
   biography?: string
-  followers_count: number
-  follows_count: number
-  media_count: number
+  followers_count?: number
+  follows_count?: number
+  media_count?: number
   profile_picture_url?: string
 }
 
@@ -44,6 +44,7 @@ interface FacebookConnectProps {
 export default function FacebookConnect({ token, onConnectionChange }: FacebookConnectProps) {
   const { t } = useTranslation()
   const [connecting, setConnecting] = useState(false)
+  const [connectingInstagram, setConnectingInstagram] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -151,6 +152,18 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
         setSuccess(t('facebook.connected_success'))
       }, 1000)
     }
+    if (params.get('instagram_connected') === 'true') {
+      setSuccess(t('facebook.instagram_connected_updating'))
+      window.history.replaceState({}, '', window.location.pathname)
+
+      setTimeout(() => {
+        fetchPages()
+        if (onConnectionChange) {
+          onConnectionChange()
+        }
+        setSuccess(t('facebook.instagram_connected_success'))
+      }, 1000)
+    }
   }, [onConnectionChange])
 
   const handleConnect = async () => {
@@ -167,6 +180,23 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
       console.error(err)
       setError(err.message)
       setConnecting(false)
+    }
+  }
+
+  const handleConnectInstagram = async () => {
+    setConnectingInstagram(true)
+    setError('')
+    try {
+      const res = await fetch(`${API_BASE}/auth/instagram/connect`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (!res.ok) throw new Error(t('facebook.instagram_connect_error'))
+      const data = await res.json()
+      window.location.href = data.auth_url
+    } catch (err: any) {
+      console.error(err)
+      setError(err.message)
+      setConnectingInstagram(false)
     }
   }
 
@@ -224,6 +254,14 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
   // Mostrar páginas de la cuenta de Facebook del usuario
   const isConnected = pages.length > 0
   const activePage = pages.find(p => p.is_active)
+  const isInstagramLoginPage = (page: FacebookPage) => page.page_id.startsWith('ig:')
+  const facebookPagesCount = pages.filter(page => !isInstagramLoginPage(page)).length
+  const instagramAccountsCount = pages.filter(page => isInstagramLoginPage(page)).length
+  const connectionCountLabel = facebookPagesCount > 0 && instagramAccountsCount > 0
+    ? t('facebook.accounts_count', { facebook: facebookPagesCount, instagram: instagramAccountsCount })
+    : instagramAccountsCount > 0
+      ? t('facebook.instagram_accounts_count', { count: instagramAccountsCount })
+      : t('facebook.pages_count', { count: facebookPagesCount })
 
   if (loading) {
     return (
@@ -254,7 +292,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
         <div className="space-y-4">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-            <span className="text-green-400 font-medium">{t('facebook.pages_count', { count: pages.length })}</span>
+            <span className="text-green-400 font-medium">{connectionCountLabel}</span>
           </div>
 
           {/* Lista de páginas */}
@@ -281,7 +319,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
                   <div className="flex items-center gap-2">
                     {page.ig_user_id && (
                       <span className="px-2 py-1 text-xs bg-purple-500/20 text-purple-400 rounded-full">
-                        📷 IG
+                        {isInstagramLoginPage(page) ? t('facebook.instagram_login_badge') : 'IG'}
                       </span>
                     )}
                     {page.is_active && (
@@ -338,7 +376,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
                                   )}
                                   <div className="flex-1">
                                     <div className="text-white font-semibold text-lg">
-                                      {igProfiles[page.ig_user_id].name}
+                                      {igProfiles[page.ig_user_id].name || igProfiles[page.ig_user_id].username}
                                     </div>
                                     <div className="text-purple-300 text-sm">
                                       @{igProfiles[page.ig_user_id].username}
@@ -350,13 +388,13 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
                                     )}
                                     <div className="flex gap-4 mt-3 text-xs">
                                       <div className="text-white">
-                                        <span className="font-bold">{igProfiles[page.ig_user_id].media_count.toLocaleString()}</span> {t('facebook.posts')}
+                                        <span className="font-bold">{(igProfiles[page.ig_user_id].media_count ?? 0).toLocaleString()}</span> {t('facebook.posts')}
                                       </div>
                                       <div className="text-white">
-                                        <span className="font-bold">{igProfiles[page.ig_user_id].followers_count.toLocaleString()}</span> {t('facebook.followers')}
+                                        <span className="font-bold">{(igProfiles[page.ig_user_id].followers_count ?? 0).toLocaleString()}</span> {t('facebook.followers')}
                                       </div>
                                       <div className="text-white">
-                                        <span className="font-bold">{igProfiles[page.ig_user_id].follows_count.toLocaleString()}</span> {t('facebook.following')}
+                                        <span className="font-bold">{(igProfiles[page.ig_user_id].follows_count ?? 0).toLocaleString()}</span> {t('facebook.following')}
                                       </div>
                                     </div>
                                     <div className="text-xs text-gray-400 mt-2 font-mono">
@@ -428,12 +466,14 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
             <div className="bg-white/5 border border-white/10 rounded-lg p-4">
               <div className="text-sm font-medium text-white mb-3">{t('facebook.active_features', { page: activePage.page_name })}</div>
               <ul className="space-y-2 text-sm">
-                <li className="flex items-center gap-2 text-gray-300">
-                  <svg className="w-4 h-4 text-[#04d9b5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  {t('facebook.facebook_messages')}
-                </li>
+                {!isInstagramLoginPage(activePage) && (
+                  <li className="flex items-center gap-2 text-gray-300">
+                    <svg className="w-4 h-4 text-[#04d9b5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    {t('facebook.facebook_messages')}
+                  </li>
+                )}
                 {activePage.ig_user_id && (
                   <li className="flex items-center gap-2 text-gray-300">
                     <svg className="w-4 h-4 text-[#04d9b5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -453,13 +493,20 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
           )}
 
           <div className="pt-4 space-y-3">
-            <div className="flex gap-3">
+            <div className="grid gap-3 md:grid-cols-3">
               <button
                 onClick={handleConnect}
                 disabled={connecting}
                 className="flex-1 px-4 py-2 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/50 text-blue-200 rounded-lg transition disabled:opacity-50"
               >
                 {connecting ? t('facebook.changing') : t('facebook.change_page')}
+              </button>
+              <button
+                onClick={handleConnectInstagram}
+                disabled={connectingInstagram}
+                className="flex-1 px-4 py-2 bg-pink-500/20 hover:bg-pink-500/30 border border-pink-500/50 text-pink-100 rounded-lg transition disabled:opacity-50"
+              >
+                {connectingInstagram ? t('facebook.changing_instagram') : t('facebook.connect_instagram')}
               </button>
               <button
                 onClick={handleDisconnect}
@@ -471,6 +518,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
             </div>
             <p className="text-sm text-gray-400">
               <strong>{t('facebook.change_page_help_title')}</strong> {t('facebook.change_page_help')}<br/>
+              <strong>{t('facebook.instagram_help_title')}</strong> {t('facebook.instagram_help')}<br/>
               <strong>{t('facebook.disconnect_help_title')}</strong> {t('facebook.disconnect_help')}
             </p>
           </div>
@@ -513,13 +561,22 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
             </li>
           </ul>
 
-          <button
-            onClick={handleConnect}
-            disabled={connecting}
-            className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-semibold rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {connecting ? t('facebook.changing') : t('facebook.connect_button')}
-          </button>
+          <div className="grid gap-3 md:grid-cols-2">
+            <button
+              onClick={handleConnect}
+              disabled={connecting}
+              className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-semibold rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {connecting ? t('facebook.changing') : t('facebook.connect_button')}
+            </button>
+            <button
+              onClick={handleConnectInstagram}
+              disabled={connectingInstagram}
+              className="w-full py-3 px-4 bg-gradient-to-r from-pink-600 to-purple-500 hover:from-pink-500 hover:to-purple-400 text-white font-semibold rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {connectingInstagram ? t('facebook.changing_instagram') : t('facebook.connect_instagram_direct')}
+            </button>
+          </div>
         </div>
       )}
     </div>
