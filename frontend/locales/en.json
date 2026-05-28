@@ -397,6 +397,7 @@
   },
   "facebook": {
     "title": "Facebook Connection",
+    "instagram_title": "Instagram Connection",
     "loading": "Loading...",
     "pages_loaded_error": "Error loading pages",
     "connected_updating": "Facebook connected successfully! Updating information...",
@@ -437,6 +438,8 @@
     "disconnect": "Disconnect",
     "change_page_help_title": "Change page:",
     "change_page_help": "Connect a different page without losing your configuration.",
+    "facebook_help_title": "Facebook:",
+    "facebook_help": "Connect a Facebook Page to enable Facebook messages.",
     "instagram_help_title": "Instagram:",
     "instagram_help": "Connect a professional account with Instagram Login without relying on a Facebook Page.",
     "disconnect_help_title": "Disconnect:",

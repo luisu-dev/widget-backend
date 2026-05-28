@@ -257,6 +257,8 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
   const isInstagramLoginPage = (page: FacebookPage) => page.page_id.startsWith('ig:')
   const facebookPagesCount = pages.filter(page => !isInstagramLoginPage(page)).length
   const instagramAccountsCount = pages.filter(page => isInstagramLoginPage(page)).length
+  const onlyInstagramConnected = facebookPagesCount === 0 && instagramAccountsCount > 0
+  const sectionTitle = onlyInstagramConnected ? t('facebook.instagram_title') : t('facebook.title')
   const connectionCountLabel = facebookPagesCount > 0 && instagramAccountsCount > 0
     ? t('facebook.accounts_count', { facebook: facebookPagesCount, instagram: instagramAccountsCount })
     : instagramAccountsCount > 0
@@ -266,7 +268,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
   if (loading) {
     return (
       <div className="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl p-6">
-        <h3 className="text-xl font-semibold text-white mb-4">{t('facebook.title')}</h3>
+        <h3 className="text-xl font-semibold text-white mb-4">{sectionTitle}</h3>
         <div className="text-center text-gray-400">{t('facebook.loading')}</div>
       </div>
     )
@@ -274,7 +276,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
 
   return (
     <div className="bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl p-6">
-      <h3 className="text-xl font-semibold text-white mb-4">{t('facebook.title')}</h3>
+      <h3 className="text-xl font-semibold text-white mb-4">{sectionTitle}</h3>
 
       {error && (
         <div className="mb-4 p-3 rounded-lg bg-red-500/20 border border-red-500/50 text-red-200 text-sm">
@@ -302,15 +304,23 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
                 key={page.page_id}
                 className={`border rounded-lg p-4 ${
                   page.is_active
-                    ? 'bg-blue-500/10 border-blue-500/30'
+                    ? isInstagramLoginPage(page)
+                      ? 'bg-purple-500/10 border-purple-500/30'
+                      : 'bg-blue-500/10 border-blue-500/30'
                     : 'bg-white/5 border-white/10'
                 }`}
               >
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-3 flex-1">
-                    <svg className="w-6 h-6 text-blue-400" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
-                    </svg>
+                    {isInstagramLoginPage(page) ? (
+                      <svg className="w-6 h-6 text-purple-400" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 2c2.717 0 3.056.01 4.122.06 1.065.05 1.79.217 2.428.465.66.254 1.216.598 1.772 1.153a4.908 4.908 0 0 1 1.153 1.772c.247.637.415 1.363.465 2.428.047 1.066.06 1.405.06 4.122 0 2.717-.01 3.056-.06 4.122-.05 1.065-.218 1.79-.465 2.428a4.883 4.883 0 0 1-1.153 1.772 4.915 4.915 0 0 1-1.772 1.153c-.637.247-1.363.415-2.428.465-1.066.047-1.405.06-4.122.06-2.717 0-3.056-.01-4.122-.06-1.065-.05-1.79-.218-2.428-.465a4.89 4.89 0 0 1-1.772-1.153 4.904 4.904 0 0 1-1.153-1.772c-.248-.637-.415-1.363-.465-2.428C2.013 15.056 2 14.717 2 12c0-2.717.01-3.056.06-4.122.05-1.066.217-1.79.465-2.428a4.88 4.88 0 0 1 1.153-1.772A4.897 4.897 0 0 1 5.45 2.525c.638-.248 1.362-.415 2.428-.465C8.944 2.013 9.283 2 12 2zm0 5a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm6.5-.25a1.25 1.25 0 1 0-2.5 0 1.25 1.25 0 0 0 2.5 0zM12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6z"/>
+                      </svg>
+                    ) : (
+                      <svg className="w-6 h-6 text-blue-400" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+                      </svg>
+                    )}
                     <div className="flex-1">
                       <div className="text-white font-medium">{page.page_name}</div>
                       <div className="text-xs text-gray-400 font-mono">ID: {page.page_id}</div>
@@ -493,21 +503,27 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
           )}
 
           <div className="pt-4 space-y-3">
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className={`grid gap-3 ${instagramAccountsCount > 0 ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
               <button
                 onClick={handleConnect}
                 disabled={connecting}
                 className="flex-1 px-4 py-2 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/50 text-blue-200 rounded-lg transition disabled:opacity-50"
               >
-                {connecting ? t('facebook.changing') : t('facebook.change_page')}
+                {connecting
+                  ? t('facebook.changing')
+                  : facebookPagesCount > 0
+                    ? t('facebook.change_page')
+                    : t('facebook.connect_button')}
               </button>
-              <button
-                onClick={handleConnectInstagram}
-                disabled={connectingInstagram}
-                className="flex-1 px-4 py-2 bg-pink-500/20 hover:bg-pink-500/30 border border-pink-500/50 text-pink-100 rounded-lg transition disabled:opacity-50"
-              >
-                {connectingInstagram ? t('facebook.changing_instagram') : t('facebook.connect_instagram')}
-              </button>
+              {instagramAccountsCount === 0 && (
+                <button
+                  onClick={handleConnectInstagram}
+                  disabled={connectingInstagram}
+                  className="flex-1 px-4 py-2 bg-pink-500/20 hover:bg-pink-500/30 border border-pink-500/50 text-pink-100 rounded-lg transition disabled:opacity-50"
+                >
+                  {connectingInstagram ? t('facebook.changing_instagram') : t('facebook.connect_instagram')}
+                </button>
+              )}
               <button
                 onClick={handleDisconnect}
                 disabled={disconnecting}
@@ -517,8 +533,12 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
               </button>
             </div>
             <p className="text-sm text-gray-400">
-              <strong>{t('facebook.change_page_help_title')}</strong> {t('facebook.change_page_help')}<br/>
-              <strong>{t('facebook.instagram_help_title')}</strong> {t('facebook.instagram_help')}<br/>
+              <strong>{facebookPagesCount > 0 ? t('facebook.change_page_help_title') : t('facebook.facebook_help_title')}</strong> {facebookPagesCount > 0 ? t('facebook.change_page_help') : t('facebook.facebook_help')}<br/>
+              {instagramAccountsCount === 0 && (
+                <>
+                  <strong>{t('facebook.instagram_help_title')}</strong> {t('facebook.instagram_help')}<br/>
+                </>
+              )}
               <strong>{t('facebook.disconnect_help_title')}</strong> {t('facebook.disconnect_help')}
             </p>
           </div>
