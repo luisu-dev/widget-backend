@@ -251,12 +251,22 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
     }
   }
 
-  // Mostrar páginas de la cuenta de Facebook del usuario
-  const isConnected = pages.length > 0
-  const activePage = pages.find(p => p.is_active)
+  // Mostrar conexiones sociales del tenant sin duplicar Instagram directo si ya viene ligado a Facebook.
   const isInstagramLoginPage = (page: FacebookPage) => page.page_id.startsWith('ig:')
-  const facebookPagesCount = pages.filter(page => !isInstagramLoginPage(page)).length
-  const instagramAccountsCount = pages.filter(page => isInstagramLoginPage(page)).length
+  const normalizeConnectionName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const linkedFacebookNames = new Set(
+    pages
+      .filter(page => !isInstagramLoginPage(page) && page.ig_user_id)
+      .map(page => normalizeConnectionName(page.page_name))
+  )
+  const displayPages = pages.filter(page => {
+    if (!isInstagramLoginPage(page)) return true
+    return !linkedFacebookNames.has(normalizeConnectionName(page.page_name))
+  })
+  const activePage = displayPages.find(p => p.is_active) || displayPages[0]
+  const isConnected = displayPages.length > 0
+  const facebookPagesCount = displayPages.filter(page => !isInstagramLoginPage(page)).length
+  const instagramAccountsCount = displayPages.filter(page => isInstagramLoginPage(page)).length
   const onlyInstagramConnected = facebookPagesCount === 0 && instagramAccountsCount > 0
   const sectionTitle = onlyInstagramConnected
     ? t('facebook.instagram_title')
@@ -303,7 +313,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
 
           {/* Lista de páginas */}
           <div className="space-y-3">
-            {pages.map((page) => (
+            {displayPages.map((page) => (
               <div
                 key={page.page_id}
                 className={`border rounded-lg p-4 ${

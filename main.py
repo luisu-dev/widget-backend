@@ -4771,11 +4771,17 @@ async def facebook_list_pages(current = Depends(require_user)):
                 FROM facebook_pages direct
                 JOIN facebook_pages linked
                   ON linked.tenant_slug = direct.tenant_slug
-                 AND linked.ig_user_id = direct.ig_user_id
                  AND linked.page_id NOT LIKE 'ig:%'
+                 AND (
+                    linked.ig_user_id = direct.ig_user_id
+                    OR (
+                        linked.ig_user_id IS NOT NULL
+                        AND lower(regexp_replace(coalesce(linked.page_name, ''), '[^a-zA-Z0-9]+', '', 'g')) =
+                            lower(regexp_replace(coalesce(direct.page_name, ''), '[^a-zA-Z0-9]+', '', 'g'))
+                    )
+                 )
                 WHERE direct.tenant_slug = :tenant
                   AND direct.page_id LIKE 'ig:%'
-                  AND direct.ig_user_id IS NOT NULL
             """),
             {"tenant": tenant_slug}
         )
@@ -4875,18 +4881,35 @@ async def facebook_list_pages(current = Depends(require_user)):
         for page in raw_pages
         if page.get("ig_user_id") and not str(page.get("page_id", "")).startswith("ig:")
     }
+    linked_ig_names = {
+        "".join(ch for ch in str(page.get("page_name") or "").lower() if ch.isalnum())
+        for page in raw_pages
+        if page.get("ig_user_id") and not str(page.get("page_id", "")).startswith("ig:")
+    }
     active_direct_ig_ids = {
         page["ig_user_id"]
         for page in raw_pages
         if page.get("is_active") and str(page.get("page_id", "")).startswith("ig:") and page.get("ig_user_id")
     }
+    active_direct_ig_names = {
+        "".join(ch for ch in str(page.get("page_name") or "").lower() if ch.isalnum())
+        for page in raw_pages
+        if page.get("is_active") and str(page.get("page_id", "")).startswith("ig:")
+    }
 
     pages = []
     for page in raw_pages:
         is_direct_instagram = str(page.get("page_id", "")).startswith("ig:")
-        if is_direct_instagram and page.get("ig_user_id") in linked_ig_ids:
+        normalized_name = "".join(ch for ch in str(page.get("page_name") or "").lower() if ch.isalnum())
+        if is_direct_instagram and (
+            page.get("ig_user_id") in linked_ig_ids
+            or normalized_name in linked_ig_names
+        ):
             continue
-        if not is_direct_instagram and page.get("ig_user_id") in active_direct_ig_ids:
+        if not is_direct_instagram and (
+            page.get("ig_user_id") in active_direct_ig_ids
+            or normalized_name in active_direct_ig_names
+        ):
             page["is_active"] = True
         pages.append(page)
 
