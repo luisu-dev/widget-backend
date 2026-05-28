@@ -258,7 +258,11 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
   const facebookPagesCount = pages.filter(page => !isInstagramLoginPage(page)).length
   const instagramAccountsCount = pages.filter(page => isInstagramLoginPage(page)).length
   const onlyInstagramConnected = facebookPagesCount === 0 && instagramAccountsCount > 0
-  const sectionTitle = onlyInstagramConnected ? t('facebook.instagram_title') : t('facebook.title')
+  const sectionTitle = onlyInstagramConnected
+    ? t('facebook.instagram_title')
+    : instagramAccountsCount > 0
+      ? t('facebook.social_title')
+      : t('facebook.title')
   const connectionCountLabel = facebookPagesCount > 0 && instagramAccountsCount > 0
     ? t('facebook.accounts_count', { facebook: facebookPagesCount, instagram: instagramAccountsCount })
     : instagramAccountsCount > 0
@@ -323,7 +327,10 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
                     )}
                     <div className="flex-1">
                       <div className="text-white font-medium">{page.page_name}</div>
-                      <div className="text-xs text-gray-400 font-mono">ID: {page.page_id}</div>
+                      <div className="text-xs text-gray-400">
+                        {isInstagramLoginPage(page) ? t('facebook.instagram_account') : t('facebook.facebook_page')}
+                        <span className="font-mono"> · ID: {page.page_id}</span>
+                      </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -334,7 +341,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
                     )}
                     {page.is_active && (
                       <span className="px-2 py-1 text-xs bg-green-500/20 text-green-400 rounded-full">
-                        {t('facebook.in_use')}
+                        {t('facebook.active_for_tenant')}
                       </span>
                     )}
                   </div>
@@ -464,7 +471,7 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
                     onClick={() => handleActivatePage(page.page_id)}
                     className="w-full mt-2 px-3 py-1.5 text-sm bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/50 text-blue-200 rounded transition"
                   >
-                    {t('facebook.use_page')}
+                    {t('facebook.use_connection')}
                   </button>
                 )}
               </div>
@@ -474,7 +481,8 @@ export default function FacebookConnect({ token, onConnectionChange }: FacebookC
           {/* Connected features */}
           {activePage && (
             <div className="bg-white/5 border border-white/10 rounded-lg p-4">
-              <div className="text-sm font-medium text-white mb-3">{t('facebook.active_features', { page: activePage.page_name })}</div>
+              <div className="text-sm font-medium text-white mb-1">{t('facebook.active_connection', { page: activePage.page_name })}</div>
+              <div className="text-xs text-gray-400 mb-3">{t('facebook.active_connection_help')}</div>
               <ul className="space-y-2 text-sm">
                 {!isInstagramLoginPage(activePage) && (
                   <li className="flex items-center gap-2 text-gray-300">

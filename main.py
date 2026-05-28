@@ -4370,6 +4370,59 @@ async def facebook_oauth_callback(
                     log.info(f"   ✅ Página guardada (is_active={is_active}) con settings iniciales")
                     pages_saved += 1
 
+                if ig_account_id:
+                    synthetic_page_id = f"ig:{ig_account_id}"
+                    duplicate_result = await conn.execute(
+                        text("""
+                            SELECT id, is_active, page_settings
+                            FROM facebook_pages
+                            WHERE tenant_slug = :tenant
+                              AND page_id = :synthetic_page_id
+                              AND page_id != :page_id
+                            LIMIT 1
+                        """),
+                        {
+                            "tenant": tenant_slug,
+                            "synthetic_page_id": synthetic_page_id,
+                            "page_id": page_id,
+                        }
+                    )
+                    duplicate = duplicate_result.first()
+                    if duplicate:
+                        duplicate_was_active = bool(duplicate[1])
+                        duplicate_settings = duplicate[2] or {}
+                        if duplicate_was_active:
+                            await conn.execute(
+                                text("""
+                                    UPDATE facebook_pages
+                                    SET is_active = FALSE, updated_at = NOW()
+                                    WHERE tenant_slug = :tenant
+                                """),
+                                {"tenant": tenant_slug}
+                            )
+                            await conn.execute(
+                                text("""
+                                    UPDATE facebook_pages
+                                    SET is_active = TRUE,
+                                        page_settings = COALESCE(page_settings, CAST(:settings AS JSONB)),
+                                        updated_at = NOW()
+                                    WHERE tenant_slug = :tenant AND page_id = :page_id
+                                """),
+                                {
+                                    "tenant": tenant_slug,
+                                    "page_id": page_id,
+                                    "settings": json.dumps(duplicate_settings),
+                                }
+                            )
+                        await conn.execute(
+                            text("""
+                                DELETE FROM facebook_pages
+                                WHERE tenant_slug = :tenant AND page_id = :synthetic_page_id
+                            """),
+                            {"tenant": tenant_slug, "synthetic_page_id": synthetic_page_id}
+                        )
+                        log.info(f"   🔗 Instagram directo fusionado con la página {page_id}")
+
             log.info(f"\n✅ Resumen:")
             log.info(f"   - Páginas nuevas: {pages_saved}")
             log.info(f"   - Páginas actualizadas: {pages_updated}")
@@ -4711,6 +4764,60 @@ async def facebook_list_pages(current = Depends(require_user)):
     if not db_engine:
         return {"pages": []}
 
+    async with db_engine.begin() as conn:
+        duplicate_result = await conn.execute(
+            text("""
+                SELECT direct.page_id, linked.page_id, direct.is_active, direct.page_settings
+                FROM facebook_pages direct
+                JOIN facebook_pages linked
+                  ON linked.tenant_slug = direct.tenant_slug
+                 AND linked.ig_user_id = direct.ig_user_id
+                 AND linked.page_id NOT LIKE 'ig:%'
+                WHERE direct.tenant_slug = :tenant
+                  AND direct.page_id LIKE 'ig:%'
+                  AND direct.ig_user_id IS NOT NULL
+            """),
+            {"tenant": tenant_slug}
+        )
+        duplicate_rows = duplicate_result.fetchall()
+        for duplicate_row in duplicate_rows:
+            direct_page_id = duplicate_row[0]
+            linked_page_id = duplicate_row[1]
+            direct_was_active = bool(duplicate_row[2])
+            direct_settings = duplicate_row[3] or {}
+
+            if direct_was_active:
+                await conn.execute(
+                    text("""
+                        UPDATE facebook_pages
+                        SET is_active = FALSE, updated_at = NOW()
+                        WHERE tenant_slug = :tenant
+                    """),
+                    {"tenant": tenant_slug}
+                )
+                await conn.execute(
+                    text("""
+                        UPDATE facebook_pages
+                        SET is_active = TRUE,
+                            page_settings = COALESCE(page_settings, CAST(:settings AS JSONB)),
+                            updated_at = NOW()
+                        WHERE tenant_slug = :tenant AND page_id = :page_id
+                    """),
+                    {
+                        "tenant": tenant_slug,
+                        "page_id": linked_page_id,
+                        "settings": json.dumps(direct_settings),
+                    }
+                )
+
+            await conn.execute(
+                text("""
+                    DELETE FROM facebook_pages
+                    WHERE tenant_slug = :tenant AND page_id = :page_id
+                """),
+                {"tenant": tenant_slug, "page_id": direct_page_id}
+            )
+
     async with db_engine.connect() as conn:
         # Obtener fb_user_id del tenant
         tenant_result = await conn.execute(
@@ -4749,9 +4856,9 @@ async def facebook_list_pages(current = Depends(require_user)):
             )
         rows = result.fetchall()
 
-    pages = []
+    raw_pages = []
     for row in rows:
-        pages.append({
+        raw_pages.append({
             "id": row[0],
             "page_id": row[1],
             "page_name": row[2],
@@ -4762,6 +4869,26 @@ async def facebook_list_pages(current = Depends(require_user)):
             "tenant_slug": row[7],
             "page_settings": row[8] or {},
         })
+
+    linked_ig_ids = {
+        page["ig_user_id"]
+        for page in raw_pages
+        if page.get("ig_user_id") and not str(page.get("page_id", "")).startswith("ig:")
+    }
+    active_direct_ig_ids = {
+        page["ig_user_id"]
+        for page in raw_pages
+        if page.get("is_active") and str(page.get("page_id", "")).startswith("ig:") and page.get("ig_user_id")
+    }
+
+    pages = []
+    for page in raw_pages:
+        is_direct_instagram = str(page.get("page_id", "")).startswith("ig:")
+        if is_direct_instagram and page.get("ig_user_id") in linked_ig_ids:
+            continue
+        if not is_direct_instagram and page.get("ig_user_id") in active_direct_ig_ids:
+            page["is_active"] = True
+        pages.append(page)
 
     return {"pages": pages}
 
@@ -5021,26 +5148,13 @@ async def facebook_update_page_settings(
         raise HTTPException(503, "Database not configured")
 
     async with db_engine.begin() as conn:
-        # Verificar que la página existe y pertenece al fb_user_id del tenant
-        tenant_result = await conn.execute(
-            text("SELECT settings FROM tenants WHERE slug = :slug"),
-            {"slug": tenant_slug}
-        )
-        tenant_row = tenant_result.first()
-        if not tenant_row or not tenant_row[0]:
-            raise HTTPException(404, "Tenant settings no encontrados")
-
-        fb_user_id = tenant_row[0].get('fb_user_id')
-        if not fb_user_id:
-            raise HTTPException(403, "No tienes páginas de Facebook conectadas")
-
-        # Verificar que la página pertenece a este usuario de Facebook
+        # Verificar que la página/cuenta pertenece al tenant activo.
         result = await conn.execute(
             text("""
                 SELECT id FROM facebook_pages
-                WHERE page_id = :page_id AND fb_user_id = :fb_user_id
+                WHERE page_id = :page_id AND tenant_slug = :tenant
             """),
-            {"page_id": page_id, "fb_user_id": fb_user_id}
+            {"page_id": page_id, "tenant": tenant_slug}
         )
         if not result.first():
             raise HTTPException(404, "Página no encontrada o no tienes permiso")
@@ -5050,9 +5164,9 @@ async def facebook_update_page_settings(
             text("""
                 UPDATE facebook_pages
                 SET page_settings = :settings, updated_at = NOW()
-                WHERE page_id = :page_id
+                WHERE page_id = :page_id AND tenant_slug = :tenant
             """),
-            {"page_id": page_id, "settings": json.dumps(settings)}
+            {"page_id": page_id, "tenant": tenant_slug, "settings": json.dumps(settings)}
         )
 
     return {"success": True, "message": "Configuración de página actualizada"}
@@ -5070,26 +5184,13 @@ async def facebook_get_page_settings(
         raise HTTPException(503, "Database not configured")
 
     async with db_engine.connect() as conn:
-        # Obtener fb_user_id del tenant
-        tenant_result = await conn.execute(
-            text("SELECT settings FROM tenants WHERE slug = :slug"),
-            {"slug": tenant_slug}
-        )
-        tenant_row = tenant_result.first()
-        if not tenant_row or not tenant_row[0]:
-            return {"settings": {}}
-
-        fb_user_id = tenant_row[0].get('fb_user_id')
-        if not fb_user_id:
-            return {"settings": {}}
-
-        # Obtener settings de la página
+        # Obtener settings de la página/cuenta del tenant.
         result = await conn.execute(
             text("""
                 SELECT page_settings FROM facebook_pages
-                WHERE page_id = :page_id AND fb_user_id = :fb_user_id
+                WHERE page_id = :page_id AND tenant_slug = :tenant
             """),
-            {"page_id": page_id, "fb_user_id": fb_user_id}
+            {"page_id": page_id, "tenant": tenant_slug}
         )
         row = result.first()
 

@@ -23,6 +23,7 @@ interface BrandConfigProps {
   selectedPage?: {
     page_id: string
     page_name: string
+    ig_user_id?: string
     page_settings?: {
       brand?: string
       tone?: string
@@ -45,6 +46,9 @@ export default function BrandConfig({ token, tenant, selectedPage, onUpdate }: B
   // Usar settings de la página seleccionada si existe, sino usar settings del tenant
   const settings = selectedPage?.page_settings || tenant.settings || {}
   const defaultBrand = selectedPage?.page_name || tenant.name || ''
+  const selectedPageType = selectedPage?.page_id.startsWith('ig:')
+    ? t('brand_config.instagram_account')
+    : t('brand_config.facebook_page')
 
   const [formData, setFormData] = useState({
     brand: settings.brand || defaultBrand,
@@ -121,6 +125,20 @@ export default function BrandConfig({ token, tenant, selectedPage, onUpdate }: B
       <p className="text-gray-400 text-sm mb-6">
         {t('brand_config.subtitle')}
       </p>
+
+      {selectedPage && (
+        <div className="mb-5 rounded-lg border border-white/10 bg-white/5 px-4 py-3">
+          <div className="text-xs uppercase text-gray-500">
+            {t('brand_config.configuring')}
+          </div>
+          <div className="mt-1 text-sm font-medium text-white">
+            {selectedPage.page_name}
+          </div>
+          <div className="mt-1 text-xs text-gray-400">
+            {selectedPageType} · {t('brand_config.tenant_scope', { tenant: tenant.name })}
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 p-3 rounded-lg bg-red-500/20 border border-red-500/50 text-red-200 text-sm">
