@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import BrandConfig from '../components/dashboard/BrandConfig';
@@ -130,9 +130,9 @@ function contactFromSession(sessionId: string): ConversationContact {
   return { id, name: 'Cliente' };
 }
 
-function contactFromConversation(conv: any): ConversationContact {
+function contactFromConversation(conv: any, profileOverride?: any): ConversationContact {
   const inbound = conv.messages.find((msg: any) => msg.direction === 'in' && profileFromMessage(msg));
-  const profile = inbound ? profileFromMessage(inbound) : null;
+  const profile = profileOverride || (inbound ? profileFromMessage(inbound) : null);
   const fallback = contactFromSession(conv.sessionId);
   return {
     id: profile?.id || fallback.id,
@@ -191,6 +191,8 @@ function Dashboard() {
   const [savingBotState, setSavingBotState] = useState(false);
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
   const [conversationMessages, setConversationMessages] = useState<any[]>([]);
+  const [conversationProfiles, setConversationProfiles] = useState<Record<string, any>>({});
+  const profileRequestedSessions = useRef<Set<string>>(new Set());
   const [facebookPages, setFacebookPages] = useState<any[]>([]);
   const [selectedPage, setSelectedPage] = useState<any | null>(null);
   const [replyMessage, setReplyMessage] = useState('');
@@ -333,12 +335,36 @@ function Dashboard() {
       );
   };
 
+  const fetchConversationProfile = async (sessionId: string) => {
+    if (!sessionId || conversationProfiles[sessionId] || profileRequestedSessions.current.has(sessionId)) return;
+
+    const conv = groupedConversations().find(c => c.sessionId === sessionId);
+    if (conv?.messages.some((msg: any) => profileFromMessage(msg))) return;
+
+    profileRequestedSessions.current.add(sessionId);
+    try {
+      const params = new URLSearchParams({ session_id: sessionId });
+      if (selectedPage?.page_id) params.set('page_id', selectedPage.page_id);
+      const res = await fetch(`${API_BASE}/v1/admin/conversations/profile?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.profile) {
+        setConversationProfiles(prev => ({ ...prev, [sessionId]: data.profile }));
+      }
+    } catch (err) {
+      console.error('Error fetching conversation profile:', err);
+    }
+  };
+
   const openConversation = (sessionId: string) => {
     setSelectedSession(sessionId);
     setReplyMessage('');
     const conv = groupedConversations().find(c => c.sessionId === sessionId);
     if (conv) setConversationMessages(conv.messages);
     fetchConversationBotState(sessionId);
+    fetchConversationProfile(sessionId);
   };
 
   useEffect(() => {
@@ -346,6 +372,14 @@ function Dashboard() {
     const conv = groupedConversations().find(c => c.sessionId === selectedSession);
     if (conv) setConversationMessages(conv.messages);
   }, [messages, selectedSession]);
+
+  useEffect(() => {
+    if (activeTab !== 'messages' || !token || facebookPages.length === 0) return;
+    groupedConversations()
+      .filter(conv => !conversationProfiles[conv.sessionId])
+      .slice(0, 6)
+      .forEach(conv => fetchConversationProfile(conv.sessionId));
+  }, [messages, activeTab, token, selectedPage?.page_id, facebookPages.length]);
 
   const sendReply = async () => {
     if (!selectedSession || !replyMessage.trim()) return;
@@ -545,7 +579,7 @@ function Dashboard() {
     ? conversations.find(conv => conv.sessionId === selectedSession)
     : null;
   const selectedContact = selectedConversation
-    ? contactFromConversation(selectedConversation)
+    ? contactFromConversation(selectedConversation, selectedSession ? conversationProfiles[selectedSession] : undefined)
     : selectedSession
       ? contactFromSession(selectedSession)
       : null;
@@ -754,7 +788,7 @@ function Dashboard() {
                   conversations.map((conv) => {
                     const isInstagram = conv.lastMessage.channel === 'instagram_dm';
                     const isFacebook = conv.lastMessage.channel === 'facebook_dm';
-                    const contact = contactFromConversation(conv);
+                    const contact = contactFromConversation(conv, conversationProfiles[conv.sessionId]);
 
                     return (
                       <div

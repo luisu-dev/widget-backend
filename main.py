@@ -1218,12 +1218,13 @@ async def fetch_meta_participant_profile(
         PARTICIPANT_PROFILE_CACHE.move_to_end(cache_key)
         return cached[1]
 
-    fields = "id,name,first_name,last_name,profile_pic" if platform == "facebook" else "id,name,username,profile_picture_url"
+    fields = "id,name,username,profile_pic" if platform == "instagram" else "id,name,first_name,last_name,profile_pic"
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.get(
                 f"{GRAPH}/{participant_id}",
-                params={"fields": fields, "access_token": page_token},
+                params={"fields": fields},
+                headers={"Authorization": f"Bearer {page_token}"},
             )
         if resp.status_code != 200:
             log.debug(f"Meta participant profile unavailable platform={platform} id={participant_id}: {resp.text}")
@@ -5506,45 +5507,7 @@ async def tenant_list_messages(
     async with db_engine.connect() as conn:
         rows = (await conn.execute(text(q), params)).mappings().all()
 
-    items = [dict(row) for row in rows]
-    page_ids = sorted({item.get("page_id") for item in items if item.get("page_id")})
-    page_tokens: Dict[str, str] = {}
-    if page_ids:
-        async with db_engine.connect() as conn:
-            token_rows = (await conn.execute(
-                text("""
-                    SELECT page_id, page_token
-                    FROM facebook_pages
-                    WHERE page_id = ANY(:page_ids)
-                      AND (CAST(:fb_user_id AS TEXT) IS NULL OR fb_user_id = CAST(:fb_user_id AS TEXT) OR tenant_slug = :tenant)
-                """),
-                {"page_ids": page_ids, "fb_user_id": fb_user_id, "tenant": tenant_filter}
-            )).mappings().all()
-        page_tokens = {row["page_id"]: row["page_token"] for row in token_rows if row.get("page_token")}
-
-    for item in items:
-        channel_name = item.get("channel")
-        if channel_name not in ("facebook_dm", "instagram_dm"):
-            continue
-        payload = item.get("payload") or {}
-        if not isinstance(payload, dict):
-            payload = {}
-        if payload.get("participant_profile"):
-            continue
-
-        parts = str(item.get("session_id") or "").split(":")
-        participant_id = payload.get("participant_id") or (parts[2] if len(parts) >= 3 else item.get("author"))
-        page_token = page_tokens.get(item.get("page_id"))
-        platform_name = "instagram" if channel_name == "instagram_dm" else "facebook"
-        profile = await fetch_meta_participant_profile(page_token, participant_id, platform_name)
-        if profile:
-            item["payload"] = {
-                **payload,
-                "participant_id": participant_id,
-                "participant_profile": profile,
-            }
-
-    return {"items": items}
+    return {"items": [dict(row) for row in rows]}
 
 
 @app.patch("/v1/admin/tenant/settings")
@@ -5838,6 +5801,96 @@ async def admin_get_conversation_bot_state(session_id: str = Query(...), current
     if not sid_tenant or sid_tenant != current["tenant_slug"]:
         raise HTTPException(403, "No tienes acceso a esta conversación")
     return {"ok": True, "session_id": sid, "bot_enabled": not is_session_paused(sid)}
+
+
+@app.get("/v1/admin/conversations/profile")
+async def admin_get_conversation_profile(
+    session_id: str = Query(...),
+    page_id: Optional[str] = Query(default=None),
+    current = Depends(require_user)
+):
+    """Obtiene nombre/foto del usuario de una conversación de Messenger o Instagram."""
+    if not db_engine:
+        raise HTTPException(503, "Database not configured")
+
+    sid = session_id.strip()
+    if not sid:
+        raise HTTPException(400, "session_id requerido")
+
+    tenant_slug = current["tenant_slug"]
+    fb_user_id = current.get("fb_user_id")
+    tenant = await fetch_tenant(tenant_slug)
+    tenant_settings = (tenant.get("settings") or {}) if tenant else {}
+    if not fb_user_id:
+        fb_user_id = tenant_settings.get("fb_user_id")
+    tenant_filter = tenant_slug
+
+    if page_id:
+        async with db_engine.connect() as conn:
+            page_tenant_row = (await conn.execute(
+                text("SELECT tenant_slug FROM facebook_pages WHERE page_id = :page_id"),
+                {"page_id": page_id}
+            )).mappings().first()
+        if page_tenant_row:
+            tenant_filter = page_tenant_row["tenant_slug"]
+
+    async with db_engine.connect() as conn:
+        message_row = (await conn.execute(
+            text("""
+                SELECT channel, author, payload, page_id
+                FROM messages
+                WHERE tenant_slug = :tenant
+                  AND session_id = :sid
+                  AND channel IN ('facebook_dm', 'instagram_dm')
+                ORDER BY id DESC
+                LIMIT 1
+            """),
+            {"tenant": tenant_filter, "sid": sid}
+        )).mappings().first()
+
+    if not message_row:
+        raise HTTPException(404, "Conversación no encontrada")
+
+    payload = message_row.get("payload") or {}
+    if not isinstance(payload, dict):
+        payload = {}
+    existing_profile = payload.get("participant_profile")
+    if existing_profile:
+        return {"profile": existing_profile}
+
+    parts = sid.split(":")
+    participant_id = payload.get("participant_id") or (parts[2] if len(parts) >= 3 else message_row.get("author"))
+    resolved_page_id = page_id or message_row.get("page_id")
+    if not participant_id or not resolved_page_id:
+        return {"profile": None}
+
+    if fb_user_id:
+        page_query = text("""
+            SELECT page_token
+            FROM facebook_pages
+            WHERE page_id = :page_id
+              AND (tenant_slug = :tenant OR fb_user_id = :fb_user_id)
+            LIMIT 1
+        """)
+        page_params = {"page_id": resolved_page_id, "tenant": tenant_filter, "fb_user_id": fb_user_id}
+    else:
+        page_query = text("""
+            SELECT page_token
+            FROM facebook_pages
+            WHERE page_id = :page_id
+              AND tenant_slug = :tenant
+            LIMIT 1
+        """)
+        page_params = {"page_id": resolved_page_id, "tenant": tenant_filter}
+
+    async with db_engine.connect() as conn:
+        page_row = (await conn.execute(page_query, page_params)).first()
+
+    channel_name = message_row.get("channel")
+    platform = "instagram" if channel_name == "instagram_dm" else "facebook"
+    page_token = page_row[0] if page_row else None
+    profile = await fetch_meta_participant_profile(page_token, participant_id, platform)
+    return {"profile": profile}
 
 
 @app.get("/v1/admin/metrics/overview")
