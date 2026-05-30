@@ -3021,7 +3021,11 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                 # Facebook Page comments (feed)
                 if obj == "page" and field == "feed" and value.get("item") == "comment" and value.get("verb") == "add":
                     comment_id = str(value.get("comment_id", ""))
-                    author_id = str(value.get("from", {}).get("id", ""))
+                    author = value.get("from", {}) or {}
+                    author_id = str(author.get("id", ""))
+                    author_name = (author.get("name") or "").strip()
+                    post_id = str(value.get("post_id") or value.get("parent_id") or "")
+                    post_url = f"https://www.facebook.com/{post_id}?comment_id={comment_id}" if post_id else ""
                     text_in = (value.get("message") or "").strip()
                     log.debug(f"[{rid}] feed comment={comment_id} author={author_id} text={text_in!r}")
 
@@ -3070,13 +3074,28 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                         public_reply = public_reply.rstrip() + " Te escribo por DM para más detalles."
 
                     sid = ensure_session(f"fb:{tenant_slug}:comment:{comment_id}")
+                    comment_payload = {
+                        "comment_id": comment_id,
+                        "author_id": author_id,
+                        "author_name": author_name,
+                        "post_id": post_id,
+                        "post_url": post_url,
+                        "participant_id": author_id,
+                        "participant_profile": {
+                            "id": author_id,
+                            "name": author_name or "Comentario de Facebook",
+                        },
+                        "text": text_in,
+                    }
+                    await store_event(tenant_slug, sid, "page_comment_in", comment_payload)
+                    await log_message(tenant_slug, sid, "facebook_comment", "in", text_in, author=author_name or author_id, payload=comment_payload, page_id=page_id)
 
                     if META_DRY_RUN:
                         log.debug(f"[{rid}] feed DRY_RUN omitido comment={comment_id}")
                     else:
                         try:
                             await fb_reply_comment(page_token, comment_id, public_reply)
-                            asyncio.create_task(log_message(tenant_slug, sid, "facebook_comment", "out", public_reply, author="bot", page_id=page_id))
+                            await log_message(tenant_slug, sid, "facebook_comment", "out", public_reply, author="bot", payload=comment_payload, page_id=page_id)
                         except Exception as e:
                             log.error(f"[{rid}] fb_reply_comment error: {e}")
 
@@ -3086,16 +3105,14 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                         except Exception as e:
                             log.error(f"[{rid}] private reply error: {e}")
 
-                    asyncio.create_task(store_event(
-                        tenant_slug, sid, "page_comment_in",
-                        {"comment_id": comment_id, "author_id": author_id, "text": text_in}
-                    ))
-                    asyncio.create_task(log_message(tenant_slug, sid, "facebook_comment", "in", text_in, author=author_id, page_id=page_id))
-
                 # Instagram comments
                 if obj == "instagram" and field == "comments":
                     ig_comment_id = str(value.get("id", "")) or str(value.get("comment_id", ""))
-                    author_id = str(value.get("from", {}).get("id", ""))
+                    author = value.get("from", {}) or {}
+                    author_id = str(author.get("id", ""))
+                    author_name = (author.get("username") or author.get("name") or "").strip()
+                    media = value.get("media", {}) or {}
+                    media_id = str(value.get("media_id") or media.get("id") or "")
                     text_in = (value.get("text") or "").strip()
                     log.debug(f"[{rid}] IG comment={ig_comment_id} author={author_id} text={text_in!r}")
 
@@ -3144,13 +3161,28 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                         public_reply = public_reply.rstrip() + " Te escribo por DM para más detalles."
 
                     sid = ensure_session(f"ig:{tenant_slug}:comment:{ig_comment_id}")
+                    comment_payload = {
+                        "comment_id": ig_comment_id,
+                        "author_id": author_id,
+                        "author_name": author_name,
+                        "media_id": media_id,
+                        "participant_id": author_id,
+                        "participant_profile": {
+                            "id": author_id,
+                            "name": author_name or "Comentario de Instagram",
+                            "username": author.get("username"),
+                        },
+                        "text": text_in,
+                    }
+                    await store_event(tenant_slug, sid, "instagram_comment_in", comment_payload)
+                    await log_message(tenant_slug, sid, "instagram_comment", "in", text_in, author=author_name or author_id, payload=comment_payload, page_id=page_id)
 
                     if META_DRY_RUN:
                         log.debug(f"[{rid}] IG DRY_RUN omitido comment={ig_comment_id}")
                     else:
                         try:
                             await ig_reply_comment(page_token, ig_comment_id, public_reply)
-                            asyncio.create_task(log_message(tenant_slug, sid, "instagram_comment", "out", public_reply, author="bot", page_id=page_id))
+                            await log_message(tenant_slug, sid, "instagram_comment", "out", public_reply, author="bot", payload=comment_payload, page_id=page_id)
                         except Exception as e:
                             log.error(f"[{rid}] ig_reply_comment error: {e}")
 
@@ -3159,12 +3191,6 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                                 "Hola, seguimos por mensaje para resolverlo contigo. ¿Puedes contarme un poco más?")
                         except Exception as e:
                             log.error(f"[{rid}] IG private reply error: {e}")
-
-                    asyncio.create_task(store_event(
-                        tenant_slug, sid, "instagram_comment_in",
-                        {"comment_id": ig_comment_id, "author_id": author_id, "text": text_in}
-                    ))
-                    asyncio.create_task(log_message(tenant_slug, sid, "instagram_comment", "in", text_in, author=author_id, page_id=page_id))
 
         return {"ok": True}
     except Exception as e:
@@ -5713,6 +5739,42 @@ async def admin_send_message(
     if not page_token:
         raise HTTPException(400, "Falta page_token para enviar mensajes")
 
+    if len(parts) >= 4 and parts[2] == "comment":
+        comment_id = parts[3]
+        try:
+            if platform == "ig":
+                result = await ig_reply_comment(page_token, comment_id, message)
+                channel_label = "instagram_comment"
+            else:
+                result = await fb_reply_comment(page_token, comment_id, message)
+                channel_label = "facebook_comment"
+
+            async with db_engine.begin() as conn:
+                await conn.execute(
+                    text("""
+                        INSERT INTO messages (tenant_slug, session_id, channel, direction, author, content, payload, page_id)
+                        VALUES (:tenant, :session_id, :channel, 'out', 'admin', :content, :payload, :page_id)
+                    """),
+                    {
+                        "tenant": tenant_slug,
+                        "session_id": session_id,
+                        "channel": channel_label,
+                        "content": message,
+                        "payload": json.dumps({"admin_reply": True, "meta_response": result, "comment_id": comment_id}),
+                        "page_id": page_id
+                    }
+                )
+
+            return {
+                "ok": True,
+                "message": "Comentario publicado correctamente",
+                "comment_id": comment_id,
+                "platform": platform,
+                "meta_response": result,
+            }
+        except Exception as e:
+            raise HTTPException(500, f"Error al publicar comentario: {str(e)}")
+
     # Determinar messaging_type según ventana de 24h
     messaging_type = "RESPONSE"
     tag = None
@@ -5757,7 +5819,7 @@ async def admin_send_message(
                 {
                     "tenant": tenant_slug,
                     "session_id": session_id,
-                    "channel": f"{platform}_dm",
+                    "channel": "instagram_dm" if platform == "ig" else "facebook_dm",
                     "content": message,
                     "payload": json.dumps({"admin_reply": True, "meta_response": result}),
                     "page_id": page_id
@@ -5837,12 +5899,12 @@ async def admin_get_conversation_profile(
     async with db_engine.connect() as conn:
         message_row = (await conn.execute(
             text("""
-                SELECT channel, author, payload, page_id
+                SELECT channel, direction, author, payload, page_id
                 FROM messages
                 WHERE tenant_slug = :tenant
                   AND session_id = :sid
-                  AND channel IN ('facebook_dm', 'instagram_dm')
-                ORDER BY id DESC
+                  AND channel IN ('facebook_dm', 'instagram_dm', 'facebook_comment', 'instagram_comment')
+                ORDER BY CASE WHEN direction = 'in' THEN 0 ELSE 1 END, id DESC
                 LIMIT 1
             """),
             {"tenant": tenant_filter, "sid": sid}
@@ -5859,7 +5921,10 @@ async def admin_get_conversation_profile(
         return {"profile": existing_profile}
 
     parts = sid.split(":")
-    participant_id = payload.get("participant_id") or (parts[2] if len(parts) >= 3 else message_row.get("author"))
+    if len(parts) >= 4 and parts[2] == "comment":
+        participant_id = payload.get("participant_id") or payload.get("author_id") or message_row.get("author")
+    else:
+        participant_id = payload.get("participant_id") or (parts[2] if len(parts) >= 3 else message_row.get("author"))
     resolved_page_id = page_id or message_row.get("page_id")
     if not participant_id or not resolved_page_id:
         return {"profile": None}
@@ -5887,7 +5952,7 @@ async def admin_get_conversation_profile(
         page_row = (await conn.execute(page_query, page_params)).first()
 
     channel_name = message_row.get("channel")
-    platform = "instagram" if channel_name == "instagram_dm" else "facebook"
+    platform = "instagram" if channel_name in ("instagram_dm", "instagram_comment") else "facebook"
     page_token = page_row[0] if page_row else None
     profile = await fetch_meta_participant_profile(page_token, participant_id, platform)
     return {"profile": profile}

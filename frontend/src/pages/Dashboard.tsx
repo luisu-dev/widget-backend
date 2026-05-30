@@ -121,12 +121,28 @@ function messagePayload(msg: any) {
 
 function profileFromMessage(msg: any) {
   const payload = messagePayload(msg);
-  return payload.participant_profile || payload.sender_profile || payload.contact_profile || null;
+  if (payload.participant_profile || payload.sender_profile || payload.contact_profile) {
+    return payload.participant_profile || payload.sender_profile || payload.contact_profile;
+  }
+  if (payload.author_name) {
+    return {
+      id: payload.author_id || payload.participant_id || msg.author,
+      name: payload.author_name,
+      username: payload.username,
+    };
+  }
+  return null;
 }
 
 function contactFromSession(sessionId: string): ConversationContact {
   const parts = sessionId.split(':');
   const id = parts.length >= 3 ? parts.slice(2).join(':') : sessionId;
+  if (parts[2] === 'comment') {
+    return {
+      id,
+      name: parts[0] === 'ig' ? 'Comentario de Instagram' : 'Comentario de Facebook',
+    };
+  }
   return { id, name: 'Cliente' };
 }
 
@@ -175,6 +191,31 @@ function ContactAvatar({ contact, size = 40 }: { contact: ConversationContact; s
   );
 }
 
+function isCommentChannel(channel?: string) {
+  return channel === 'facebook_comment' || channel === 'instagram_comment';
+}
+
+function isMessageChannel(channel?: string) {
+  return !isCommentChannel(channel);
+}
+
+function conversationUrl(conv: any) {
+  for (const msg of conv?.messages || []) {
+    const payload = messagePayload(msg);
+    const url = payload.post_url || payload.permalink_url || payload.media_url;
+    if (url) return url;
+  }
+  return '';
+}
+
+function conversationLabel(channel?: string) {
+  if (channel === 'instagram_dm') return 'Instagram';
+  if (channel === 'facebook_dm') return 'Messenger';
+  if (channel === 'facebook_comment') return 'Facebook comment';
+  if (channel === 'instagram_comment') return 'Instagram comment';
+  return channel || 'Conversation';
+}
+
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 function Dashboard() {
@@ -186,6 +227,7 @@ function Dashboard() {
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('integrations');
   const [messages, setMessages] = useState<any[]>([]);
+  const [conversationFilter, setConversationFilter] = useState<'all' | 'messages' | 'comments'>('all');
   const [metrics, setMetrics] = useState<any>(null);
   const [botEnabled, setBotEnabled] = useState(true);
   const [savingBotState, setSavingBotState] = useState(false);
@@ -313,16 +355,25 @@ function Dashboard() {
 
   const groupedConversations = () => {
     const groups: { [key: string]: any[] } = {};
-    messages.forEach(msg => {
+    const visibleMessages = messages.filter(msg => {
+      if (conversationFilter === 'comments') return isCommentChannel(msg.channel);
+      if (conversationFilter === 'messages') return isMessageChannel(msg.channel);
+      return true;
+    });
+
+    visibleMessages.forEach(msg => {
       if (!groups[msg.session_id]) groups[msg.session_id] = [];
       groups[msg.session_id].push(msg);
     });
 
     return Object.entries(groups)
       .map(([sessionId, msgs]) => {
-        const sorted = msgs.sort((a, b) =>
-          new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-        );
+        const sorted = msgs.sort((a, b) => {
+          if (sessionId.includes(':comment:') && a.direction !== b.direction) {
+            return a.direction === 'in' ? -1 : 1;
+          }
+          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        });
         return {
           sessionId,
           messages: sorted,
@@ -584,15 +635,14 @@ function Dashboard() {
       ? contactFromSession(selectedSession)
       : null;
   const selectedChannel = selectedConversation?.lastMessage?.channel || '';
-  const selectedPlatformLabel = selectedChannel === 'instagram_dm'
-    ? 'Instagram'
-    : selectedChannel === 'facebook_dm'
-      ? 'Messenger'
-      : selectedSession?.startsWith('ig:')
-        ? 'Instagram'
-        : selectedSession?.startsWith('fb:')
-          ? 'Messenger'
-          : t('dashboard.session');
+  const selectedPlatformLabel = selectedChannel
+    ? conversationLabel(selectedChannel)
+    : selectedSession?.startsWith('ig:')
+      ? 'Instagram'
+      : selectedSession?.startsWith('fb:')
+        ? 'Messenger'
+        : t('dashboard.session');
+  const selectedContentUrl = selectedConversation ? conversationUrl(selectedConversation) : '';
 
   // ─── Render ──────────────────────────────────────────────────────────────────
   return (
@@ -764,7 +814,7 @@ function Dashboard() {
                   >
                     ← {t('dashboard.back')}
                   </button>
-                )}
+                  )}
                 <button
                   onClick={fetchMessages}
                   className="md-btn-tonal px-4 py-2 text-sm"
@@ -773,6 +823,25 @@ function Dashboard() {
                 </button>
               </div>
             </div>
+
+            {!selectedSession && (
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { id: 'all', label: 'All' },
+                  { id: 'messages', label: 'Messages' },
+                  { id: 'comments', label: 'Comments' },
+                ].map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => setConversationFilter(item.id as 'all' | 'messages' | 'comments')}
+                    aria-pressed={conversationFilter === item.id}
+                    className={conversationFilter === item.id ? 'md-btn-filled px-4 py-2 text-sm' : 'md-btn-outlined px-4 py-2 text-sm'}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Conversation list */}
             {!selectedSession && (
@@ -786,9 +855,12 @@ function Dashboard() {
                   </div>
                 ) : (
                   conversations.map((conv) => {
-                    const isInstagram = conv.lastMessage.channel === 'instagram_dm';
-                    const isFacebook = conv.lastMessage.channel === 'facebook_dm';
+                    const channel = conv.lastMessage.channel;
+                    const isInstagram = channel?.startsWith('instagram');
+                    const isFacebook = channel?.startsWith('facebook');
+                    const isComment = isCommentChannel(channel);
                     const contact = contactFromConversation(conv, conversationProfiles[conv.sessionId]);
+                    const url = conversationUrl(conv);
 
                     return (
                       <div
@@ -836,7 +908,7 @@ function Dashboard() {
                                       : 'var(--md-on-surface-variant)',
                                 }}
                               >
-                                {isInstagram ? 'Instagram' : isFacebook ? 'Messenger' : conv.lastMessage.channel}
+                                {conversationLabel(channel)}
                               </span>
                               {contact.username && (
                                 <span className="text-[11px] truncate" style={{ color: 'var(--md-on-surface-variant)' }}>
@@ -847,14 +919,28 @@ function Dashboard() {
                           </div>
                         </div>
                         <p className="text-[11px] mb-1 truncate" style={{ color: 'var(--md-on-surface-variant)' }}>
-                          ID {contact.id}
+                          {isComment ? 'Post/comment' : 'ID'} {contact.id}
                         </p>
                         <p className="text-sm line-clamp-2 mb-2" style={{ color: 'var(--md-on-surface)' }}>
                           {conv.lastMessage.content}
                         </p>
-                        <p className="text-[11px]" style={{ color: 'var(--md-on-surface-variant)' }}>
-                          {new Date(conv.lastMessage.created_at).toLocaleString(i18n.language.startsWith('en') ? 'en-US' : 'es-MX')}
-                        </p>
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-[11px]" style={{ color: 'var(--md-on-surface-variant)' }}>
+                            {new Date(conv.lastMessage.created_at).toLocaleString(i18n.language.startsWith('en') ? 'en-US' : 'es-MX')}
+                          </p>
+                          {url && (
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-[11px] font-semibold"
+                              style={{ color: 'var(--md-primary)' }}
+                            >
+                              View post
+                            </a>
+                          )}
+                        </div>
                       </div>
                     );
                   })
@@ -886,6 +972,17 @@ function Dashboard() {
                         <p className="text-[12px] truncate" style={{ color: 'var(--md-on-surface-variant)' }}>
                           {selectedContact?.username ? `@${selectedContact.username} · ` : ''}ID {selectedContact?.id || selectedSession}
                         </p>
+                        {selectedContentUrl && (
+                          <a
+                            href={selectedContentUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex mt-2 text-[12px] font-semibold"
+                            style={{ color: 'var(--md-primary)' }}
+                          >
+                            View post
+                          </a>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
@@ -965,8 +1062,11 @@ function Dashboard() {
                 {/* Reply input */}
                 {(() => {
                   const platform = selectedSession?.split(':')[0];
+                  const replyIsComment = isCommentChannel(selectedChannel) || selectedSession?.includes(':comment:');
                   const canReply = platform === 'fb' || platform === 'ig' || platform === 'wa';
-                  const channelLabel = platform === 'wa'
+                  const channelLabel = replyIsComment
+                    ? (platform === 'ig' ? 'Instagram comment' : 'Facebook comment')
+                    : platform === 'wa'
                     ? 'WhatsApp (Twilio)'
                     : platform === 'ig'
                       ? 'Instagram DM'
@@ -1024,7 +1124,7 @@ function Dashboard() {
                         </button>
                       </div>
                       <p className="text-[11px] mt-2" style={{ color: 'var(--md-on-surface-variant)' }}>
-                        {t('dashboard.enter_to_send')}
+                        {replyIsComment ? 'Press Enter to publish the comment.' : t('dashboard.enter_to_send')}
                       </p>
                     </div>
                   );
