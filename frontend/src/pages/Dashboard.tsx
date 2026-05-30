@@ -127,7 +127,7 @@ function profileFromMessage(msg: any) {
 function contactFromSession(sessionId: string): ConversationContact {
   const parts = sessionId.split(':');
   const id = parts.length >= 3 ? parts.slice(2).join(':') : sessionId;
-  return { id, name: id };
+  return { id, name: 'Cliente' };
 }
 
 function contactFromConversation(conv: any): ConversationContact {

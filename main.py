@@ -5516,7 +5516,7 @@ async def tenant_list_messages(
                     SELECT page_id, page_token
                     FROM facebook_pages
                     WHERE page_id = ANY(:page_ids)
-                      AND (:fb_user_id IS NULL OR fb_user_id = :fb_user_id OR tenant_slug = :tenant)
+                      AND (CAST(:fb_user_id AS TEXT) IS NULL OR fb_user_id = CAST(:fb_user_id AS TEXT) OR tenant_slug = :tenant)
                 """),
                 {"page_ids": page_ids, "fb_user_id": fb_user_id, "tenant": tenant_filter}
             )).mappings().all()
