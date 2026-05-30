@@ -100,6 +100,81 @@ function MetricCard({ label, value }: { label: string; value: string | number })
   );
 }
 
+interface ConversationContact {
+  id: string;
+  name: string;
+  avatar?: string;
+  username?: string;
+}
+
+function messagePayload(msg: any) {
+  if (!msg?.payload) return {};
+  if (typeof msg.payload === 'string') {
+    try {
+      return JSON.parse(msg.payload);
+    } catch {
+      return {};
+    }
+  }
+  return msg.payload;
+}
+
+function profileFromMessage(msg: any) {
+  const payload = messagePayload(msg);
+  return payload.participant_profile || payload.sender_profile || payload.contact_profile || null;
+}
+
+function contactFromSession(sessionId: string): ConversationContact {
+  const parts = sessionId.split(':');
+  const id = parts.length >= 3 ? parts.slice(2).join(':') : sessionId;
+  return { id, name: id };
+}
+
+function contactFromConversation(conv: any): ConversationContact {
+  const inbound = conv.messages.find((msg: any) => msg.direction === 'in' && profileFromMessage(msg));
+  const profile = inbound ? profileFromMessage(inbound) : null;
+  const fallback = contactFromSession(conv.sessionId);
+  return {
+    id: profile?.id || fallback.id,
+    name: profile?.name || profile?.username || fallback.name,
+    username: profile?.username,
+    avatar: profile?.profile_pic || profile?.profile_picture_url,
+  };
+}
+
+function initialsFor(name: string) {
+  const clean = name.trim();
+  if (!clean) return '?';
+  const parts = clean.split(/\s+/).slice(0, 2);
+  return parts.map(part => part[0]?.toUpperCase()).join('') || clean[0].toUpperCase();
+}
+
+function ContactAvatar({ contact, size = 40 }: { contact: ConversationContact; size?: number }) {
+  return (
+    <div
+      className="shrink-0 overflow-hidden rounded-full flex items-center justify-center text-[13px] font-semibold"
+      style={{
+        width: size,
+        height: size,
+        background: 'var(--md-primary-container)',
+        color: 'var(--md-on-primary-container)',
+        border: '1px solid var(--md-outline-variant)',
+      }}
+    >
+      {contact.avatar ? (
+        <img
+          src={contact.avatar}
+          alt=""
+          className="w-full h-full object-cover"
+          referrerPolicy="no-referrer"
+        />
+      ) : (
+        initialsFor(contact.name)
+      )}
+    </div>
+  );
+}
+
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 function Dashboard() {
@@ -465,6 +540,25 @@ function Dashboard() {
   const isAdmin =
     ['acid-ia', 'acidia', 'acidium'].includes(profile.tenant.slug) ||
     profile.user.email?.endsWith('@acidia.app');
+  const conversations = groupedConversations();
+  const selectedConversation = selectedSession
+    ? conversations.find(conv => conv.sessionId === selectedSession)
+    : null;
+  const selectedContact = selectedConversation
+    ? contactFromConversation(selectedConversation)
+    : selectedSession
+      ? contactFromSession(selectedSession)
+      : null;
+  const selectedChannel = selectedConversation?.lastMessage?.channel || '';
+  const selectedPlatformLabel = selectedChannel === 'instagram_dm'
+    ? 'Instagram'
+    : selectedChannel === 'facebook_dm'
+      ? 'Messenger'
+      : selectedSession?.startsWith('ig:')
+        ? 'Instagram'
+        : selectedSession?.startsWith('fb:')
+          ? 'Messenger'
+          : t('dashboard.session');
 
   // ─── Render ──────────────────────────────────────────────────────────────────
   return (
@@ -625,7 +719,7 @@ function Dashboard() {
                 <p className="text-sm mt-0.5" style={{ color: 'var(--md-on-surface-variant)' }}>
                   {selectedSession
                     ? t('dashboard.session_messages')
-                    : t('dashboard.active_conversations', { count: groupedConversations().length })}
+                    : t('dashboard.active_conversations', { count: conversations.length })}
                 </p>
               </div>
               <div className="flex gap-2">
@@ -649,7 +743,7 @@ function Dashboard() {
             {/* Conversation list */}
             {!selectedSession && (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {groupedConversations().length === 0 ? (
+                {conversations.length === 0 ? (
                   <div
                     className="col-span-full rounded-[16px] p-10 text-center"
                     style={{ background: 'var(--md-surface-container)' }}
@@ -657,9 +751,10 @@ function Dashboard() {
                     <p style={{ color: 'var(--md-on-surface-variant)' }}>{t('dashboard.no_conversations')}</p>
                   </div>
                 ) : (
-                  groupedConversations().map((conv) => {
+                  conversations.map((conv) => {
                     const isInstagram = conv.lastMessage.channel === 'instagram_dm';
                     const isFacebook = conv.lastMessage.channel === 'facebook_dm';
+                    const contact = contactFromConversation(conv);
 
                     return (
                       <div
@@ -680,30 +775,45 @@ function Dashboard() {
                               : '1px solid var(--md-outline-variant)',
                         }}
                       >
-                        <div className="flex items-center justify-between mb-2">
-                          <span
-                            className="text-[11px] font-semibold uppercase tracking-widest px-2 py-0.5 rounded-full"
-                            style={{
-                              background: isInstagram
-                                ? 'rgba(162,0,255,.2)'
-                                : isFacebook
-                                  ? 'rgba(24,119,242,.2)'
-                                  : 'var(--md-surface-container-high)',
-                              color: isInstagram
-                                ? '#d87eff'
-                                : isFacebook
-                                  ? '#78aaff'
-                                  : 'var(--md-on-surface-variant)',
-                            }}
-                          >
-                            {isInstagram ? 'Instagram' : isFacebook ? 'Messenger' : conv.lastMessage.channel}
-                          </span>
-                          <span className="text-[11px]" style={{ color: 'var(--md-on-surface-variant)' }}>
-                            {t('dashboard.messages_count', { count: conv.messageCount })}
-                          </span>
+                        <div className="flex items-start gap-3 mb-3">
+                          <ContactAvatar contact={contact} />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-sm font-semibold truncate" style={{ color: 'var(--md-on-surface)' }}>
+                                {contact.name}
+                              </p>
+                              <span className="text-[11px] shrink-0" style={{ color: 'var(--md-on-surface-variant)' }}>
+                                {t('dashboard.messages_count', { count: conv.messageCount })}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span
+                                className="text-[10px] font-semibold uppercase tracking-widest px-2 py-0.5 rounded-full"
+                                style={{
+                                  background: isInstagram
+                                    ? 'rgba(162,0,255,.2)'
+                                    : isFacebook
+                                      ? 'rgba(24,119,242,.2)'
+                                      : 'var(--md-surface-container-high)',
+                                  color: isInstagram
+                                    ? '#d87eff'
+                                    : isFacebook
+                                      ? '#78aaff'
+                                      : 'var(--md-on-surface-variant)',
+                                }}
+                              >
+                                {isInstagram ? 'Instagram' : isFacebook ? 'Messenger' : conv.lastMessage.channel}
+                              </span>
+                              {contact.username && (
+                                <span className="text-[11px] truncate" style={{ color: 'var(--md-on-surface-variant)' }}>
+                                  @{contact.username}
+                                </span>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                        <p className="text-[12px] mb-1 truncate font-mono" style={{ color: 'var(--md-on-surface-variant)' }}>
-                          {conv.sessionId.substring(0, 16)}…
+                        <p className="text-[11px] mb-1 truncate" style={{ color: 'var(--md-on-surface-variant)' }}>
+                          ID {contact.id}
                         </p>
                         <p className="text-sm line-clamp-2 mb-2" style={{ color: 'var(--md-on-surface)' }}>
                           {conv.lastMessage.content}
@@ -730,13 +840,19 @@ function Dashboard() {
                   style={{ borderBottom: '1px solid var(--md-outline-variant)' }}
                 >
                   <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                    <div>
-                      <p className="text-[11px] uppercase tracking-widest font-medium mb-0.5" style={{ color: 'var(--md-on-surface-variant)' }}>
-                        {t('dashboard.session')}
-                      </p>
-                      <p className="text-sm font-mono" style={{ color: 'var(--md-on-surface)' }}>
-                        {selectedSession}
-                      </p>
+                    <div className="flex items-center gap-3 min-w-0">
+                      {selectedContact && <ContactAvatar contact={selectedContact} size={48} />}
+                      <div className="min-w-0">
+                        <p className="text-[11px] uppercase tracking-widest font-medium mb-0.5" style={{ color: 'var(--md-on-surface-variant)' }}>
+                          {selectedPlatformLabel}
+                        </p>
+                        <p className="text-[16px] font-semibold truncate" style={{ color: 'var(--md-on-surface)' }}>
+                          {selectedContact?.name || selectedSession}
+                        </p>
+                        <p className="text-[12px] truncate" style={{ color: 'var(--md-on-surface-variant)' }}>
+                          {selectedContact?.username ? `@${selectedContact.username} · ` : ''}ID {selectedContact?.id || selectedSession}
+                        </p>
+                      </div>
                     </div>
                     <div className="flex items-center gap-3">
                       <div>
@@ -761,47 +877,55 @@ function Dashboard() {
 
                 {/* Messages */}
                 <div className="p-4 space-y-3 max-h-[520px] overflow-y-auto">
-                  {conversationMessages.map((msg) => (
-                    <div
-                      key={msg.id}
-                      className={`flex ${msg.direction === 'in' ? 'justify-start' : 'justify-end'}`}
-                    >
+                  {conversationMessages.map((msg) => {
+                    const msgProfile = profileFromMessage(msg);
+                    const authorName = msg.direction === 'in'
+                      ? msgProfile?.name || msgProfile?.username || selectedContact?.name || t('dashboard.customer')
+                      : String(msg.author || '').toLowerCase() === 'admin'
+                        ? 'Admin'
+                        : 'Bot';
+                    return (
                       <div
-                        className="max-w-[72%] rounded-[16px] px-4 py-3"
-                        style={{
-                          background: msg.direction === 'in'
-                            ? 'var(--md-surface-container-high)'
-                            : 'var(--md-primary-container)',
-                        }}
+                        key={msg.id}
+                        className={`flex ${msg.direction === 'in' ? 'justify-start' : 'justify-end'}`}
                       >
-                        <div className="flex items-center gap-2 mb-1">
-                          <span
-                            className="text-[11px] font-medium"
+                        <div
+                          className="max-w-[72%] rounded-[16px] px-4 py-3"
+                          style={{
+                            background: msg.direction === 'in'
+                              ? 'var(--md-surface-container-high)'
+                              : 'var(--md-primary-container)',
+                          }}
+                        >
+                          <div className="flex items-center gap-2 mb-1">
+                            <span
+                              className="text-[11px] font-medium"
+                              style={{
+                                color: msg.direction === 'in'
+                                  ? 'var(--md-on-surface-variant)'
+                                  : 'var(--md-on-primary-container)',
+                              }}
+                            >
+                              {authorName}
+                            </span>
+                            <span className="text-[10px]" style={{ color: 'var(--md-outline)' }}>
+                              {new Date(msg.created_at).toLocaleTimeString(i18n.language.startsWith('en') ? 'en-US' : 'es-MX')}
+                            </span>
+                          </div>
+                          <p
+                            className="text-sm"
                             style={{
                               color: msg.direction === 'in'
-                                ? 'var(--md-on-surface-variant)'
+                                ? 'var(--md-on-surface)'
                                 : 'var(--md-on-primary-container)',
                             }}
                           >
-                            {msg.direction === 'in' ? msg.author || t('dashboard.customer') : 'Bot'}
-                          </span>
-                          <span className="text-[10px]" style={{ color: 'var(--md-outline)' }}>
-                            {new Date(msg.created_at).toLocaleTimeString(i18n.language.startsWith('en') ? 'en-US' : 'es-MX')}
-                          </span>
+                            {msg.content}
+                          </p>
                         </div>
-                        <p
-                          className="text-sm"
-                          style={{
-                            color: msg.direction === 'in'
-                              ? 'var(--md-on-surface)'
-                              : 'var(--md-on-primary-container)',
-                          }}
-                        >
-                          {msg.content}
-                        </p>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 {/* Reply input */}

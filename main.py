@@ -1202,6 +1202,53 @@ async def log_message(tenant_slug: str, sid: str, channel: str, direction: str, 
             }
         )
 
+
+async def fetch_meta_participant_profile(
+    page_token: Optional[str],
+    participant_id: Optional[str],
+    platform: str = "facebook",
+) -> Optional[dict]:
+    if not page_token or not participant_id:
+        return None
+
+    cache_key = f"{platform}:{participant_id}"
+    cached = PARTICIPANT_PROFILE_CACHE.get(cache_key)
+    now = time.time()
+    if cached and now - cached[0] < PARTICIPANT_PROFILE_TTL_SECONDS:
+        PARTICIPANT_PROFILE_CACHE.move_to_end(cache_key)
+        return cached[1]
+
+    fields = "id,name,first_name,last_name,profile_pic" if platform == "facebook" else "id,name,username,profile_picture_url"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(
+                f"{GRAPH}/{participant_id}",
+                params={"fields": fields, "access_token": page_token},
+            )
+        if resp.status_code != 200:
+            log.debug(f"Meta participant profile unavailable platform={platform} id={participant_id}: {resp.text}")
+            return None
+
+        data = resp.json()
+        full_name = (data.get("name") or " ".join(
+            part for part in [data.get("first_name"), data.get("last_name")] if part
+        )).strip()
+        profile = {
+            "id": str(data.get("id") or participant_id),
+            "name": full_name or data.get("username") or str(participant_id),
+            "username": data.get("username"),
+            "profile_pic": data.get("profile_pic") or data.get("profile_picture_url"),
+        }
+        PARTICIPANT_PROFILE_CACHE[cache_key] = (now, profile)
+        PARTICIPANT_PROFILE_CACHE.move_to_end(cache_key)
+        while len(PARTICIPANT_PROFILE_CACHE) > PARTICIPANT_PROFILE_CACHE_MAX:
+            PARTICIPANT_PROFILE_CACHE.popitem(last=False)
+        return profile
+    except Exception as e:
+        log.debug(f"Meta participant profile fetch failed platform={platform} id={participant_id}: {e}")
+        return None
+
+
 def _twilio_req_is_valid(request: Request, auth_token: str) -> bool:
     """Valida la firma de Twilio en webhooks para prevenir solicitudes falsificadas."""
     if not TWILIO_VALIDATE_SIGNATURE:
@@ -1857,6 +1904,9 @@ MAX_RECENT_MESSAGES = 10
 LOOP_DETECTION_THRESHOLD = 5  # If 5+ messages in 30 seconds, likely a loop
 # Pausas de bot por conversación (en memoria)
 PAUSED_SESSIONS: set[str] = set()
+PARTICIPANT_PROFILE_CACHE: "OrderedDict[str, tuple[float, dict]]" = OrderedDict()
+PARTICIPANT_PROFILE_TTL_SECONDS = 6 * 3600
+PARTICIPANT_PROFILE_CACHE_MAX = 1000
 
 
 def _seen_key(obj: str, owner: str, field: str, verb: str, cid: str) -> str:
@@ -2777,9 +2827,16 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                     continue
                 sid = ensure_session(f"fb:{tenant_slug}:{participant_id}")
                 add_message(sid, "user", text_in)
-                asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_in", {"from": sender_id, "text": text_in}))
                 channel_label = "instagram_dm" if obj == "instagram" else "facebook_dm"
-                asyncio.create_task(log_message(tenant_slug, sid, channel_label, "in", text_in, author=sender_id, page_id=page_id))
+                platform = "instagram" if obj == "instagram" else "facebook"
+                participant_profile = await fetch_meta_participant_profile(page_token, participant_id, platform)
+                message_payload = {
+                    "from": sender_id,
+                    "participant_id": participant_id,
+                    "participant_profile": participant_profile,
+                }
+                asyncio.create_task(store_event(tenant_slug, sid, f"{obj}_in", {"text": text_in, **message_payload}))
+                asyncio.create_task(log_message(tenant_slug, sid, channel_label, "in", text_in, author=sender_id, payload=message_payload, page_id=page_id))
 
                 # Si la conversación está pausada, no responder automáticamente
                 if is_session_paused(sid):
@@ -2921,7 +2978,6 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
                     )
                 else:
                     try:
-                        platform = "instagram" if obj == "instagram" else "facebook"
                         log.info(f"[{rid}] Sending message - platform={platform}, participant_id={participant_id}, page_token={(page_token or '')[:20]}...")
                         await meta_send_text_with_refresh(tenant_slug, participant_id, answer, platform=platform, page_token=page_token)
                         log.info(f"[{rid}] Message sent successfully to {participant_id}")
@@ -5439,7 +5495,7 @@ async def tenant_list_messages(
     q = f"""
         SELECT *
         FROM (
-            SELECT id, tenant_slug, session_id, channel, direction, author, content, payload, created_at
+            SELECT id, tenant_slug, session_id, channel, direction, author, content, payload, page_id, created_at
             FROM messages
             WHERE {where}
             ORDER BY id DESC
@@ -5449,7 +5505,46 @@ async def tenant_list_messages(
     """
     async with db_engine.connect() as conn:
         rows = (await conn.execute(text(q), params)).mappings().all()
-    return {"items": [dict(row) for row in rows]}
+
+    items = [dict(row) for row in rows]
+    page_ids = sorted({item.get("page_id") for item in items if item.get("page_id")})
+    page_tokens: Dict[str, str] = {}
+    if page_ids:
+        async with db_engine.connect() as conn:
+            token_rows = (await conn.execute(
+                text("""
+                    SELECT page_id, page_token
+                    FROM facebook_pages
+                    WHERE page_id = ANY(:page_ids)
+                      AND (:fb_user_id IS NULL OR fb_user_id = :fb_user_id OR tenant_slug = :tenant)
+                """),
+                {"page_ids": page_ids, "fb_user_id": fb_user_id, "tenant": tenant_filter}
+            )).mappings().all()
+        page_tokens = {row["page_id"]: row["page_token"] for row in token_rows if row.get("page_token")}
+
+    for item in items:
+        channel_name = item.get("channel")
+        if channel_name not in ("facebook_dm", "instagram_dm"):
+            continue
+        payload = item.get("payload") or {}
+        if not isinstance(payload, dict):
+            payload = {}
+        if payload.get("participant_profile"):
+            continue
+
+        parts = str(item.get("session_id") or "").split(":")
+        participant_id = payload.get("participant_id") or (parts[2] if len(parts) >= 3 else item.get("author"))
+        page_token = page_tokens.get(item.get("page_id"))
+        platform_name = "instagram" if channel_name == "instagram_dm" else "facebook"
+        profile = await fetch_meta_participant_profile(page_token, participant_id, platform_name)
+        if profile:
+            item["payload"] = {
+                **payload,
+                "participant_id": participant_id,
+                "participant_profile": profile,
+            }
+
+    return {"items": items}
 
 
 @app.patch("/v1/admin/tenant/settings")
