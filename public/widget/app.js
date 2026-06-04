@@ -469,17 +469,17 @@ if (document.readyState === "loading") {
       base.addColorStop(0.65,'#0c0f15');
       base.addColorStop(1,  '#090b10');
     } else {
-      base.addColorStop(0,  'rgba(255,255,255,.98)');
-      base.addColorStop(0.68,'rgba(248,250,252,.94)');
-      base.addColorStop(1,  'rgba(226,232,240,.9)');
+      base.addColorStop(0,  '#21133d');
+      base.addColorStop(0.62,'#171a33');
+      base.addColorStop(1,  '#101827');
     }
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = base;
     ctx.fillRect(cx-R-2, cy-R-2, (R+2)*2, (R+2)*2);
 
-    // En oscuro, screen da brillo; en claro, source-over mantiene el humo visible.
+    // Mantiene el humo luminoso sobre una base profunda, tambien en tema claro.
     const [C1, C2] = palette();
-    ctx.globalCompositeOperation = isDark ? 'screen' : 'source-over';
+    ctx.globalCompositeOperation = 'screen';
     const speedK = MODE==='thinking' ? 1.2 : MODE==='unread' ? 1.0 : 0.85;
 
     for(let i=0;i<blobs.length;i++){
@@ -495,8 +495,8 @@ if (document.readyState === "loading") {
       const col  = mix(C1, C2, mixU);
 
       const outerAlphaBase = MODE==='unread' ? 0.42 : MODE==='thinking' ? 0.38 : 0.35;
-      const outerAlpha = isDark ? outerAlphaBase : Math.min(0.58, outerAlphaBase + 0.16);
-      const innerAlpha = Math.min(isDark ? 0.85 : 0.72, outerAlpha + (isDark ? 0.22 : 0.12));
+      const outerAlpha = isDark ? outerAlphaBase : Math.min(0.5, outerAlphaBase + 0.08);
+      const innerAlpha = Math.min(0.85, outerAlpha + 0.22);
 
       ctx.fillStyle = rgba(col, outerAlpha);
       ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
@@ -504,6 +504,7 @@ if (document.readyState === "loading") {
       ctx.fillStyle = rgba(col, innerAlpha);
       ctx.beginPath(); ctx.arc(x,y,r*0.58,0,Math.PI*2); ctx.fill();
 
+      ctx.globalCompositeOperation = 'screen';
       ctx.fillStyle = rgba([255,255,255], Math.min(0.18, innerAlpha*0.55));
       ctx.beginPath(); ctx.arc(x + r*0.18, y - r*0.15, r*0.22, 0, Math.PI*2); ctx.fill();
     }
