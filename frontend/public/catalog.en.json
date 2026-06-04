@@ -5,13 +5,14 @@
       "title": "Starter Plan (web chat)",
       "image": "/images/starter.png",
       "priceId": "price_1S60Y29ubUUr929zmckQjIy8",
-      "features": ["Embeddable web chat widget", "FAQs with brand tone", "Qualified leads with 1 preconfigured flow", "Redirects to WhatsApp or URLs"],
+      "features": ["Embeddable web chat widget", "FAQs with brand tone", "Qualified leads with 1 preconfigured flow", "Redirects to WhatsApp or URLs", "Google Calendar scheduling available"],
       "price": "$500 MXN/month (+VAT) — 100 messages included",
       "sections": [
         { "title": "Highlights", "items": ["Customizable web chat widget", "FAQs adjusted to your brand tone", "Lead qualification: the bot asks for name, contact, budget, and intent", "Smart redirects to WhatsApp or key pages"] },
         { "title": "How lead qualification works", "body": "The widget asks conversational questions and stores the data as a prospect:", "items": ["Captures name, phone/email, need, budget, and urgency", "Immediate notification to your team by email or WhatsApp", "Dashboard record with conversation history", "CSV export for your CRM or sales team", "Monthly usage limits: 1M input tokens + 1M output tokens"] },
         { "title": "Available flow templates", "body": "Choose one when hiring and we tune it to your operation:", "items": ["Qualify leads: contact details, budget, and priority", "Basic quote: scope, integrations, and project urgency", "Pre-sales support: inquiry reason, product of interest, and contact"] },
-        { "title": "Includes", "items": ["Widget installation (snippet + guide)", "1 preconfigured flow to choose from", "Basic FAQ and tone adjustment"] },
+        { "title": "Includes", "items": ["Widget installation (snippet + guide)", "1 preconfigured flow to choose from", "Basic FAQ and tone adjustment", "Dashboard with conversations, leads, history, and bot pause", "Email notifications for your team"] },
+        { "title": "Starter integrations available", "items": ["Embeddable AI web chat with quick chips, WhatsApp CTA, and lead capture", "Google Calendar for appointment creation, availability checks, duration, and timezone", "Email for lead alerts, forms, and password recovery", "Redirects to WhatsApp or key URLs without requiring the conversational add-on"] },
         { "title": "Deliverables", "items": ["Snippet to insert on your site", "Dashboard with captured leads and CSV export", "Email and WhatsApp notifications"] },
         { "title": "Requirements", "items": ["Website where the widget can be embedded", "Base FAQs and legal/policy messages"] }
       ]
@@ -21,12 +22,13 @@
       "title": "WhatsApp Add-on (conversational channel)",
       "image": "/images/whatsaddon.png",
       "priceId": "price_1S9MD59ubUUr929zlSL7ku4q",
-      "features": ["100 messages/month included", "Qualified leads and payment links through WhatsApp", "Purchase-intent detection"],
+      "features": ["100 messages/month included", "Qualified leads and payment links through WhatsApp", "Purchase-intent detection", "AI bot connected to Twilio/WhatsApp"],
       "price": "$500 MXN/month (+VAT) — 100 messages included",
       "sections": [
         { "title": "Highlights", "items": ["Replicates the web chat brain in WhatsApp", "FAQs + lead qualification + payment link delivery", "Detects purchase intent to support your sales team"] },
         { "title": "Price and messages", "body": "The plan includes 100 outgoing messages per month.", "items": ["$500 MXN/month (+VAT) — 100 messages included", "Additional message add-on: +$500 MXN/month per extra block", "WhatsApp number rental: $6.25 USD/month paid by the client (charged by Twilio/Meta, not included in this plan)"] },
-        { "title": "Includes", "items": ["Connection to the client's number (Meta Cloud API or Twilio)", "Intent testing and validation of flows equivalent to web chat"] },
+        { "title": "Includes", "items": ["Connection to the client's number (Meta Cloud API or Twilio)", "Intent testing and validation of flows equivalent to web chat", "Incoming messages by webhook and automatic AI replies", "Payment link delivery through WhatsApp when Stripe is configured"] },
+        { "title": "WhatsApp/Twilio functions", "items": ["Conversational WhatsApp support using the same bot context", "Lead capture and qualification from incoming messages", "Shopify order notifications to the business or customer when applicable", "Connection test, Twilio webhook, and dashboard configuration"] },
         { "title": "Deliverables", "items": ["Enabled number or access method", "Operational flow and testing checklist"] },
         { "title": "Additional client costs", "items": ["Twilio number rental: about $6.25 USD/month (billed directly by Twilio)", "Messages outside the plan: $500 MXN/month add-on available", "Preapproved proactive templates by Meta (if applicable)"] },
         { "title": "Requirements", "items": ["Approved WhatsApp Business API account (Meta Cloud API or Twilio)", "Active Starter Plan (this add-on is added to web chat)"] }
@@ -37,11 +39,13 @@
       "title": "E-commerce Add-on (Stripe + catalog)",
       "image": "/images/ecommerce.png",
       "priceId": "price_1S9MFt9ubUUr929zuqfSjBD0",
-      "features": ["Direct Stripe payments", "Catalog integrated into chat/WhatsApp", "AI automation for purchases"],
+      "features": ["Direct Stripe payments", "Shopify or JSON catalog integrated into chat", "Cards, recommendations, and checkout from chat"],
       "price": "$1,500 MXN one-time setup (+VAT)",
       "sections": [
-        { "title": "Highlights", "items": ["Direct payments in your Stripe account (Connect Express)", "Catalog integrated into chat and WhatsApp", "AI automation to guide the purchase"] },
+        { "title": "Highlights", "items": ["Direct payments in your Stripe account (Connect Express)", "Catalog integrated into chat and WhatsApp", "AI automation to guide the purchase", "Carousel-style product cards inside the widget"] },
         { "title": "Details", "items": ["Stripe Connect Express setup (onboarding + account connection)", "Checkout configuration and test/live validation", "Load/normalize up to 500 products from catalog_url (JSON)", "Catalog updates and support for price_id/product_id", "Optional monthly maintenance to be defined"] },
+        { "title": "Shopify functions", "items": ["OAuth or manual token connection", "Catalog, products, images, prices, and variants reading", "Product recommendations from the conversation", "Carousel product cards with purchase button", "Direct checkout to Shopify cart/checkout when variant_id is available", "Order webhook and WhatsApp notifications when configured"] },
+        { "title": "Stripe functions", "items": ["Checkout by plan, product, or cart", "Webhooks for successful, failed, expired, or cancelled payments", "Automatic tenant and user creation after validated payment", "Customer access email and admin notification", "Payment links by WhatsApp and QR/payment link"] },
         { "title": "Deliverables", "items": ["Normalized catalog visible in the widget", "Stripe ready to charge through chat"] },
         { "title": "Requirements", "items": ["Active Stripe account with dashboard access", "Public catalog_url with products and prices"] }
       ]
@@ -51,11 +55,12 @@
       "title": "Meta Module",
       "image": "/images/meta.png",
       "priceId": "price_1SRIml9ubUUr929z1Qx1vYGA",
-      "features": ["Automate your Meta social channels", "Reply to DMs and comments automatically", "Automate conversation flows"],
+      "features": ["Automate your Meta social channels", "Reply to DMs and comments automatically", "Automate conversation flows", "Connect Facebook and Instagram to the dashboard"],
       "price": "$1,000 MXN/month (+VAT)",
       "sections": [
         { "title": "Highlights", "items": ["Automated support in Facebook Messenger and Instagram DMs", "Automatic replies to post comments", "Smart redirects to WhatsApp or URLs", "Independent setup per page/brand", "Compliance with Meta policies"] },
         { "title": "Details", "items": ["AI-powered custom replies per brand", "Manage multiple pages from one dashboard", "Conversation and engagement metrics", "Event logging by tenant", "Killswitch to pause the bot when needed"] },
+        { "title": "Meta/Facebook/Instagram functions", "items": ["Facebook OAuth connection and page selection", "Facebook Messenger and Instagram DM messages handled by AI", "Comment replies with public or private response options", "Loop and duplicate-reply protection", "Integration diagnostics, test reply, and token rotation", "Conversations visible in the dashboard by channel and page"] },
         { "title": "Includes", "items": ["Facebook and Instagram page connection", "Bot tone and personality setup per page", "Dashboard with real-time conversations and metrics", "Support for multiple brands/pages"] },
         { "title": "Deliverables", "items": ["Access to the management dashboard", "Connected pages and active bot", "Usage documentation and best practices"] },
         { "title": "Requirements", "items": ["Facebook pages with admin role", "Instagram Business accounts connected to Facebook pages", "Messaging and comment management permissions"] }
@@ -66,11 +71,12 @@
       "title": "Website Package + Starter",
       "image": "/images/web1.png",
       "priceId": "price_1S9MIM9ubUUr929zYdJaFDxF",
-      "features": ["Website + integrated Starter Plan", "Domain and hosting for 1 year", "Business email included"],
+      "features": ["Website + integrated Starter Plan", "Domain and hosting for 1 year", "Business email included", "Widget, leads, and calendar available"],
       "price": "Initial payment: $5,000 MXN | Monthly: $1,500 MXN (+VAT)",
       "sections": [
         { "title": "Highlights", "items": ["New website with Starter Plan ready", "Free .com or .com.mx domain for 1 year", "Hosting included and business email (up to 3 aliases)"] },
-        { "title": "Details", "items": ["Self-managed Wix/WordPress CMS or code managed by us", "Hosting included during the first year", "Starter widget insertion"] },
+        { "title": "Details", "items": ["Self-managed Wix/WordPress CMS or code managed by us", "Hosting included during the first year", "Starter widget insertion", "Initial form, WhatsApp CTA, and lead capture setup"] },
+        { "title": "Starter functions included", "items": ["AI web chat, FAQs, quick chips, and redirects", "Dashboard with leads, conversations, and history", "Google Calendar available for appointments when the business requires it", "Email notifications and installation support"] },
         { "title": "Includes", "items": ["Website implementation", "Domain and hosting setup", "Monthly maintenance and unlimited updates"] },
         { "title": "Deliverables", "items": ["Published site with access credentials", "Widget snippet and guide"] },
         { "title": "Requirements", "items": ["Client content, images, and branding", "Desired site structure"] }
@@ -81,11 +87,12 @@
       "title": "E-commerce Website Package + Starter",
       "image": "/images/web2.png",
       "priceId": "price_1S9MLl9ubUUr929zildxgmBq",
-      "features": ["Online store + Starter Plan", "Domain and hosting included", "Integration with chosen platform"],
+      "features": ["Online store + Starter Plan", "Domain and hosting included", "Integration with chosen platform", "Catalog and assisted purchase from chat"],
       "price": "Initial payment: $6,000 MXN | Monthly: $2,000 MXN (+VAT)",
       "sections": [
         { "title": "Highlights", "items": ["E-commerce site with Starter Plan", "Free .com or .com.mx domain for 1 year", "Business email and hosting included"] },
-        { "title": "Details", "items": ["Implementation in Shopify (client license), WooCommerce, or Mercado Shops", "Hosting included for the first year depending on platform", "Basic integration with the chosen platform"] },
+        { "title": "Details", "items": ["Implementation in Shopify (client license), WooCommerce, or Mercado Shops", "Hosting included for the first year depending on platform", "Basic integration with the chosen platform", "Starter widget ready to answer questions, recommend products, and guide purchases"] },
+        { "title": "E-commerce functions available", "items": ["Catalog integrated into chat with carousel product cards", "Product recommendations from the conversation", "Checkout to Shopify when the store uses Shopify variants", "Stripe checkout when the corresponding add-on is hired/configured", "Order notifications through WhatsApp when WhatsApp is configured"] },
         { "title": "Includes", "items": ["Store and Starter widget implementation", "Monthly maintenance and unlimited updates"] },
         { "title": "Deliverables", "items": ["Published store with access credentials", "Widget snippets and documentation"] },
         { "title": "Requirements", "items": ["Product catalog, policies, and payment methods", "Stripe or other payment methods configured in the platform"] }

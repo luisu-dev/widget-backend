@@ -9,7 +9,8 @@
         "Widget de chat web embebible",
         "FAQs con tono de marca",
         "Leads calificados con 1 flujo preconfigurado",
-        "Redirecciones a WhatsApp o URLs"
+        "Redirecciones a WhatsApp o URLs",
+        "Agendado con Google Calendar disponible"
       ],
       "price": "$500 MXN/mes (+IVA)",
       "sections": [
@@ -47,7 +48,18 @@
           "items": [
             "Instalación del widget (snippet + guía)",
             "1 flujo preconfigurado a elegir",
-            "Ajuste básico de FAQs y tono"
+            "Ajuste básico de FAQs y tono",
+            "Dashboard con conversaciones, leads, historial y pausa del bot",
+            "Notificaciones por correo al equipo"
+          ]
+        },
+        {
+          "title": "Integraciones disponibles en Starter",
+          "items": [
+            "Web chat embebible con IA, chips rápidos, CTA a WhatsApp y captura de leads",
+            "Google Calendar para crear citas, revisar disponibilidad, definir duración y zona horaria",
+            "Email para avisos de nuevos leads, formularios y recuperación de contraseña",
+            "Redirecciones a WhatsApp o URLs clave sin requerir el add-on conversacional"
           ]
         },
         {
@@ -75,7 +87,8 @@
       "features": [
         "100 mensajes/mes incluidos",
         "Leads calificados y links de pago por WhatsApp",
-        "Detección de intención de compra"
+        "Detección de intención de compra",
+        "Bot de IA conectado a Twilio/WhatsApp"
       ],
       "price": "$500 MXN/mes (+IVA) · 100 mensajes incluidos",
       "sections": [
@@ -100,7 +113,18 @@
           "title": "Qué incluye",
           "items": [
             "Conexión al número del cliente (Meta Cloud API o Twilio)",
-            "Pruebas de intención y validación de flujos equivalentes al chat web"
+            "Pruebas de intención y validación de flujos equivalentes al chat web",
+            "Recepción de mensajes por webhook y respuestas automáticas con IA",
+            "Envío de links de pago por WhatsApp cuando Stripe está configurado"
+          ]
+        },
+        {
+          "title": "Funciones WhatsApp/Twilio",
+          "items": [
+            "Atención conversacional por WhatsApp con el mismo contexto del bot",
+            "Captura y calificación de leads desde mensajes entrantes",
+            "Notificaciones de pedidos Shopify al negocio o cliente cuando aplica",
+            "Prueba de conexión, webhook de Twilio y configuración desde dashboard"
           ]
         },
         {
@@ -133,9 +157,9 @@
       "image": "/images/ecommerce.png",
       "priceId": "price_1S9MFt9ubUUr929zuqfSjBD0",
       "features": [
-        "Cobro directo a Stripe",
-        "Catálogo integrado al chat/WhatsApp",
-        "Automatización con IA para compras"
+        "Cobro directo con Stripe",
+        "Catálogo Shopify o JSON integrado al chat",
+        "Tarjetas, recomendaciones y checkout desde chat"
       ],
       "price": "$1,500 MXN setup único (+IVA)",
       "sections": [
@@ -144,7 +168,8 @@
           "items": [
             "Cobros directos en tu Stripe (Connect Express)",
             "Catálogo integrado en chat y WhatsApp",
-            "Automatización con IA para guiar la compra"
+            "Automatización con IA para guiar la compra",
+            "Tarjetas de producto tipo carrusel dentro del widget"
           ]
         },
         {
@@ -155,6 +180,27 @@
             "Carga/normalización de hasta 500 productos desde catalog_url (JSON)",
             "Actualización de catálogos y soporte para price_id/product_id",
             "Mantenimiento mensual opcional a definir"
+          ]
+        },
+        {
+          "title": "Funciones Shopify",
+          "items": [
+            "Conexión por OAuth o token manual",
+            "Lectura de catálogo, productos, imágenes, precios y variantes",
+            "Recomendación de productos desde la conversación",
+            "Tarjetas de producto en carrusel con botón de compra",
+            "Checkout directo hacia carrito/checkout de Shopify cuando hay variant_id",
+            "Webhook de órdenes y notificaciones por WhatsApp si está configurado"
+          ]
+        },
+        {
+          "title": "Funciones Stripe",
+          "items": [
+            "Checkout por plan, por producto o por carrito",
+            "Webhooks para pagos exitosos, fallidos, expirados o cancelados",
+            "Creación automática de tenant y usuario después de pago validado",
+            "Envío de accesos al cliente y notificación al admin",
+            "Links de pago por WhatsApp y QR/link de pago"
           ]
         },
         {
@@ -181,7 +227,8 @@
       "features": [
         "Automatiza tus redes sociales en Meta",
         "Responde DMs y comentarios automáticamente",
-        "Automatiza flujos de conversación"
+        "Automatiza flujos de conversación",
+        "Conecta Facebook e Instagram al dashboard"
       ],
       "price": "$1,000 MXN/mes (+IVA)",
       "sections": [
@@ -203,6 +250,17 @@
             "Métricas de conversaciones y engagement",
             "Registro de eventos por tenant",
             "Killswitch para pausar el bot cuando necesites"
+          ]
+        },
+        {
+          "title": "Funciones Meta/Facebook/Instagram",
+          "items": [
+            "Conexión OAuth con Facebook y selección de páginas",
+            "Mensajes de Facebook Messenger e Instagram DM atendidos por IA",
+            "Respuestas a comentarios con opción pública o privada",
+            "Protección contra loops y respuestas duplicadas",
+            "Diagnóstico de integración, prueba de respuesta y rotación de token",
+            "Conversaciones visibles en dashboard por canal y página"
           ]
         },
         {
@@ -240,7 +298,8 @@
       "features": [
         "Sitio web + Plan Starter integrado",
         "Dominio y hosting por 1 año",
-        "Correo empresarial incluido"
+        "Correo empresarial incluido",
+        "Widget, leads y calendario disponibles"
       ],
       "price": "Pago inicial: $5,000 MXN | Mensual: $1,500 MXN (+IVA)",
       "sections": [
@@ -257,7 +316,17 @@
           "items": [
             "CMS Wix/WordPress autoadministrable o código administrado por nosotros",
             "Hosting incluido durante el primer año",
-            "Inserción del widget Starter"
+            "Inserción del widget Starter",
+            "Configuración inicial de formulario, CTA a WhatsApp y captura de leads"
+          ]
+        },
+        {
+          "title": "Funciones incluidas del Starter",
+          "items": [
+            "Chat web con IA, FAQs, chips rápidos y redirecciones",
+            "Dashboard con leads, conversaciones e historial",
+            "Google Calendar disponible para citas si el negocio lo requiere",
+            "Notificaciones por correo y soporte de instalación"
           ]
         },
         {
@@ -292,7 +361,8 @@
       "features": [
         "Tienda en línea + Plan Starter",
         "Dominio y hosting incluidos",
-        "Integración a plataforma elegida"
+        "Integración a plataforma elegida",
+        "Catálogo y compra asistida desde chat"
       ],
       "price": "Pago inicial: $6,000 MXN | Mensual: $2,000 MXN (+IVA)",
       "sections": [
@@ -309,7 +379,18 @@
           "items": [
             "Implementación en Shopify (licencia del cliente), WooCommerce o Mercado Shops",
             "Hosting incluido el primer año dependiendo de la plataforma",
-            "Integración básica con la plataforma elegida"
+            "Integración básica con la plataforma elegida",
+            "Widget Starter listo para responder preguntas, recomendar productos y dirigir a compra"
+          ]
+        },
+        {
+          "title": "Funciones e-commerce disponibles",
+          "items": [
+            "Catálogo integrado al chat con tarjetas de producto en carrusel",
+            "Recomendaciones de producto desde la conversación",
+            "Checkout hacia Shopify cuando la tienda usa variantes Shopify",
+            "Checkout con Stripe si se contrata/configura el add-on correspondiente",
+            "Notificaciones de pedidos por WhatsApp si WhatsApp está configurado"
           ]
         },
         {
