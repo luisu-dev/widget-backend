@@ -477,9 +477,9 @@ if (document.readyState === "loading") {
     ctx.fillStyle = base;
     ctx.fillRect(cx-R-2, cy-R-2, (R+2)*2, (R+2)*2);
 
-    // blobs con mezcla 'screen' (bordes nítidos, sin blur)
+    // En oscuro, screen da brillo; en claro, source-over mantiene el humo visible.
     const [C1, C2] = palette();
-    ctx.globalCompositeOperation = 'screen';
+    ctx.globalCompositeOperation = isDark ? 'screen' : 'source-over';
     const speedK = MODE==='thinking' ? 1.2 : MODE==='unread' ? 1.0 : 0.85;
 
     for(let i=0;i<blobs.length;i++){
@@ -494,8 +494,9 @@ if (document.readyState === "loading") {
       const mixU = (i % 2 ? 0.35 : 0.65);
       const col  = mix(C1, C2, mixU);
 
-      const outerAlpha = MODE==='unread' ? 0.42 : MODE==='thinking' ? 0.38 : 0.35;
-      const innerAlpha = Math.min(0.85, outerAlpha + 0.22);
+      const outerAlphaBase = MODE==='unread' ? 0.42 : MODE==='thinking' ? 0.38 : 0.35;
+      const outerAlpha = isDark ? outerAlphaBase : Math.min(0.58, outerAlphaBase + 0.16);
+      const innerAlpha = Math.min(isDark ? 0.85 : 0.72, outerAlpha + (isDark ? 0.22 : 0.12));
 
       ctx.fillStyle = rgba(col, outerAlpha);
       ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();

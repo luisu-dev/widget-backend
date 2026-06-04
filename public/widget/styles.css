@@ -262,7 +262,7 @@
 /* Orb (un poco más tenue en claro) */
 :where([data-zia]) #cw-orb{ opacity: .85; }
 @media (prefers-color-scheme: light){
-  :where([data-zia]) #cw-orb{ opacity: .7; }
+  :where([data-zia]) #cw-orb{ opacity: .95; }
 }
 .zia-cta-btn { padding: .6rem 1rem; border-radius: .5rem; border: none; cursor: pointer; }
 .zia-chip { margin:.25rem; padding:.4rem .7rem; border-radius:9999px; border:1px solid #ddd; background:#fff; cursor:pointer; }
