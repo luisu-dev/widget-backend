@@ -2,11 +2,11 @@
   "plans": [
     {
       "key": "starter",
-      "title": "Plan Starter (chat web)",
+      "title": "Agente Acid (web starter con IA)",
       "image": "/images/starter.png",
       "priceId": "price_1S60Y29ubUUr929zmckQjIy8",
       "features": [
-        "Widget de chat web embebible",
+        "Agente Acid embebible en tu sitio web",
         "FAQs con tono de marca",
         "Leads calificados con 1 flujo preconfigurado",
         "Redirecciones a WhatsApp o URLs",
@@ -17,7 +17,7 @@
         {
           "title": "Características destacadas",
           "items": [
-            "Widget de chat web personalizable",
+            "Agente Acid personalizable para tu sitio web",
             "FAQs ajustadas al tono de la marca",
             "Calificación de leads: el bot pregunta nombre, contacto, presupuesto e intención",
             "Redirecciones inteligentes a WhatsApp o páginas clave"
@@ -25,7 +25,7 @@
         },
         {
           "title": "Cómo funciona la calificación de leads",
-          "body": "El widget hace preguntas conversacionales al visitante y guarda los datos como prospecto:",
+          "body": "Agente Acid hace preguntas conversacionales al visitante y guarda los datos como prospecto:",
           "items": [
             "Captura: nombre, teléfono/email, qué busca, presupuesto y urgencia",
             "Notificación inmediata a tu equipo (correo o WhatsApp)",
@@ -46,7 +46,7 @@
         {
           "title": "Qué incluye",
           "items": [
-            "Instalación del widget (snippet + guía)",
+            "Instalación de Agente Acid (snippet + guía)",
             "1 flujo preconfigurado a elegir",
             "Ajuste básico de FAQs y tono",
             "Dashboard con conversaciones, leads, historial y pausa del bot",
@@ -54,9 +54,9 @@
           ]
         },
         {
-          "title": "Integraciones disponibles en Starter",
+          "title": "Integraciones disponibles en Agente Acid",
           "items": [
-            "Web chat embebible con IA, chips rápidos, CTA a WhatsApp y captura de leads",
+            "Agente Acid embebible con IA, chips rápidos, CTA a WhatsApp y captura de leads",
             "Google Calendar para crear citas, revisar disponibilidad, definir duración y zona horaria",
             "Email para avisos de nuevos leads, formularios y recuperación de contraseña",
             "Redirecciones a WhatsApp o URLs clave sin requerir el add-on conversacional"
@@ -73,7 +73,7 @@
         {
           "title": "Requisitos",
           "items": [
-            "Sitio web donde incrustar el widget",
+            "Sitio web donde incrustar Agente Acid",
             "FAQs base y mensajes legales/políticas"
           ]
         }
@@ -85,46 +85,47 @@
       "image": "/images/whatsaddon.png",
       "priceId": "price_1S9MD59ubUUr929zlSL7ku4q",
       "features": [
-        "100 mensajes/mes incluidos",
-        "Leads calificados y links de pago por WhatsApp",
-        "Detección de intención de compra",
-        "Bot de IA conectado a Twilio/WhatsApp"
+        "200 mensajes/mes incluidos dentro de la ventana de servicio",
+        "Leads calificados y links de compra por WhatsApp",
+        "Detecta intención de compra y guía al cliente para cerrar la venta",
+        "Bot de IA conectado a WhatsApp"
       ],
-      "price": "$500 MXN/mes (+IVA) · 100 mensajes incluidos",
+      "price": "$500 MXN/mes (+IVA) · 200 mensajes incluidos",
       "sections": [
         {
           "title": "Características destacadas",
           "items": [
-            "Replica el cerebro del chat web en WhatsApp",
-            "FAQs + calificación de leads + envío de links de pago",
-            "Detecta intención de compra para nutrir al equipo comercial"
+            "Atiende clientes directamente en WhatsApp con IA",
+            "Responde dudas, califica leads y comparte links de compra",
+            "Detecta intención de compra y guía al cliente para cerrar la venta"
           ]
         },
         {
           "title": "Precio y mensajes",
-          "body": "El plan incluye 100 mensajes salientes por mes.",
+          "body": "El plan incluye 200 mensajes dentro de la ventana de servicio de WhatsApp.",
           "items": [
-            "$500 MXN/mes (+IVA) — 100 mensajes incluidos",
-            "Add-on mensajes adicionales: +$500 MXN/mes por bloque extra",
+            "$500 MXN/mes (+IVA) — 200 mensajes incluidos",
+            "Add-on de mensajes adicionales: +$500 MXN/mes por 500 mensajes extra",
+            "Con el add-on extra, el total sube a 700 mensajes al mes",
             "Renta del número de WhatsApp: $6.25 USD/mes a cargo del cliente (cobrado por Twilio/Meta, no incluido en este plan)"
           ]
         },
         {
           "title": "Qué incluye",
           "items": [
-            "Conexión al número del cliente (Meta Cloud API o Twilio)",
-            "Pruebas de intención y validación de flujos equivalentes al chat web",
-            "Recepción de mensajes por webhook y respuestas automáticas con IA",
-            "Envío de links de pago por WhatsApp cuando Stripe está configurado"
+            "Configuración del canal de WhatsApp para recibir y responder mensajes",
+            "Respuestas automáticas con IA adaptadas al negocio",
+            "Flujos para resolver dudas, captar datos y avanzar oportunidades de venta",
+            "Envío de links de compra o pago según la integración activa: Shopify, Mercado Libre, WooCommerce o Stripe"
           ]
         },
         {
-          "title": "Funciones WhatsApp/Twilio",
+          "title": "Funciones WhatsApp",
           "items": [
-            "Atención conversacional por WhatsApp con el mismo contexto del bot",
+            "Atención conversacional por WhatsApp con contexto del negocio",
             "Captura y calificación de leads desde mensajes entrantes",
-            "Notificaciones de pedidos Shopify al negocio o cliente cuando aplica",
-            "Prueba de conexión, webhook de Twilio y configuración desde dashboard"
+            "Seguimiento de intención de compra y cierre con links de compra",
+            "Notificaciones de pedidos al negocio o cliente cuando aplica"
           ]
         },
         {
@@ -138,27 +139,28 @@
           "title": "Costos adicionales del cliente",
           "items": [
             "Renta de número Twilio: ~$6.25 USD/mes (facturado directamente por Twilio)",
-            "Mensajes fuera del plan: add-on de $500 MXN/mes disponible",
+            "Mensajes fuera del plan: add-on de $500 MXN/mes por 500 mensajes adicionales",
             "Plantillas proactivas preaprobadas por Meta (si aplica)"
           ]
         },
         {
           "title": "Requisitos",
           "items": [
-            "Cuenta WhatsApp Business API aprobada (Meta Cloud API o Twilio)",
-            "Plan Starter activo (este add-on se suma al chat web)"
+            "Número de WhatsApp disponible para activar o conectar",
+            "Renta del número en Twilio cuando se use un número administrado por Twilio",
+            "Catálogo, tienda o proveedor de pagos configurado si se desean links de compra"
           ]
         }
       ]
     },
     {
       "key": "addon-ecommerce",
-      "title": "Add-on E-commerce (Stripe + catálogo)",
+      "title": "Add-on E-commerce (catálogo + checkout)",
       "image": "/images/ecommerce.png",
       "priceId": "price_1S9MFt9ubUUr929zuqfSjBD0",
       "features": [
-        "Cobro directo con Stripe",
-        "Catálogo Shopify o JSON integrado al chat",
+        "Conexión con Shopify, Mercado Libre o WooCommerce",
+        "Catálogo integrado al chat y WhatsApp",
         "Tarjetas, recomendaciones y checkout desde chat"
       ],
       "price": "$1,500 MXN setup único (+IVA)",
@@ -166,55 +168,37 @@
         {
           "title": "Características destacadas",
           "items": [
-            "Cobros directos en tu Stripe (Connect Express)",
+            "Conexión con Shopify, Mercado Libre o WooCommerce",
             "Catálogo integrado en chat y WhatsApp",
             "Automatización con IA para guiar la compra",
             "Tarjetas de producto tipo carrusel dentro del widget"
           ]
         },
         {
-          "title": "Detalles",
+          "title": "Funciones e-commerce",
           "items": [
-            "Setup Stripe Connect Express (onboarding + conexión de cuenta)",
-            "Configuración de Checkout y pruebas en test/live",
-            "Carga/normalización de hasta 500 productos desde catalog_url (JSON)",
-            "Actualización de catálogos y soporte para price_id/product_id",
-            "Mantenimiento mensual opcional a definir"
-          ]
-        },
-        {
-          "title": "Funciones Shopify",
-          "items": [
-            "Conexión por OAuth o token manual",
-            "Lectura de catálogo, productos, imágenes, precios y variantes",
+            "Lectura de catálogo, productos, imágenes, precios y disponibilidad",
             "Recomendación de productos desde la conversación",
             "Tarjetas de producto en carrusel con botón de compra",
-            "Checkout directo hacia carrito/checkout de Shopify cuando hay variant_id",
-            "Webhook de órdenes y notificaciones por WhatsApp si está configurado"
-          ]
-        },
-        {
-          "title": "Funciones Stripe",
-          "items": [
-            "Checkout por plan, por producto o por carrito",
-            "Webhooks para pagos exitosos, fallidos, expirados o cancelados",
-            "Creación automática de tenant y usuario después de pago validado",
-            "Envío de accesos al cliente y notificación al admin",
-            "Links de pago por WhatsApp y QR/link de pago"
+            "Envío del cliente al checkout de la plataforma conectada",
+            "Notificaciones de pedidos al negocio o cliente cuando aplica",
+            "Soporte para Shopify, Mercado Libre o WooCommerce según la tienda activa"
           ]
         },
         {
           "title": "Qué se entrega",
           "items": [
             "Catálogo normalizado y visible en el widget",
-            "Stripe listo para cobrar vía chat"
+            "Compra guiada desde chat hacia el checkout de la plataforma conectada",
+            "Flujo probado para consultar productos, recomendar opciones y dirigir a compra"
           ]
         },
         {
           "title": "Requisitos",
           "items": [
-            "Cuenta Stripe activa con acceso al dashboard",
-            "catalog_url público con productos y precios"
+            "Tienda activa en la plataforma elegida: Shopify, Mercado Libre o WooCommerce",
+            "Accesos o permisos necesarios para conectar o leer el catálogo",
+            "Productos, precios, imágenes y métodos de pago configurados en la tienda"
           ]
         }
       ]
@@ -292,36 +276,35 @@
     },
     {
       "key": "paquete-web",
-      "title": "Paquete Páginas web + Starter",
+      "title": "Web Starter con IA",
       "image": "/images/web1.png",
       "priceId": "price_1S9MIM9ubUUr929zYdJaFDxF",
       "features": [
-        "Sitio web + Plan Starter integrado",
-        "Dominio y hosting por 1 año",
-        "Correo empresarial incluido",
-        "Widget, leads y calendario disponibles"
+        "Sitio web con Agente Acid integrado",
+        "Chatbot con IA para atender visitantes",
+        "Leads, formularios y calendario disponibles",
+        "2 actualizaciones mensuales incluidas"
       ],
-      "price": "Pago inicial: $5,000 MXN | Mensual: $1,500 MXN (+IVA)",
+      "price": "$1,500 MXN/mes (+IVA)",
       "sections": [
         {
           "title": "Características destacadas",
           "items": [
-            "Sitio web nuevo con Plan Starter listo",
-            "Dominio .com o .com.mx gratis por 1 año",
-            "Hosting incluido y correo empresarial (hasta 3 alias)"
+            "Sitio web nuevo con Agente Acid listo",
+            "Chatbot con IA para responder preguntas y captar leads",
+            "Diseño moderno conectado a tus flujos comerciales"
           ]
         },
         {
           "title": "Detalles",
           "items": [
             "CMS Wix/WordPress autoadministrable o código administrado por nosotros",
-            "Hosting incluido durante el primer año",
-            "Inserción del widget Starter",
+            "Implementación de Agente Acid en el sitio",
             "Configuración inicial de formulario, CTA a WhatsApp y captura de leads"
           ]
         },
         {
-          "title": "Funciones incluidas del Starter",
+          "title": "Funciones incluidas de Agente Acid",
           "items": [
             "Chat web con IA, FAQs, chips rápidos y redirecciones",
             "Dashboard con leads, conversaciones e historial",
@@ -333,15 +316,15 @@
           "title": "Qué incluye",
           "items": [
             "Implementación del sitio",
-            "Alta de dominio y hosting",
-            "Mantenimiento mensual y actualizaciones ilimitadas"
+            "Integración de Agente Acid",
+            "Mantenimiento mensual con 2 actualizaciones incluidas"
           ]
         },
         {
           "title": "Qué se entrega",
           "items": [
             "Sitio publicado con accesos",
-            "Snippet del widget y guía"
+            "Snippet de Agente Acid y guía"
           ]
         },
         {
@@ -355,11 +338,11 @@
     },
     {
       "key": "paquete-ecommerce",
-      "title": "Paquete E-commerce web + Starter",
+      "title": "Paquete E-commerce web + Agente Acid",
       "image": "/images/web2.png",
       "priceId": "price_1S9MLl9ubUUr929zildxgmBq",
       "features": [
-        "Tienda en línea + Plan Starter",
+        "Tienda en línea + Agente Acid",
         "Dominio y hosting incluidos",
         "Integración a plataforma elegida",
         "Catálogo y compra asistida desde chat"
@@ -369,7 +352,7 @@
         {
           "title": "Características destacadas",
           "items": [
-            "Sitio e-commerce con Plan Starter",
+            "Tienda en línea potenciada con IA",
             "Dominio .com o .com.mx gratis por 1 año",
             "Correo empresarial y hosting incluidos"
           ]
@@ -380,7 +363,7 @@
             "Implementación en Shopify (licencia del cliente), WooCommerce o Mercado Shops",
             "Hosting incluido el primer año dependiendo de la plataforma",
             "Integración básica con la plataforma elegida",
-            "Widget Starter listo para responder preguntas, recomendar productos y dirigir a compra"
+            "Agente Acid listo para responder preguntas, recomendar productos y dirigir a compra"
           ]
         },
         {
@@ -388,23 +371,22 @@
           "items": [
             "Catálogo integrado al chat con tarjetas de producto en carrusel",
             "Recomendaciones de producto desde la conversación",
-            "Checkout hacia Shopify cuando la tienda usa variantes Shopify",
-            "Checkout con Stripe si se contrata/configura el add-on correspondiente",
+            "Checkout hacia Shopify, Mercado Libre o WooCommerce según la plataforma conectada",
             "Notificaciones de pedidos por WhatsApp si WhatsApp está configurado"
           ]
         },
         {
           "title": "Qué incluye",
           "items": [
-            "Implementación de la tienda y widget Starter",
-            "Mantenimiento mensual y actualizaciones ilimitadas"
+            "Implementación de la tienda y Agente Acid",
+            "Mantenimiento mensual con 2 actualizaciones incluidas"
           ]
         },
         {
           "title": "Qué se entrega",
           "items": [
             "Tienda publicada con accesos",
-            "Snippets y documentación del widget"
+            "Snippets y documentación de Agente Acid"
           ]
         },
         {

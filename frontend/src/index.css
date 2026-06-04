@@ -270,6 +270,19 @@ html.smooth-scroll { scroll-behavior: smooth; }
   background: var(--md-primary);
 }
 
+@media (max-width: 640px) {
+  .md-tab {
+    padding: 12px 14px;
+    font-size: 13px;
+  }
+
+  .md-btn-filled,
+  .md-btn-tonal,
+  .md-btn-outlined {
+    min-height: 40px;
+  }
+}
+
 /* --- Divider --- */
 .md-divider {
   border: none;

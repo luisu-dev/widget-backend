@@ -650,37 +650,36 @@ function Dashboard() {
 
       {/* ── Top App Bar ── */}
       <header
-        className="sticky top-0 z-50 flex items-center justify-between px-4 sm:px-6"
+        className="sticky top-0 z-50 flex items-center justify-between gap-3 px-3 sm:px-6 h-[56px] sm:h-[64px]"
         style={{
-          height: 64,
           background: 'var(--md-surface-container)',
           boxShadow: 'var(--md-elevation-2)',
         }}
       >
         <div className="min-w-0">
           <h1
-            className="text-[20px] font-semibold leading-tight truncate"
+            className="text-[17px] sm:text-[20px] font-semibold leading-tight truncate"
             style={{ color: 'var(--md-on-surface)' }}
           >
             {profile.tenant.name || 'Dashboard'}
           </h1>
-          <p className="text-[12px] truncate" style={{ color: 'var(--md-on-surface-variant)' }}>
+          <p className="text-[11px] sm:text-[12px] truncate max-w-[46vw] sm:max-w-none" style={{ color: 'var(--md-on-surface-variant)' }}>
             {profile.user.email}
           </p>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {isAdmin && (
             <button
               onClick={() => navigate('/admin')}
-              className="md-btn-tonal px-3 py-1.5 text-[13px]"
+              className="md-btn-tonal !px-3 !py-1.5 text-[12px] sm:text-[13px]"
             >
               Admin
             </button>
           )}
           <button
             onClick={handleLogout}
-            className="md-btn-outlined px-3 py-1.5 text-[13px]"
+            className="md-btn-outlined !px-3 !py-1.5 text-[12px] sm:text-[13px]"
           >
             <span className="sm:hidden">{t('dashboard.logout_short')}</span>
             <span className="hidden sm:inline">{t('dashboard.logout')}</span>
@@ -695,7 +694,7 @@ function Dashboard() {
           borderBottom: '1px solid var(--md-outline-variant)',
         }}
       >
-        <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto px-1.5 sm:px-6 lg:px-8">
           <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide">
             {TABS.map((tab) => (
               <button
@@ -712,14 +711,14 @@ function Dashboard() {
         {/* Facebook page selector */}
         {facebookPages.length > 0 && selectedPage && (
           <div
-            className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-2 flex items-center gap-2"
+            className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pb-2 flex items-center gap-2"
           >
             <span className="text-[12px]" style={{ color: 'var(--md-on-surface-variant)' }}>
               {t('dashboard.page')}
             </span>
             {facebookPages.length === 1 ? (
               <span
-                className="text-[13px] font-medium px-3 py-1 rounded-full"
+                className="text-[12px] sm:text-[13px] font-medium px-3 py-1 rounded-full truncate max-w-[70vw]"
                 style={{
                   background: 'var(--md-primary-container)',
                   color: 'var(--md-on-primary-container)',
@@ -753,7 +752,7 @@ function Dashboard() {
       </div>
 
       {/* ── Main Content ── */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className={`max-w-7xl mx-auto ${selectedSession && activeTab === 'messages' ? 'px-0 sm:px-6 lg:px-8 py-3 sm:py-6' : 'px-3 sm:px-6 lg:px-8 py-4 sm:py-6'}`}>
 
         {/* Global error banner */}
         {error && (
@@ -793,39 +792,43 @@ function Dashboard() {
 
         {/* ── Tab: Messages ── */}
         {activeTab === 'messages' && (
-          <div className="space-y-5">
+          <div className={selectedSession ? 'space-y-3 sm:space-y-5' : 'space-y-4 sm:space-y-5'}>
             {/* Header row */}
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-[22px] font-semibold" style={{ color: 'var(--md-on-surface)' }}>
+            <div className="flex items-start sm:items-center justify-between gap-3 px-3 sm:px-0">
+              <div className="min-w-0">
+                <h2 className="text-[20px] sm:text-[22px] font-semibold leading-tight" style={{ color: 'var(--md-on-surface)' }}>
                   {selectedSession ? t('dashboard.conversation') : t('dashboard.conversations')}
                 </h2>
-                <p className="text-sm mt-0.5" style={{ color: 'var(--md-on-surface-variant)' }}>
+                <p className="text-[13px] sm:text-sm mt-0.5" style={{ color: 'var(--md-on-surface-variant)' }}>
                   {selectedSession
                     ? t('dashboard.session_messages')
                     : t('dashboard.active_conversations', { count: conversations.length })}
                 </p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-1.5 sm:gap-2 shrink-0">
                 {selectedSession && (
                   <button
                     onClick={() => { setSelectedSession(null); setConversationMessages([]); }}
-                    className="md-btn-outlined px-4 py-2 text-sm"
+                    className="md-btn-outlined !px-3 sm:!px-4 !py-2 text-[13px] sm:text-sm"
+                    aria-label={t('dashboard.back')}
                   >
-                    ← {t('dashboard.back')}
+                    <span aria-hidden="true">←</span>
+                    <span className="hidden min-[420px]:inline ml-1">{t('dashboard.back')}</span>
                   </button>
                   )}
                 <button
                   onClick={fetchMessages}
-                  className="md-btn-tonal px-4 py-2 text-sm"
+                  className="md-btn-tonal !px-3 sm:!px-4 !py-2 text-[13px] sm:text-sm"
+                  aria-label={t('dashboard.refresh')}
                 >
-                  {t('dashboard.refresh')}
+                  <span className="sm:hidden" aria-hidden="true">↻</span>
+                  <span className="hidden sm:inline">{t('dashboard.refresh')}</span>
                 </button>
               </div>
             </div>
 
             {!selectedSession && (
-              <div className="flex flex-wrap gap-2">
+              <div className="flex gap-2 overflow-x-auto scrollbar-hide px-3 sm:px-0 pb-1">
                 {[
                   { id: 'all', label: 'All' },
                   { id: 'messages', label: 'Messages' },
@@ -835,7 +838,7 @@ function Dashboard() {
                     key={item.id}
                     onClick={() => setConversationFilter(item.id as 'all' | 'messages' | 'comments')}
                     aria-pressed={conversationFilter === item.id}
-                    className={conversationFilter === item.id ? 'md-btn-filled px-4 py-2 text-sm' : 'md-btn-outlined px-4 py-2 text-sm'}
+                    className={`${conversationFilter === item.id ? 'md-btn-filled' : 'md-btn-outlined'} !px-4 !py-2 text-[13px] sm:text-sm shrink-0`}
                   >
                     {item.label}
                   </button>
@@ -845,7 +848,7 @@ function Dashboard() {
 
             {/* Conversation list */}
             {!selectedSession && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 px-3 sm:px-0">
                 {conversations.length === 0 ? (
                   <div
                     className="col-span-full rounded-[16px] p-10 text-center"
@@ -951,22 +954,22 @@ function Dashboard() {
             {/* Conversation detail */}
             {selectedSession && (
               <div
-                className="rounded-[16px] overflow-hidden"
+                className="rounded-none sm:rounded-[16px] overflow-hidden min-h-[calc(100dvh-170px)] sm:min-h-0 flex flex-col"
                 style={{ background: 'var(--md-surface-container)', boxShadow: 'var(--md-elevation-1)' }}
               >
                 {/* Conversation header */}
                 <div
-                  className="p-4"
+                  className="p-3 sm:p-4"
                   style={{ borderBottom: '1px solid var(--md-outline-variant)' }}
                 >
-                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                     <div className="flex items-center gap-3 min-w-0">
-                      {selectedContact && <ContactAvatar contact={selectedContact} size={48} />}
+                      {selectedContact && <ContactAvatar contact={selectedContact} size={42} />}
                       <div className="min-w-0">
                         <p className="text-[11px] uppercase tracking-widest font-medium mb-0.5" style={{ color: 'var(--md-on-surface-variant)' }}>
                           {selectedPlatformLabel}
                         </p>
-                        <p className="text-[16px] font-semibold truncate" style={{ color: 'var(--md-on-surface)' }}>
+                        <p className="text-[15px] sm:text-[16px] font-semibold truncate" style={{ color: 'var(--md-on-surface)' }}>
                           {selectedContact?.name || selectedSession}
                         </p>
                         <p className="text-[12px] truncate" style={{ color: 'var(--md-on-surface-variant)' }}>
@@ -985,8 +988,8 @@ function Dashboard() {
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <div>
+                    <div className="flex items-center justify-between sm:justify-end gap-3 rounded-[12px] px-3 py-2 sm:p-0" style={{ background: 'color-mix(in srgb, var(--md-surface-container-high) 70%, transparent)' }}>
+                      <div className="min-w-0">
                         <p className="text-[12px]" style={{ color: 'var(--md-on-surface-variant)' }}>
                           {t('dashboard.bot_in_conversation')}
                         </p>
@@ -1007,7 +1010,7 @@ function Dashboard() {
                 </div>
 
                 {/* Messages */}
-                <div className="p-4 space-y-3 max-h-[520px] overflow-y-auto">
+                <div className="p-3 sm:p-4 space-y-3 max-h-[calc(100dvh-318px)] sm:max-h-[520px] overflow-y-auto flex-1">
                   {conversationMessages.map((msg) => {
                     const msgProfile = profileFromMessage(msg);
                     const authorName = msg.direction === 'in'
@@ -1021,7 +1024,7 @@ function Dashboard() {
                         className={`flex ${msg.direction === 'in' ? 'justify-start' : 'justify-end'}`}
                       >
                         <div
-                          className="max-w-[72%] rounded-[16px] px-4 py-3"
+                          className="max-w-[88%] sm:max-w-[72%] rounded-[16px] px-3.5 sm:px-4 py-2.5 sm:py-3"
                           style={{
                             background: msg.direction === 'in'
                               ? 'var(--md-surface-container-high)'
@@ -1044,7 +1047,7 @@ function Dashboard() {
                             </span>
                           </div>
                           <p
-                            className="text-sm"
+                            className="text-[13px] sm:text-sm leading-relaxed whitespace-pre-wrap break-words"
                             style={{
                               color: msg.direction === 'in'
                                 ? 'var(--md-on-surface)'
@@ -1090,7 +1093,7 @@ function Dashboard() {
 
                   return (
                     <div
-                      className="p-4"
+                      className="p-3 sm:p-4"
                       style={{ borderTop: '1px solid var(--md-outline-variant)' }}
                     >
                       {channelLabel && (
@@ -1108,7 +1111,7 @@ function Dashboard() {
                           }}
                           placeholder={t('dashboard.reply_placeholder')}
                           disabled={sendingReply}
-                          className="flex-1 px-4 py-2.5 rounded-[8px] border text-sm focus:outline-none"
+                          className="min-w-0 flex-1 px-3.5 sm:px-4 py-2.5 rounded-[10px] border text-[13px] sm:text-sm focus:outline-none"
                           style={{
                             background: 'var(--md-surface-container-high)',
                             border: '1px solid var(--md-outline-variant)',
@@ -1118,7 +1121,7 @@ function Dashboard() {
                         <button
                           onClick={sendReply}
                           disabled={sendingReply || !replyMessage.trim()}
-                          className="md-btn-filled px-4 py-2.5 text-sm"
+                          className="md-btn-filled !px-4 !py-2.5 text-[13px] sm:text-sm shrink-0"
                         >
                           {sendingReply ? '…' : t('dashboard.send')}
                         </button>

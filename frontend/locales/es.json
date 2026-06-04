@@ -147,17 +147,17 @@
     "plans": [
       {
         "id": "starter",
-        "name": "Plan Starter",
-        "subtitle": "Chat Web",
+        "name": "Agente Acid",
+        "subtitle": "Web starter con IA",
         "price": "$500 MXN/mes",
-        "features": ["Widget de chat web embebible", "FAQs con tono de marca", "Calificación de leads (nombre, contacto, presupuesto)", "Redirecciones a WhatsApp o URLs"]
+        "features": ["Agente Acid embebible en tu sitio web", "FAQs con tono de marca", "Calificación de leads (nombre, contacto, presupuesto)", "Redirecciones a WhatsApp o URLs"]
       },
       {
         "id": "addon-whatsapp",
         "name": "Add-on WhatsApp",
-        "subtitle": "100 mensajes/mes incluidos",
+        "subtitle": "200 mensajes/mes incluidos",
         "price": "$500 MXN/mes · +$6.25 USD renta núm.",
-        "features": ["100 mensajes salientes incluidos/mes", "Leads calificados y links de pago por WhatsApp", "Detección de intención de compra", "Renta de número: $6.25 USD/mes a cargo del cliente"]
+        "features": ["200 mensajes incluidos dentro de la ventana de servicio", "Leads calificados y links de compra por WhatsApp", "Intención de compra y cierre de venta", "Renta de número: $6.25 USD/mes a cargo del cliente"]
       }
     ]
   },
