@@ -80,7 +80,7 @@ const scheduleWidgetLoad = () => {
     if (existing) return;
 
     const script = document.createElement("script");
-    script.src = "https://widget-backend-1-pip5.onrender.com/widget/loader.js";
+    script.src = "https://widget-backend-1-pip5.onrender.com/widget/loader.js?v=11";
     script.async = true;
     script.defer = true;
     script.dataset.tenant = "lu-core";

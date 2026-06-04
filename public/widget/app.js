@@ -400,6 +400,7 @@ if (document.readyState === "loading") {
   let MODE = 'idle'; // 'idle' | 'thinking' | 'unread'
   let ENABLED = true;
   const prefersReduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const darkScheme = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 
   window.__orbSetMode = (m)=>{ MODE = m || 'idle'; };
 
@@ -460,11 +461,18 @@ if (document.readyState === "loading") {
     ctx.save();
     ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2); ctx.clip();
 
-    // fondo suave oscuro
+    // fondo suave, acorde al tema del usuario
+    const isDark = darkScheme ? darkScheme.matches : true;
     const base = ctx.createRadialGradient(cx,cy,0, cx,cy,R*1.05);
-    base.addColorStop(0,  '#0f1116');
-    base.addColorStop(0.65,'#0c0f15');
-    base.addColorStop(1,  '#090b10');
+    if (isDark) {
+      base.addColorStop(0,  '#0f1116');
+      base.addColorStop(0.65,'#0c0f15');
+      base.addColorStop(1,  '#090b10');
+    } else {
+      base.addColorStop(0,  'rgba(255,255,255,.98)');
+      base.addColorStop(0.68,'rgba(248,250,252,.94)');
+      base.addColorStop(1,  'rgba(226,232,240,.9)');
+    }
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = base;
     ctx.fillRect(cx-R-2, cy-R-2, (R+2)*2, (R+2)*2);
