@@ -426,6 +426,13 @@ if (document.readyState === "loading") {
   const PURPLE_A=[168,85,247], PURPLE_B=[147,51,234];  // idle
   const BLUE_A  =[59,130,246], BLUE_B  =[56,189,248];  // typing
   const GREEN_A =[16,185,129], GREEN_B =[34,197,94];   // unread
+  const LIGHT_SMOKE = [
+    [168,85,247],
+    [217,70,239],
+    [14,165,233],
+    [124,58,237],
+    [192,132,252],
+  ];
 
   const lerp=(a,b,u)=>a+(b-a)*u;
   const mix=(c1,c2,u)=>[
@@ -461,25 +468,21 @@ if (document.readyState === "loading") {
     ctx.save();
     ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2); ctx.clip();
 
-    // fondo suave, acorde al tema del usuario
+    // En claro no pintamos base: solo humo de color sobre transparencia.
     const isDark = darkScheme ? darkScheme.matches : true;
-    const base = ctx.createRadialGradient(cx,cy,0, cx,cy,R*1.05);
     if (isDark) {
+      const base = ctx.createRadialGradient(cx,cy,0, cx,cy,R*1.05);
       base.addColorStop(0,  '#0f1116');
       base.addColorStop(0.65,'#0c0f15');
       base.addColorStop(1,  '#090b10');
-    } else {
-      base.addColorStop(0,  '#21133d');
-      base.addColorStop(0.62,'#171a33');
-      base.addColorStop(1,  '#101827');
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = base;
+      ctx.fillRect(cx-R-2, cy-R-2, (R+2)*2, (R+2)*2);
     }
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = base;
-    ctx.fillRect(cx-R-2, cy-R-2, (R+2)*2, (R+2)*2);
 
-    // Mantiene el humo luminoso sobre una base profunda, tambien en tema claro.
+    // Humo visible sin fondo negro en tema claro.
     const [C1, C2] = palette();
-    ctx.globalCompositeOperation = 'screen';
+    ctx.globalCompositeOperation = isDark ? 'screen' : 'source-over';
     const speedK = MODE==='thinking' ? 1.2 : MODE==='unread' ? 1.0 : 0.85;
 
     for(let i=0;i<blobs.length;i++){
@@ -492,11 +495,11 @@ if (document.readyState === "loading") {
 
       // color varía levemente por blob
       const mixU = (i % 2 ? 0.35 : 0.65);
-      const col  = mix(C1, C2, mixU);
+      const col  = isDark ? mix(C1, C2, mixU) : LIGHT_SMOKE[i % LIGHT_SMOKE.length];
 
       const outerAlphaBase = MODE==='unread' ? 0.42 : MODE==='thinking' ? 0.38 : 0.35;
-      const outerAlpha = isDark ? outerAlphaBase : Math.min(0.5, outerAlphaBase + 0.08);
-      const innerAlpha = Math.min(0.85, outerAlpha + 0.22);
+      const outerAlpha = isDark ? outerAlphaBase : 0.56;
+      const innerAlpha = Math.min(isDark ? 0.85 : 0.78, outerAlpha + (isDark ? 0.22 : 0.16));
 
       ctx.fillStyle = rgba(col, outerAlpha);
       ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
@@ -504,9 +507,10 @@ if (document.readyState === "loading") {
       ctx.fillStyle = rgba(col, innerAlpha);
       ctx.beginPath(); ctx.arc(x,y,r*0.58,0,Math.PI*2); ctx.fill();
 
-      ctx.globalCompositeOperation = 'screen';
-      ctx.fillStyle = rgba([255,255,255], Math.min(0.18, innerAlpha*0.55));
+      ctx.globalCompositeOperation = isDark ? 'screen' : 'source-over';
+      ctx.fillStyle = rgba(isDark ? [255,255,255] : col, isDark ? Math.min(0.18, innerAlpha*0.55) : 0.24);
       ctx.beginPath(); ctx.arc(x + r*0.18, y - r*0.15, r*0.22, 0, Math.PI*2); ctx.fill();
+      ctx.globalCompositeOperation = isDark ? 'screen' : 'source-over';
     }
 
     ctx.restore();
