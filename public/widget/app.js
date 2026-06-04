@@ -72,24 +72,49 @@ function __ziaInit(){
   // Product cards renderer
   function renderProductCards(products = []) {
     if (!products || !products.length) return;
+    const outer = document.createElement("div");
+    outer.className = "zia-products-wrap";
+
     const wrap = document.createElement("div");
     wrap.className = "zia-products";
     for (const p of products) {
       const card = document.createElement("div");
       card.className = "zia-product-card";
       const safe = (s) => String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+      const actionLabel = /\/cart\//i.test(String(p.url || "")) ? "Comprar" : "Ver producto";
       card.innerHTML = `
         ${p.image ? `<img src="${safe(p.image)}" class="zia-product-img" alt="${safe(p.name)}" loading="lazy" onerror="this.style.display='none'">` : ""}
         <div class="zia-product-info">
           <div class="zia-product-name">${safe(p.name)}</div>
           ${p.description ? `<div class="zia-product-desc">${safe(p.description)}</div>` : ""}
           ${p.price ? `<div class="zia-product-price">${safe(p.price)}</div>` : ""}
-          ${p.url ? `<a href="${safe(p.url)}" target="_blank" rel="noopener" class="zia-product-btn">Ver producto</a>` : ""}
+          ${p.url ? `<a href="${safe(p.url)}" target="_blank" rel="noopener" class="zia-product-btn">${actionLabel}</a>` : ""}
         </div>
       `;
       wrap.appendChild(card);
     }
-    thread?.appendChild(wrap);
+
+    if (products.length > 1) {
+      const prev = document.createElement("button");
+      prev.type = "button";
+      prev.className = "zia-products-nav zia-products-prev";
+      prev.setAttribute("aria-label", "Producto anterior");
+      prev.textContent = "‹";
+      prev.onclick = () => wrap.scrollBy({ left: -Math.max(180, wrap.clientWidth * 0.86), behavior: "smooth" });
+
+      const next = document.createElement("button");
+      next.type = "button";
+      next.className = "zia-products-nav zia-products-next";
+      next.setAttribute("aria-label", "Producto siguiente");
+      next.textContent = "›";
+      next.onclick = () => wrap.scrollBy({ left: Math.max(180, wrap.clientWidth * 0.86), behavior: "smooth" });
+
+      outer.appendChild(prev);
+      outer.appendChild(next);
+    }
+
+    outer.appendChild(wrap);
+    thread?.appendChild(outer);
     autoscroll();
   }
 
@@ -319,6 +344,14 @@ function __ziaInit(){
 
               // Tarjetas de productos (Shopify / catálogo)
               if (Array.isArray(ui.products) && ui.products.length) {
+                if (currentBotBubble) {
+                  const textLen = (currentBotBubble.textContent || "").trim().length;
+                  if (textLen > 160) {
+                    currentBotBubble.innerHTML = ui.products.length === 1
+                      ? "Claro, aquí tienes una opción del catálogo:"
+                      : "Claro, aquí tienes algunas opciones del catálogo:";
+                  }
+                }
                 renderProductCards(ui.products);
               }
 

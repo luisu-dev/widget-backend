@@ -8,6 +8,7 @@ import Welcome from './pages/Welcome'
 import Dashboard from './pages/Dashboard'
 import AdminPanel from './pages/AdminPanel'
 import AdminWhatsApp from './pages/AdminWhatsApp'
+import PaymentCancelled from './pages/PaymentCancelled'
 import PrivacyPage from './Privacy'
 import TermsPage from './Terms'
 import DataDeletionPage from './DataDeletion'
@@ -24,6 +25,7 @@ export default function App() {
         <Route path="/registro" element={<Register />} />
         <Route path="/bienvenida" element={<Welcome />} />
         <Route path="/welcome" element={<Welcome />} />
+        <Route path="/pago-cancelado" element={<PaymentCancelled />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/admin" element={<AdminPanel />} />
         <Route path="/admin/whatsapp" element={<AdminWhatsApp />} />

@@ -142,6 +142,8 @@
     "and": "and",
     "privacy": "Privacy Policy",
     "create_error": "Error creating registration",
+    "cart_checkout": "Cart checkout",
+    "cart_checkout_hint": "{{count}} item(s) from your cart will be included in this payment.",
     "plans": [
       {
         "id": "starter",

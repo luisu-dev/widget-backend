@@ -142,6 +142,8 @@
     "and": "y",
     "privacy": "Política de Privacidad",
     "create_error": "Error al crear el registro",
+    "cart_checkout": "Pago del carrito",
+    "cart_checkout_hint": "{{count}} producto(s) de tu carrito se incluirán en este pago.",
     "plans": [
       {
         "id": "starter",

@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+import { API_BASE } from '../config'
 
 interface RegisterForm {
   fullName: string
@@ -11,7 +10,19 @@ interface RegisterForm {
   businessName: string
   whatsappNumber: string
   website: string
-  plan: 'starter' | 'addon-whatsapp' | 'addon-ecommerce' | 'web-basic' | 'web-premium' | 'web-ecommerce'
+  plan: 'starter' | 'addon-whatsapp' | 'addon-ecommerce' | 'modulo-meta' | 'paquete-web' | 'paquete-ecommerce' | 'web-basic' | 'web-premium' | 'web-ecommerce'
+}
+
+interface CartLineItem {
+  price: string
+  quantity: number
+}
+
+function normalizeWebsite(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  return `https://${trimmed}`
 }
 
 export default function Register() {
@@ -20,6 +31,8 @@ export default function Register() {
   const [searchParams] = useSearchParams()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [cartItems, setCartItems] = useState<CartLineItem[]>([])
+  const [selectedPriceId, setSelectedPriceId] = useState('')
   const [form, setForm] = useState<RegisterForm>({
     fullName: '',
     phone: '',
@@ -32,9 +45,29 @@ export default function Register() {
 
   useEffect(() => {
     const planFromUrl = searchParams.get('plan')
-    const validPlans = ['starter', 'addon-whatsapp', 'addon-ecommerce', 'web-basic', 'web-premium', 'web-ecommerce']
+    const validPlans = ['starter', 'addon-whatsapp', 'addon-ecommerce', 'modulo-meta', 'paquete-web', 'paquete-ecommerce', 'web-basic', 'web-premium', 'web-ecommerce']
     if (planFromUrl && validPlans.includes(planFromUrl)) {
       setForm(prev => ({ ...prev, plan: planFromUrl as any }))
+    }
+
+    setSelectedPriceId(searchParams.get('price') || '')
+
+    const cartFromUrl = searchParams.get('cart')
+    if (cartFromUrl) {
+      try {
+        const parsed = JSON.parse(cartFromUrl)
+        if (Array.isArray(parsed)) {
+          const safeItems = parsed
+            .map((item: any) => ({
+              price: String(item?.price || '').trim(),
+              quantity: Math.max(1, Number.parseInt(String(item?.quantity || 1), 10) || 1),
+            }))
+            .filter((item: CartLineItem) => item.price)
+          setCartItems(safeItems)
+        }
+      } catch {
+        setCartItems([])
+      }
     }
   }, [searchParams])
 
@@ -44,7 +77,7 @@ export default function Register() {
     setLoading(true)
 
     try {
-      const response = await fetch(`${API_URL}/v1/pre-registration`, {
+      const response = await fetch(`${API_BASE}/v1/pre-registration`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -53,8 +86,10 @@ export default function Register() {
           email: form.email,
           business_name: form.businessName,
           whatsapp_number: form.whatsappNumber,
-          website: form.website,
-          plan: form.plan
+          website: normalizeWebsite(form.website),
+          plan: cartItems.length > 0 ? 'cart' : form.plan,
+          price_id: cartItems.length > 0 ? undefined : selectedPriceId || undefined,
+          line_items: cartItems.length > 0 ? cartItems : undefined
         })
       })
 
@@ -209,11 +244,12 @@ export default function Register() {
               <div className="md-field">
                 <label>{t('register.website')}</label>
                 <input
-                  type="url"
+                  type="text"
                   name="website"
                   value={form.website}
                   onChange={handleChange}
-                  placeholder="https://mitienda.com"
+                  placeholder="mitienda.com"
+                  inputMode="url"
                 />
               </div>
             </section>
@@ -230,7 +266,23 @@ export default function Register() {
                 <hr style={{ borderColor: 'var(--md-outline-variant)', marginTop: '12px' }} />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {cartItems.length > 0 && (
+                <div
+                  className="rounded-[16px] border p-4 text-sm"
+                  style={{
+                    background: 'var(--md-surface-container-high)',
+                    borderColor: 'var(--md-outline-variant)',
+                    color: 'var(--md-on-surface)'
+                  }}
+                >
+                  <p className="font-semibold">{t('register.cart_checkout')}</p>
+                  <p className="mt-1" style={{ color: 'var(--md-on-surface-variant)' }}>
+                    {t('register.cart_checkout_hint', { count: cartItems.reduce((sum, item) => sum + item.quantity, 0) })}
+                  </p>
+                </div>
+              )}
+
+              <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 ${cartItems.length > 0 ? 'opacity-60 pointer-events-none' : ''}`}>
                 {plans.map((plan) => {
                   const selected = form.plan === plan.id
                   return (

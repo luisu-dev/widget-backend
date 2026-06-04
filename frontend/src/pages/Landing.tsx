@@ -3,6 +3,7 @@ import type { ReactNode, MouseEvent } from "react";
 import { motion, useScroll, useTransform, useSpring, useMotionValue } from "framer-motion";
 import type { MotionValue } from "framer-motion";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
 import logoMini from "../../images/logo_mini.png";
 import faviconUrl from "../../images/favicon.ico";
@@ -220,7 +221,7 @@ function PlanCard({ plan, isDark, onShowDetails, onAddToCart }: {
           </button>
         )}
         <a
-          href={`/registro?plan=${plan.key}`}
+          href={`/registro?plan=${encodeURIComponent(plan.key)}${plan.priceId ? `&price=${encodeURIComponent(plan.priceId)}` : ''}`}
           className="rounded-xl bg-[#04d9b5] px-4 py-2 text-sm font-medium text-black transition hover:brightness-110 inline-block text-center"
         >
           {t("landing.hire")}
@@ -291,6 +292,7 @@ function PlanCarousel({
 /* ========= APP (oscuro) ========= */
 export default function App() {
   const { t, i18n } = useTranslation();
+  const navigate = useNavigate();
   const ref = useRef<HTMLDivElement>(null);
   const heroRef = useRef<HTMLElement | null>(null);
 
@@ -417,48 +419,8 @@ export default function App() {
       quantity,
     }));
 
-    // Endpoint del backend para crear Checkout Session
-    const checkoutEndpoint = import.meta.env.VITE_CHECKOUT_ENDPOINT || 'https://acidia.app/api/create-checkout-session';
-
-    console.log('🛒 Iniciando checkout con:', lineItems);
-    console.log('📡 Endpoint:', checkoutEndpoint);
-
-    try {
-      const response = await fetch(checkoutEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lineItems }),
-      });
-
-      console.log('📥 Response status:', response.status);
-      console.log('📥 Response headers:', Object.fromEntries(response.headers.entries()));
-
-      // Verificar si la respuesta es JSON
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const text = await response.text();
-        console.error('❌ Respuesta no es JSON:', text.substring(0, 200));
-        throw new Error(t("landing.checkout_bad_response"));
-      }
-
-      const data = await response.json();
-      console.log('📦 Response data:', data);
-
-      if (!response.ok) {
-        throw new Error(data.error || t("landing.checkout_create_error"));
-      }
-
-      if (!data.url) {
-        throw new Error(t("landing.checkout_missing_url"));
-      }
-
-      console.log('✅ Redirigiendo a:', data.url);
-      window.location.href = data.url;
-      setShowCart(false);
-    } catch (error: any) {
-      console.error('❌ Error en checkout:', error);
-      alert(t("landing.checkout_alert", { error: error.message }));
-    }
+    setShowCart(false);
+    navigate(`/register?cart=${encodeURIComponent(JSON.stringify(lineItems))}`);
   };
 
   useEffect(() => {
@@ -747,7 +709,7 @@ export default function App() {
               {/* CTAs */}
               <div className="mt-6 flex flex-wrap gap-2">
                 <a
-                  href={`/registro?plan=${activePlan.key}`}
+                  href={`/registro?plan=${encodeURIComponent(activePlan.key)}${activePlan.priceId ? `&price=${encodeURIComponent(activePlan.priceId)}` : ''}`}
                   className="rounded-xl bg-[#04d9b5] px-4 py-2 text-sm font-semibold text-black transition hover:brightness-110 inline-block text-center"
                 >
                   {t("landing.hire")}

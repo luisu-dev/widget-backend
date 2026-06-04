@@ -796,6 +796,10 @@ class CheckoutItemIn(BaseModel):
     quantity: int = 1
     mode: Optional[str] = None  # "payment" | "subscription" | None (auto)
 
+class CheckoutLineItemIn(BaseModel):
+    price: str
+    quantity: int = 1
+
 #Modelo de chekout para whatsapp
 
 class SendWaCheckoutIn(BaseModel):
@@ -1478,6 +1482,8 @@ class PreRegistrationIn(BaseModel):
     website: Optional[str] = None
     # Plan seleccionado
     plan: str  # 'starter' o 'meta'
+    price_id: Optional[str] = None
+    line_items: Optional[List[CheckoutLineItemIn]] = None
 
 
 class PreRegistrationOut(BaseModel):
@@ -2239,6 +2245,7 @@ async def fetch_shopify_catalog(tenant: dict) -> list[dict]:
         products: list[dict] = []
         for p in raw_products:
             variant = (p.get("variants") or [{}])[0] or {}
+            variant_id = str(variant.get("id") or "").strip()
             price_raw = variant.get("price", "")
             try:
                 price_display = f"${float(price_raw):,.2f} MXN" if price_raw else ""
@@ -2248,6 +2255,7 @@ async def fetch_shopify_catalog(tenant: dict) -> list[dict]:
             handle = p.get("handle", "")
             import re as _re
             desc = _re.sub(r"<[^>]+>", " ", p.get("body_html") or "").strip()[:200]
+            cart_url = f"{store_url}/cart/{variant_id}:1" if variant_id else None
             products.append({
                 "name": p.get("title", ""),
                 "description": desc,
@@ -2255,8 +2263,8 @@ async def fetch_shopify_catalog(tenant: dict) -> list[dict]:
                 "price_id": "",
                 "price_display": price_display,
                 "image": image,
-                "url": f"{store_url}/products/{handle}" if handle else None,
-                "metadata": {"handle": handle, "source": "shopify_admin"},
+                "url": cart_url or (f"{store_url}/products/{handle}" if handle else None),
+                "metadata": {"handle": handle, "source": "shopify_admin", "variant_id": variant_id, "cart_url": cart_url},
                 "raw": p,
             })
         return products
@@ -2277,7 +2285,7 @@ async def fetch_shopify_catalog(tenant: dict) -> list[dict]:
             handle
             images(first: 1) { edges { node { url altText } } }
             variants(first: 1) {
-              edges { node { price { amount currencyCode } } }
+              edges { node { id price { amount currencyCode } } }
             }
           }
         }
@@ -2304,6 +2312,8 @@ async def fetch_shopify_catalog(tenant: dict) -> list[dict]:
         node = edge.get("node") or {}
         var_edges = (node.get("variants") or {}).get("edges") or []
         variant = ((var_edges[0] or {}).get("node") or {}) if var_edges else {}
+        variant_gid = str(variant.get("id") or "")
+        variant_id = variant_gid.rsplit("/", 1)[-1] if variant_gid else ""
         price_info = variant.get("price") or {}
         amount = price_info.get("amount", "")
         currency = price_info.get("currencyCode", "MXN")
@@ -2317,6 +2327,7 @@ async def fetch_shopify_catalog(tenant: dict) -> list[dict]:
 
         handle = node.get("handle", "")
         product_url = f"{store_url}/products/{handle}" if handle else None
+        cart_url = f"{store_url}/cart/{variant_id}:1" if variant_id else None
 
         products.append({
             "name": node.get("title", ""),
@@ -2325,14 +2336,29 @@ async def fetch_shopify_catalog(tenant: dict) -> list[dict]:
             "price_id": "",
             "price_display": price_display,
             "image": image,
-            "url": product_url,
-            "metadata": {"handle": handle, "source": "shopify"},
+            "url": cart_url or product_url,
+            "metadata": {"handle": handle, "source": "shopify", "variant_id": variant_id, "cart_url": cart_url},
             "raw": node,
         })
 
     return products
 
 async def _create_checkout_for_item(t: dict | None, item: dict, qty: int = 1, mode: str = "payment") -> dict:
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    source = str(metadata.get("source") or "")
+    variant_id = str(metadata.get("variant_id") or "").strip()
+    cart_url = str(metadata.get("cart_url") or "").strip()
+    if source.startswith("shopify") and (cart_url or variant_id):
+        if not cart_url:
+            store_url = (((t or {}).get("settings") or {}).get("shopify_store_url") or "").rstrip("/")
+            domain = (((t or {}).get("settings") or {}).get("shopify_domain") or "").strip()
+            store_url = store_url or (f"https://{domain}" if domain else "")
+            cart_url = f"{store_url}/cart/{variant_id}:{max(1, int(qty))}" if store_url and variant_id else ""
+        else:
+            cart_url = re.sub(r":\d+($|[?])", f":{max(1, int(qty))}\\1", cart_url)
+        if cart_url:
+            return {"id": f"shopify_cart_{variant_id or 'item'}", "url": cart_url, "mode": "shopify_cart"}
+
     acct = _tenant_stripe_acct(t)
     if not acct:
         raise HTTPException(400, "Tenant no tiene Stripe conectado (stripe_acct)")
@@ -3399,6 +3425,16 @@ async def chat_stream(input: ChatIn, request: Request, tenant: str = Query(defau
                 _t_settings = (t or {}).get("settings") or {}
                 _wchips = _t_settings.get("widget_chips") or ["Solicitar cotización", "Contactar por WhatsApp"]
                 yield sse_event(json.dumps({"chips": _wchips, "whatsapp": None, "showWhatsAppBubble": False}), event="ui")
+                yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
+                return
+
+            if _stripped in {"ver catálogo", "ver catalogo", "catálogo", "catalogo"} and catalog_items:
+                products = [_format_product_card(p) for p in catalog_items[:8]]
+                _msg = "Claro, aquí tienes algunas opciones del catálogo:"
+                add_message(sid, "assistant", _msg)
+                asyncio.create_task(log_message(tenant or "public", sid, "web", "out", _msg, author="assistant"))
+                yield sse_event(json.dumps({"content": _msg}), event="delta")
+                yield sse_event(json.dumps({"products": products, "chips": [], "whatsapp": None, "showWhatsAppBubble": False}), event="ui")
                 yield sse_event(json.dumps({"done": True, "sessionId": sid}), event="done")
                 return
 
@@ -7482,6 +7518,15 @@ def generate_slug_from_name(business_name: str) -> str:
     return slug
 
 
+def normalize_website_url(raw: Optional[str]) -> Optional[str]:
+    website = (raw or "").strip()
+    if not website:
+        return None
+    if re.match(r"^https?://", website, re.I):
+        return website
+    return f"https://{website}"
+
+
 async def send_email_notification(to_email: str, subject: str, body: str):
     """Envía un email de notificación usando Resend"""
     if not RESEND_API_KEY:
@@ -7531,7 +7576,7 @@ async def process_new_tenant_from_payment(
                     SELECT full_name, phone, email, business_name, business_slug,
                            whatsapp_number, website, plan
                     FROM pre_registrations
-                    WHERE id = :id AND status = 'pending'
+                    WHERE id = :id AND status != 'completed'
                 """),
                 {"id": registration_id}
             )
@@ -7681,6 +7726,115 @@ User ID: {user_id}
         traceback.print_exc()
 
 
+async def mark_pre_registration_payment_issue(
+    registration_id: Optional[str] = None,
+    stripe_session_id: Optional[str] = None,
+    status: str = "payment_failed",
+    reason: str = ""
+) -> bool:
+    """Guarda intento no completado y avisa al admin sin crear tenant ni usuario."""
+    if not db_engine:
+        log.error("Database not configured")
+        return False
+
+    registration_id = (registration_id or "").strip()
+    stripe_session_id = (stripe_session_id or "").strip()
+    if not registration_id and not stripe_session_id:
+        return False
+
+    try:
+        async with db_engine.begin() as conn:
+            query = """
+                SELECT id, full_name, phone, email, business_name, business_slug,
+                       whatsapp_number, website, plan, stripe_session_id, status
+                FROM pre_registrations
+                WHERE {where_clause}
+                LIMIT 1
+            """
+            where_clause = "id = :registration_id" if registration_id else "stripe_session_id = :stripe_session_id"
+            result = await conn.execute(
+                text(query.format(where_clause=where_clause)),
+                {"registration_id": registration_id, "stripe_session_id": stripe_session_id}
+            )
+            prereg = result.fetchone()
+            if not prereg:
+                log.warning(f"Pre-registro no encontrado para fallo/cancelación: reg={registration_id} session={stripe_session_id}")
+                return False
+
+            (
+                reg_id, full_name, phone, email, business_name, business_slug,
+                whatsapp, website, plan, stored_session_id, previous_status
+            ) = prereg
+
+            already_reported = previous_status == status
+
+            await conn.execute(
+                text("""
+                    UPDATE pre_registrations
+                    SET status = :status,
+                        updated_at = NOW()
+                    WHERE id = :id
+                      AND status != 'completed'
+                """),
+                {"id": reg_id, "status": status}
+            )
+
+            await conn.execute(
+                text("""
+                    INSERT INTO events (tenant_slug, session_id, type, payload)
+                    VALUES (:tenant, :sid, :type, CAST(:payload AS JSONB))
+                """),
+                {
+                    "tenant": "acidia",
+                    "sid": stored_session_id or stripe_session_id or str(reg_id),
+                    "type": "pre_registration_payment_issue",
+                    "payload": json.dumps({
+                        "registration_id": str(reg_id),
+                        "business_slug": business_slug,
+                        "business_name": business_name,
+                        "email": email,
+                        "plan": plan,
+                        "status": status,
+                        "reason": reason,
+                        "previous_status": previous_status,
+                    })
+                }
+            )
+
+        if already_reported:
+            return True
+
+        admin_email_body = f"""
+Pago no completado en AcidIA
+
+Estado: {status}
+Motivo: {reason or 'No especificado'}
+
+Datos capturados:
+- Registro: {reg_id}
+- Nombre: {full_name}
+- Email: {email}
+- Teléfono: {phone}
+- Negocio: {business_name}
+- Slug reservado: {business_slug}
+- WhatsApp: {whatsapp or 'No proporcionado'}
+- Website: {website or 'No proporcionado'}
+- Plan/flujo: {plan}
+- Stripe Session ID: {stored_session_id or stripe_session_id or 'No disponible'}
+
+No se creó tenant ni usuario porque el pago no se completó.
+"""
+        await send_email_notification(
+            to_email=ADMIN_EMAIL,
+            subject=f"Pago no completado: {business_name}",
+            body=admin_email_body
+        )
+        return True
+    except Exception as e:
+        log.error(f"Error guardando fallo/cancelación de pago: {e}")
+        return False
+
+
 @app.post("/v1/pre-registration", response_model=PreRegistrationOut)
 async def create_pre_registration(body: PreRegistrationIn):
     """
@@ -7691,11 +7845,17 @@ async def create_pre_registration(body: PreRegistrationIn):
     if not db_engine:
         raise HTTPException(503, "Database not configured")
 
-    # Generar slug si no se proporcionó
+    # Generar slug si no se proporcionó. El nombre del negocio es la fuente del tenant.
     business_slug = body.business_slug or generate_slug_from_name(body.business_name)
+    website = normalize_website_url(body.website)
+    cart_line_items = body.line_items or []
+    direct_price_id = (body.price_id or "").strip()
 
     # Validar que el plan sea válido
-    if body.plan not in _PLATFORM_PLAN_CENTS:
+    if body.plan == "cart":
+        if not cart_line_items:
+            raise HTTPException(400, "El carrito no tiene productos válidos")
+    elif not direct_price_id and body.plan not in _PLATFORM_PLAN_CENTS:
         raise HTTPException(400, f"Plan inválido. Debe ser uno de: {', '.join(_PLATFORM_PLAN_CENTS)}")
 
     # Verificar que el slug no esté ya en uso
@@ -7746,7 +7906,7 @@ async def create_pre_registration(body: PreRegistrationIn):
                 "business_name": body.business_name,
                 "business_slug": business_slug,
                 "whatsapp_number": body.whatsapp_number,
-                "website": body.website,
+                "website": website,
                 "plan": body.plan
             }
         )
@@ -7756,24 +7916,39 @@ async def create_pre_registration(body: PreRegistrationIn):
     if not t:
         raise HTTPException(500, "Tenant de procesamiento de pagos no configurado")
 
-    # Asegurar que existan los precios en la cuenta de la plataforma
-    prices = _tenant_stripe_prices(t)
-    if body.plan not in prices:
-        prices = await ensure_platform_prices(t)
+    line_items = []
+    if body.plan == "cart":
+        for item in cart_line_items:
+            price_id = (item.price or "").strip()
+            if price_id:
+                line_items.append({"price": price_id, "quantity": max(1, int(item.quantity or 1))})
+    elif direct_price_id:
+        line_items.append({"price": direct_price_id, "quantity": 1})
+    else:
+        # Asegurar que existan los precios en la cuenta de la plataforma
+        prices = _tenant_stripe_prices(t)
+        if body.plan not in prices:
+            prices = await ensure_platform_prices(t)
+        line_items.append({"price": prices[body.plan], "quantity": 1})
 
-    price_id = prices[body.plan]
+    if not line_items:
+        raise HTTPException(400, "No hay productos válidos para pagar")
+
+    line_items_summary = json.dumps(line_items)[:450]
 
     # Crear sesión de Stripe directamente en la cuenta de la plataforma
     session = stripe.checkout.Session.create(
         mode="subscription",
-        line_items=[{"price": price_id, "quantity": 1}],
+        line_items=line_items,
         success_url=f"{SITE_URL}/bienvenida?session_id={{CHECKOUT_SESSION_ID}}",
-        cancel_url=f"{SITE_URL}/registro?cancelled=true",
+        cancel_url=f"{SITE_URL}/pago-cancelado?registration_id={registration_id}",
         customer_email=body.email,
         metadata={
             "registration_id": registration_id,
             "business_slug": business_slug,
             "plan": body.plan,
+            "price_id": direct_price_id,
+            "line_items": line_items_summary,
             "is_new_tenant": "true"
         },
     )
@@ -7796,6 +7971,25 @@ async def create_pre_registration(body: PreRegistrationIn):
         business_slug=business_slug,
         checkout_url=session.url
     )
+
+
+@app.post("/v1/pre-registration/payment-issue")
+async def pre_registration_payment_issue(body: dict):
+    registration_id = (body.get("registration_id") or "").strip()
+    stripe_session_id = (body.get("stripe_session_id") or "").strip()
+    status = (body.get("status") or "payment_failed").strip()
+    reason = (body.get("reason") or "").strip()
+
+    if status not in {"payment_failed", "cancelled", "expired"}:
+        status = "payment_failed"
+
+    ok = await mark_pre_registration_payment_issue(
+        registration_id=registration_id,
+        stripe_session_id=stripe_session_id,
+        status=status,
+        reason=reason
+    )
+    return {"ok": ok}
 
 
 @app.post("/v1/admin/create-user-manual")
@@ -8096,6 +8290,22 @@ async def stripe_webhook(request: Request):
     elif etype == "invoice.paid":
         asyncio.create_task(store_event(tenant_slug, "stripe", "stripe_invoice_paid",
                                         {"invoice": data.get("id")}))
+    elif etype == "checkout.session.expired":
+        metadata = data.get("metadata", {}) or {}
+        if metadata.get("is_new_tenant") == "true":
+            asyncio.create_task(mark_pre_registration_payment_issue(
+                registration_id=metadata.get("registration_id"),
+                stripe_session_id=data.get("id"),
+                status="expired",
+                reason="checkout.session.expired"
+            ))
+        else:
+            asyncio.create_task(store_event(tenant_slug, data.get("id") or "stripe", "stripe_checkout_expired",
+                                            {"customer": data.get("customer")}))
+    elif etype == "invoice.payment_failed":
+        sub_id = data.get("subscription")
+        asyncio.create_task(store_event(tenant_slug, "stripe", "stripe_invoice_payment_failed",
+                                        {"invoice": data.get("id"), "subscription": sub_id}))
     elif etype.startswith("customer.subscription."):
         asyncio.create_task(store_event(tenant_slug, "stripe", etype.replace(".", "_"),
                                         {"subscription": data.get("id")}))
