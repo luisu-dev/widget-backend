@@ -392,6 +392,14 @@ def tenant_whatsapp_url(tenant: Optional[dict], prefill: Optional[str] = None) -
             return link.strip()
     return None
 
+def build_whatsapp_url(phone: Optional[str], prefill: Optional[str] = None) -> Optional[str]:
+    num = clean_phone_for_wa(phone)
+    if not num:
+        return None
+    if prefill:
+        return f"https://wa.me/{num}?text={quote_plus(prefill)}"
+    return f"https://wa.me/{num}"
+
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 def is_email(s: str) -> bool:
     return bool(EMAIL_RE.match((s or "").strip().lower()))
@@ -1992,10 +2000,21 @@ async def meta_private_reply_to_comment(page_id: str, page_token: str, comment_i
 
 def twilio_cfg_from_tenant(t: dict | None):
     s = (t or {}).get("settings", {}) or {}
-    sid = s.get("twilio_account_sid") or TWILIO_ACCOUNT_SID
-    tok = s.get("twilio_auth_token") or TWILIO_AUTH_TOKEN
-    wa_from = s.get("twilio_whatsapp_from") or TWILIO_WHATSAPP_FROM
-    sms_from = s.get("twilio_sms_from") or TWILIO_SMS_FROM
+    provider = (s.get("whatsapp_provider") or "").strip().lower()
+    has_tenant_twilio = bool(s.get("twilio_account_sid") and s.get("twilio_auth_token"))
+
+    if provider == "twilio":
+        sid = s.get("twilio_account_sid")
+        tok = s.get("twilio_auth_token")
+        wa_from = s.get("twilio_whatsapp_from")
+        sms_from = s.get("twilio_sms_from")
+    elif has_tenant_twilio:
+        sid = s.get("twilio_account_sid")
+        tok = s.get("twilio_auth_token")
+        wa_from = s.get("twilio_whatsapp_from")
+        sms_from = s.get("twilio_sms_from")
+    else:
+        sid = tok = wa_from = sms_from = ""
     return sid, tok, wa_from, sms_from
 
 def get_twilio_client_for_tenant(t: dict | None):
@@ -2003,6 +2022,45 @@ def get_twilio_client_for_tenant(t: dict | None):
     if not sid or not tok:
         return None
     return TwilioClient(sid, tok)
+
+def meta_whatsapp_cfg_from_tenant(t: dict | None):
+    s = (t or {}).get("settings", {}) or {}
+    token = (
+        s.get("meta_whatsapp_access_token")
+        or s.get("whatsapp_cloud_access_token")
+        or os.getenv("META_WHATSAPP_ACCESS_TOKEN", "")
+    )
+    phone_number_id = (
+        s.get("meta_whatsapp_phone_number_id")
+        or s.get("whatsapp_cloud_phone_number_id")
+        or os.getenv("META_WHATSAPP_PHONE_NUMBER_ID", "")
+    )
+    return str(token or "").strip(), str(phone_number_id or "").strip()
+
+async def meta_whatsapp_send_text(t: dict | None, to_e164_or_digits: str, text_out: str) -> dict:
+    token, phone_number_id = meta_whatsapp_cfg_from_tenant(t)
+    if not token or not phone_number_id:
+        raise RuntimeError("Meta WhatsApp Cloud API no configurado")
+
+    to_digits = clean_phone_for_wa(to_e164_or_digits)
+    if not to_digits:
+        raise RuntimeError("Destinatario WhatsApp inválido")
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_digits,
+        "type": "text",
+        "text": {"preview_url": True, "body": text_out[:MAX_MESSAGE_CONTENT_LENGTH]},
+    }
+    async with httpx.AsyncClient(timeout=12.0) as cx:
+        resp = await cx.post(
+            f"{GRAPH}/{phone_number_id}/messages",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json=payload,
+        )
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Meta WhatsApp error HTTP {resp.status_code}: {resp.text[:500]}")
+    return resp.json()
 
 def build_system_for_tenant(tenant: Optional[dict], page_settings: Optional[dict] = None) -> str:
     """Construye el prompt del sistema personalizado para un tenant.
@@ -2673,7 +2731,11 @@ def _validate_meta_signature(request: Request, body: bytes) -> bool:
         return False
 
 @app.post("/v1/meta/webhook")
-async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(...)):
+async def meta_webhook_events(
+    request: Request,
+    payload: Dict[str, Any] = Body(...),
+    tenant: str = Query(default=""),
+):
     rid = f"meta-{uuid.uuid4().hex[:8]}"
 
     # Validar firma de Meta (intenta con Facebook e Instagram App Secrets)
@@ -2683,11 +2745,88 @@ async def meta_webhook_events(request: Request, payload: Dict[str, Any] = Body(.
 
     try:
         obj = payload.get("object")
-        if obj not in {"page", "instagram"}:
+        if obj not in {"page", "instagram", "whatsapp_business_account"}:
             log.debug(f"[{rid}] object no soportado: {obj}")
             return {"ok": True}
 
         for entry in payload.get("entry", []):
+            if obj == "whatsapp_business_account":
+                tenant_slug = (tenant or os.getenv("PUBLIC_WHATSAPP_TENANT", "acidia")).strip()
+                if tenant_slug and not valid_slug(tenant_slug):
+                    log.warning(f"[{rid}] tenant inválido en WhatsApp Cloud webhook: {tenant_slug}")
+                    continue
+                tenant_slug = tenant_slug or "acidia"
+                t = await fetch_tenant(tenant_slug)
+
+                for ch in entry.get("changes", []) or []:
+                    value = (ch.get("value") or {}) if isinstance(ch.get("value"), dict) else {}
+                    metadata = value.get("metadata") or {}
+                    phone_number_id = str(metadata.get("phone_number_id") or "")
+
+                    for msg in value.get("messages", []) or []:
+                        mid = str(msg.get("id") or "")
+                        if meta_message_seen(mid):
+                            continue
+
+                        from_raw = str(msg.get("from") or "")
+                        msg_type = str(msg.get("type") or "")
+                        body_txt = ""
+                        if msg_type == "text":
+                            body_txt = str(((msg.get("text") or {}).get("body")) or "").strip()
+                        elif msg_type:
+                            body_txt = f"[{msg_type}]"
+                        if not from_raw or not body_txt:
+                            continue
+
+                        sid = ensure_session(f"wa_cloud:{tenant_slug}:{from_raw}")
+                        add_message(sid, "user", body_txt)
+                        asyncio.create_task(store_event(
+                            tenant_slug, sid, "whatsapp_cloud_in",
+                            {"from": from_raw, "text": body_txt, "phone_number_id": phone_number_id},
+                        ))
+                        asyncio.create_task(log_message(
+                            tenant_slug, sid, "whatsapp_cloud", "in", body_txt,
+                            author=from_raw, payload={"message_id": mid, "phone_number_id": phone_number_id},
+                        ))
+
+                        if is_session_paused(sid):
+                            log.info(f"[{rid}] WhatsApp Cloud bot pausado para {sid}")
+                            continue
+                        if t and not tenant_bot_enabled(t):
+                            log.info(f"[{rid}] WhatsApp Cloud bot apagado para tenant={tenant_slug}")
+                            continue
+
+                        answer = await handle_booking_flow_wa(sid, body_txt, t, tenant_slug)
+                        if answer is None:
+                            catalog_items = await fetch_catalog_for_tenant(t)
+                            catalog_summary = summarize_catalog_for_prompt(catalog_items)
+                            system_prompt = build_system_for_tenant(t)
+                            if catalog_summary:
+                                system_prompt = f"{system_prompt}\n\n{catalog_summary}"
+                            messages_ctx = build_messages_with_history(sid, system_prompt)
+                            try:
+                                answer = generate_answer(messages_ctx)
+                            except Exception as e:
+                                log.warning(f"[{rid}] WhatsApp Cloud LLM error: {e}")
+                                answer = "Gracias por escribir. Te atiendo enseguida."
+
+                        add_message(sid, "assistant", answer)
+                        asyncio.create_task(store_event(
+                            tenant_slug, sid, "whatsapp_cloud_out",
+                            {"to": from_raw, "text": answer[:MAX_TEXT_LENGTH]},
+                        ))
+                        asyncio.create_task(log_message(
+                            tenant_slug, sid, "whatsapp_cloud", "out", answer,
+                            author="bot", payload={"phone_number_id": phone_number_id},
+                        ))
+
+                        try:
+                            await meta_whatsapp_send_text(t, from_raw, answer)
+                        except Exception as e:
+                            log.error(f"[{rid}] WhatsApp Cloud send error tenant={tenant_slug} to={from_raw}: {e}")
+
+                continue
+
             owner_id = str(entry.get("id", ""))  # page_id o ig_user_id
             log.info(
                 f"[{rid}] obj={obj} owner={owner_id} changes={len(entry.get('changes', []) or [])} "
@@ -6562,7 +6701,9 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
     # Guardar body para validación de firma
     request.state._twilio_body = {k: str(v) for k, v in form.items()}
 
-    if not _twilio_req_is_valid(request, TWILIO_AUTH_TOKEN):
+    t = await fetch_tenant(tenant)
+    _, auth_token_for_signature, _, _ = twilio_cfg_from_tenant(t)
+    if not _twilio_req_is_valid(request, auth_token_for_signature):
         raise HTTPException(403, "Invalid Twilio signature")
 
     from_raw = str(form.get("From", ""))
@@ -6577,8 +6718,6 @@ async def twilio_whatsapp_webhook(request: Request, tenant: str = Query(default=
     add_message(sid, "user", body_txt)
     asyncio.create_task(store_event(tenant or "public", sid, "wa_in", {"from": from_raw, "text": body_txt}))
     asyncio.create_task(log_message(tenant or "public", sid, "whatsapp", "in", body_txt, author=from_raw))
-
-    t = await fetch_tenant(tenant)
 
     if t and not tenant_bot_enabled(t):
         off_msg = ((t.get("settings") or {}).get("bot_off_message") or "El asistente está en pausa. Escríbenos directamente por WhatsApp al enlace habitual.")
@@ -6937,6 +7076,7 @@ async def twilio_configure(body: dict, current = Depends(require_user)):
     settings = (t.get("settings") or {}).copy()
     settings["twilio_account_sid"] = account_sid
     settings["twilio_auth_token"] = auth_token
+    settings["whatsapp_provider"] = "twilio"
     if whatsapp_from:
         settings["twilio_whatsapp_from"] = whatsapp_from
 
@@ -6945,6 +7085,7 @@ async def twilio_configure(body: dict, current = Depends(require_user)):
     return {
         "success": True,
         "message": "Credenciales de Twilio guardadas correctamente",
+        "provider": "twilio",
         "webhook_url": f"{os.getenv('BACKEND_URL', 'https://acidia.app')}/v1/twilio/whatsapp/webhook?tenant={tenant_slug}"
     }
 
@@ -6969,10 +7110,10 @@ async def twilio_test_connection(body: dict, current = Depends(require_user)):
     if not to_e164:
         raise HTTPException(400, "Número de teléfono inválido")
 
-    # Obtener cliente de Twilio para el tenant
+    # Obtener cliente de Twilio según el proveedor activo del tenant
     client_t = get_twilio_client_for_tenant(t)
     if not client_t:
-        raise HTTPException(400, "Twilio no está configurado para este tenant. Configura primero las credenciales.")
+        raise HTTPException(400, "WhatsApp no está configurado para este tenant. Configura primero las credenciales de Twilio.")
 
     _, _, wa_from, _ = twilio_cfg_from_tenant(t)
     if not wa_from:
@@ -7456,19 +7597,58 @@ async def twilio_get_status(current = Depends(require_user)):
         raise HTTPException(404, "Tenant no encontrado")
 
     settings = t.get("settings") or {}
+    provider = (settings.get("whatsapp_provider") or "").strip().lower()
     has_account_sid = bool(settings.get("twilio_account_sid"))
     has_auth_token = bool(settings.get("twilio_auth_token"))
     has_whatsapp_from = bool(settings.get("twilio_whatsapp_from"))
+    acidia_available = bool(TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_WHATSAPP_FROM)
 
-    is_configured = has_account_sid and has_auth_token and has_whatsapp_from
+    if not provider:
+        provider = "twilio" if has_account_sid and has_auth_token and has_whatsapp_from else "none"
+    if provider == "demo":
+        provider = "none"
+
+    is_configured = (
+        (provider == "twilio" and has_account_sid and has_auth_token and has_whatsapp_from)
+    )
+    active_whatsapp_from = settings.get("twilio_whatsapp_from")
 
     return {
         "configured": is_configured,
+        "provider": provider,
+        "demo_available": acidia_available,
+        "acidia_available": acidia_available,
         "has_account_sid": has_account_sid,
         "has_auth_token": has_auth_token,
         "has_whatsapp_from": has_whatsapp_from,
-        "whatsapp_from": settings.get("twilio_whatsapp_from") if has_whatsapp_from else None,
+        "whatsapp_from": active_whatsapp_from if is_configured else None,
         "webhook_url": f"{os.getenv('BACKEND_URL', 'https://acidia.app')}/v1/twilio/whatsapp/webhook?tenant={tenant_slug}"
+    }
+
+
+@app.get("/v1/public/whatsapp-link")
+async def public_whatsapp_link(
+    tenant: str = Query(default=""),
+    text: str = Query(default="Hola, quiero probar el bot de AcidIA."),
+):
+    """
+    Devuelve el link público para que visitantes hablen con el bot por WhatsApp.
+    No da acceso al dashboard ni a configuración; solo construye wa.me.
+    """
+    tenant_slug = (tenant or os.getenv("PUBLIC_WHATSAPP_TENANT", "acidia")).strip()
+    if tenant_slug and not valid_slug(tenant_slug):
+        raise HTTPException(400, "Invalid tenant")
+
+    t = await fetch_tenant(tenant_slug) if tenant_slug else None
+    url = tenant_whatsapp_url(t, prefill=text) if t else None
+    if not url:
+        url = build_whatsapp_url(os.getenv("PUBLIC_WHATSAPP_NUMBER"), prefill=text)
+    if not url:
+        raise HTTPException(404, "WhatsApp público no configurado")
+
+    return {
+        "url": url,
+        "tenant": tenant_slug or None,
     }
 
 #Endpoint público que usará tu web/widget:

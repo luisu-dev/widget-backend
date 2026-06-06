@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 import logoMini from "../../images/logo_mini.png";
 import faviconUrl from "../../images/favicon.ico";
 import { sendContact } from "../lib/contact";
+import { API_BASE } from "../config";
 
 /* ========= Rendimiento (bajar costos en Android/equipos modestos) ========= */
 const isAndroid = /Android/i.test(navigator.userAgent);
@@ -300,11 +301,17 @@ export default function App() {
   const [planCards, setPlanCards] = useState<PlanCardData[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [publicWhatsAppUrl, setPublicWhatsAppUrl] = useState<string>("");
 
   // Cargar catálogo desde URL
   useEffect(() => {
-    const catalogFile = i18n.language.startsWith("en") ? "catalog.en.json" : "catalog.json";
-    const catalogUrl = import.meta.env.VITE_CATALOG_URL || `/${catalogFile}`;
+    const isEnglish = i18n.language.startsWith("en");
+    const catalogFile = isEnglish ? "catalog.en.json" : "catalog.json";
+    const configuredCatalogUrl = import.meta.env.VITE_CATALOG_URL;
+    const catalogUrl =
+      isEnglish && configuredCatalogUrl?.endsWith("catalog.json")
+        ? configuredCatalogUrl.replace(/catalog\.json$/, "catalog.en.json")
+        : configuredCatalogUrl || `/${catalogFile}`;
 
     fetch(catalogUrl)
       .then(res => {
@@ -321,6 +328,29 @@ export default function App() {
         setCatalogLoading(false);
       });
   }, [i18n.language]);
+
+  useEffect(() => {
+    const envUrl = import.meta.env.VITE_PUBLIC_WHATSAPP_URL as string | undefined;
+    const envNumber = import.meta.env.VITE_PUBLIC_WHATSAPP_NUMBER as string | undefined;
+    const prefill = t("landing.whatsapp_prefill");
+
+    if (envUrl) {
+      setPublicWhatsAppUrl(envUrl);
+      return;
+    }
+    if (envNumber) {
+      const digits = envNumber.replace(/\D/g, "");
+      setPublicWhatsAppUrl(`https://wa.me/${digits}?text=${encodeURIComponent(prefill)}`);
+      return;
+    }
+
+    fetch(`${API_BASE}/v1/public/whatsapp-link?text=${encodeURIComponent(prefill)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.url) setPublicWhatsAppUrl(data.url);
+      })
+      .catch(() => setPublicWhatsAppUrl(""));
+  }, [t]);
 
   // Scroll driver (global) — ya no usado directamente
   // Eliminado para evitar warning TS6133 (noUnusedLocals)
@@ -1017,6 +1047,21 @@ export default function App() {
         <p className={`text-lg mb-10 text-center ${isDark ? "text-white/80" : "text-black/80"}`}>
           {t("landing.contact_intro")}
         </p>
+        <div className="mx-auto mb-8 flex max-w-xl flex-col items-center gap-3 text-center">
+          {publicWhatsAppUrl && (
+            <a
+              href={publicWhatsAppUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex w-full items-center justify-center rounded-xl bg-[#04d9b5] px-6 py-3 font-medium text-black shadow transition hover:brightness-110 sm:w-auto"
+            >
+              {t("landing.whatsapp_cta")}
+            </a>
+          )}
+          <p className={`text-sm ${isDark ? "text-white/60" : "text-black/60"}`}>
+            {t("landing.whatsapp_note")}
+          </p>
+        </div>
         <ContactForm isDark={isDark} />
       </Section>
 
