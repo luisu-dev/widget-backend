@@ -2,6 +2,7 @@
   "nav": {
     "inicio": "Home",
     "quienes_somos": "About Us",
+    "clientes": "Clients",
     "planes": "Plans",
     "contacto": "Contact",
     "carrito": "Cart",
@@ -23,6 +24,15 @@
     "service_title_middle": "service",
     "service_desc_1": "Our AI never sleeps, but there are always humans ready to step in. If a conversation needs empathy or judgment, our team takes over without endless tickets or canned responses.",
     "service_desc_2": "Think of it as a digital concierge that detects intent, prepares the right person, and keeps your customers informed. That is 24/7 customer service with human quality and machine speed.",
+    "clients_title_1": "Our",
+    "clients_title_2": "clients",
+    "clients_desc": "A few websites we have designed and launched for real businesses, with live previews so you can explore the final result.",
+    "client_open": "Open site",
+    "client_projects": {
+      "posada-la-bendicion": "A hospitality website built to present the property clearly and help visitors move quickly from discovery to contact.",
+      "sabor-y-arte": "A gourmet brand site focused on visual appetite, product clarity, and a polished browsing experience.",
+      "mexhika": "A modern web presence with strong visual identity, responsive layout, and direct access to the brand experience."
+    },
     "plans_title_1": "Our",
     "plans_title_2": "plans",
     "plans_title_3": "and",

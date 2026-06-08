@@ -22,6 +22,7 @@ function Nav({ active, visible, isDark, cart, onOpenCart }: { active: string; vi
   const items = [
     { id: "inicio", label: t("nav.inicio") },
     { id: "quienes-somos", label: t("nav.quienes_somos") },
+    { id: "clientes", label: t("nav.clientes") },
     { id: "planes", label: t("nav.planes") },
     { id: "contacto", label: t("nav.contacto") },
   ];
@@ -168,6 +169,84 @@ type PlanCardData = {
   priceId?: string;
   sections: PlanDetailSection[];
 };
+
+type ClientProject = {
+  key: string;
+  name: string;
+  url: string;
+  domain: string;
+};
+
+const CLIENT_PROJECTS: ClientProject[] = [
+  {
+    key: "posada-la-bendicion",
+    name: "Posada La Bendicion",
+    url: "https://posadalabendicion.com",
+    domain: "posadalabendicion.com",
+  },
+  {
+    key: "sabor-y-arte",
+    name: "Sabor y Arte Gourmet",
+    url: "https://saboryartegourmet.com.mx",
+    domain: "saboryartegourmet.com.mx",
+  },
+  {
+    key: "mexhika",
+    name: "Mexhika",
+    url: "https://mexhika-web-bfit.vercel.app/",
+    domain: "mexhika-web-bfit.vercel.app",
+  },
+];
+
+function ClientShowcase({ isDark }: { isDark: boolean }) {
+  const { t } = useTranslation();
+  const descriptions = t("landing.client_projects", { returnObjects: true }) as Record<string, string>;
+  const cardClass = isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-black/[0.03]";
+  const mutedText = isDark ? "text-white/60" : "text-black/60";
+  const bodyText = isDark ? "text-white/75" : "text-black/70";
+
+  return (
+    <div className="mt-12 grid gap-6 lg:grid-cols-3">
+      {CLIENT_PROJECTS.map((project) => (
+        <article key={project.key} className={`overflow-hidden rounded-lg border ${cardClass}`}>
+          <div className={`flex items-center justify-between border-b px-4 py-3 ${isDark ? "border-white/10 bg-black/40" : "border-black/10 bg-white/70"}`}>
+            <div className="flex items-center gap-2" aria-hidden="true">
+              <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
+              <span className="h-2.5 w-2.5 rounded-full bg-[#ffbd2e]" />
+              <span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
+            </div>
+            <span className={`truncate pl-3 text-xs ${mutedText}`}>{project.domain}</span>
+          </div>
+          <div className="relative aspect-[16/10] overflow-hidden bg-white">
+            <iframe
+              src={project.url}
+              title={`${project.name} preview`}
+              loading="lazy"
+              sandbox="allow-scripts allow-same-origin allow-popups"
+              className="h-full w-full border-0"
+            />
+            <div className="pointer-events-none absolute inset-0 ring-1 ring-inset ring-black/10" />
+          </div>
+          <div className="p-5">
+            <h3 className="text-xl font-semibold">{project.name}</h3>
+            <p className={`mt-2 min-h-[3rem] text-sm leading-relaxed ${bodyText}`}>
+              {descriptions[project.key]}
+            </p>
+            <a
+              href={project.url}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-4 inline-flex items-center rounded-lg bg-[#04d9b5] px-4 py-2 text-sm font-semibold text-black transition hover:brightness-110"
+              aria-label={`${t("landing.client_open")} ${project.name}`}
+            >
+              {t("landing.client_open")}
+            </a>
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
 
 
 function PlanCard({ plan, isDark, onShowDetails, onAddToCart }: {
@@ -454,7 +533,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    const ids = ["inicio", "quienes-somos", "planes", "contacto"];
+    const ids = ["inicio", "quienes-somos", "clientes", "planes", "contacto"];
     const sections = ids
       .map((id) => document.getElementById(id))
       .filter((el): el is HTMLElement => !!el);
@@ -950,6 +1029,22 @@ export default function App() {
             {t("landing.service_desc_2")}
           </p>
         </div>
+      </Section>
+
+      {/* ===== CLIENTES ===== */}
+      <Section
+        id="clientes"
+        title={
+          <>
+            {t("landing.clients_title_1")} <span className="text-[#04d9b5]">{t("landing.clients_title_2")}</span>
+          </>
+        }
+        className="pt-0 pb-16"
+      >
+        <p className={`mx-auto max-w-3xl text-center text-lg leading-relaxed ${isDark ? "text-white/80" : "text-black/80"}`}>
+          {t("landing.clients_desc")}
+        </p>
+        <ClientShowcase isDark={isDark} />
       </Section>
 
       {/* ===== PLANES Y PRECIOS ===== */}

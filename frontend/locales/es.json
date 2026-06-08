@@ -2,6 +2,7 @@
   "nav": {
     "inicio": "Inicio",
     "quienes_somos": "Quiénes somos",
+    "clientes": "Clientes",
     "planes": "Planes",
     "contacto": "Contacto",
     "carrito": "Carrito",
@@ -23,6 +24,15 @@
     "service_title_middle": "al cliente",
     "service_desc_1": "Nuestra IA nunca duerme, pero detrás siempre hay humanos listos para intervenir. Si una conversación necesita empatía o criterio, nuestro equipo toma el control sin tickets interminables ni respuestas enlatadas.",
     "service_desc_2": "Piensa en un concierge digital que detecta la intención, prepara a la persona correcta y mantiene informados a tus clientes. Eso es servicio al cliente 24/7, con calidad humana y velocidad de máquina.",
+    "clients_title_1": "Nuestros",
+    "clients_title_2": "clientes",
+    "clients_desc": "Algunas páginas que hemos diseñado y publicado para negocios reales, con previews en vivo para explorar el resultado final.",
+    "client_open": "Abrir sitio",
+    "client_projects": {
+      "posada-la-bendicion": "Un sitio de hospedaje pensado para presentar la propiedad con claridad y llevar al visitante de la exploración al contacto.",
+      "sabor-y-arte": "Un sitio para marca gourmet enfocado en apetito visual, claridad de producto y una experiencia de navegación pulida.",
+      "mexhika": "Una presencia web moderna con identidad visual fuerte, layout responsive y acceso directo a la experiencia de marca."
+    },
     "plans_title_1": "Nuestros",
     "plans_title_2": "planes",
     "plans_title_3": "y",
